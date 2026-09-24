@@ -96,6 +96,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const focus = useStore((s) => s.focus)
   const scroller = useRef<HTMLDivElement>(null)
   const column = useRef<HTMLDivElement>(null)
+  const content = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [showJump, setShowJump] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -118,6 +119,19 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     if (stick.current) el.scrollTop = el.scrollHeight
     else setShowJump(true)
   }, [events, partial?.text])
+
+  // Lo que crece sin un evento nuevo (el indicador de "trabajando", una imagen que carga) también se sigue.
+  const shown = Boolean(session && project)
+  useEffect(() => {
+    const el = scroller.current
+    const inner = content.current
+    if (!el || !inner) return
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight
+    })
+    ro.observe(inner)
+    return () => ro.disconnect()
+  }, [shown])
 
   const onScroll = () => {
     const el = scroller.current
@@ -246,7 +260,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
       <div className="flex min-h-0 flex-1">
         <div ref={column} className="relative flex min-w-0 flex-1 flex-col">
           <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-3xl px-4 py-6">
+            <div ref={content} className="mx-auto max-w-3xl px-4 py-6">
               {hasMore && (
                 <div className="mb-4 flex justify-center">
                   <Button size="xs" variant="ghost" onClick={older} disabled={loadingOlder}>

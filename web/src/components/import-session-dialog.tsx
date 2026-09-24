@@ -67,8 +67,12 @@ export function ImportSessionDialog({
     if (!picked) return
     setImporting(true)
     try {
-      const s = await api.importSession(project.id, { claudeSessionId: picked.sessionId, name, role })
-      toast.success(`${s.name} importada`, { description: "Reanudala cuando quieras: recibe el protocolo de control-plane." })
+      const s = await api.importSession(project.id, { claudeSessionId: picked.sessionId, name, role, allowLive: Boolean(picked.running) })
+      toast.success(`${s.name} importada`, {
+        description: picked.running
+          ? "Cerrala en la terminal y después usala desde acá: mientras esté abierta, el dashboard no la reanuda."
+          : "Reanudala cuando quieras: recibe el protocolo de control-plane.",
+      })
       onOpenChange(false)
       navigate(`/p/${project.id}/s/${s.id}`)
     } catch (err) {
@@ -86,7 +90,8 @@ export function ImportSessionDialog({
           <DialogTitle>Importar una sesión existente</DialogTitle>
           <DialogDescription>
             Conversaciones de Claude Code en la carpeta de {project.name}. Se traen con su historial y se retoman con{" "}
-            <code className="font-mono text-[0.8em]">claude --resume</code>. Si está abierta en una terminal, cerrala antes.
+            <code className="font-mono text-[0.8em]">claude --resume</code>. Si está abierta en una terminal, se importa igual y el dashboard
+            no la reanuda hasta que la cierres.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-72 overflow-y-auto rounded-lg border p-1">
@@ -98,7 +103,7 @@ export function ImportSessionDialog({
             <p className="py-8 text-center text-sm text-muted-foreground">No encontré conversaciones en esta carpeta.</p>
           ) : (
             items.map((it) => {
-              const disabled = it.imported || Boolean(it.running)
+              const disabled = it.imported
               return (
                 <button
                   key={it.sessionId}
@@ -122,8 +127,8 @@ export function ImportSessionDialog({
                       <span className="mt-0.5 flex items-center gap-1 text-xs text-status-attention">
                         <TriangleAlert className="size-3" />
                         {it.running.kind === "background"
-                          ? `Corriendo en segundo plano: detenela con claude stop ${it.running.id ?? ""}`
-                          : "Abierta en una terminal: cerrala para importarla"}
+                          ? `Corriendo en segundo plano: se importa igual y se usa acá después de claude stop ${it.running.id ?? ""}`
+                          : "Abierta en una terminal: se importa igual y se usa acá cuando la cierres"}
                       </span>
                     )}
                   </span>

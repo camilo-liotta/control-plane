@@ -1,4 +1,4 @@
-import { ArrowUp, File as FileIcon, Paperclip, Square, X } from "lucide-react"
+import { ArrowUp, File as FileIcon, Paperclip, Square, TerminalSquare, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
@@ -167,7 +167,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
 
   const uploading = pending.some((p) => p.status === "uploading")
   const ready = pending.filter((p) => p.status === "ready" && p.id)
-  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !sending
+  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !sending && !(session.external && stopped)
 
   const send = async () => {
     if (!canSend) return
@@ -248,7 +248,9 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   }
 
   const hint = stopped
-    ? "La sesión está detenida: tu mensaje la reanuda."
+    ? session.external
+      ? null
+      : "La sesión está detenida: tu mensaje la reanuda."
     : busy
       ? "Está trabajando: tu mensaje se suma al turno en curso."
       : null
@@ -256,6 +258,24 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   return (
     <div className="border-t bg-background/95 px-4 pt-3 pb-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="relative mx-auto max-w-3xl">
+        {session.external && stopped && (
+          <div className="mb-2 flex items-start gap-2 rounded-lg border border-status-attention/40 bg-status-attention/10 px-3 py-2 text-xs leading-snug">
+            <TerminalSquare className="mt-0.5 size-3.5 shrink-0 text-status-attention" />
+            <span>
+              {session.external.kind === "background" ? (
+                <>
+                  Esta conversación corre en segundo plano en Claude Code. Detenela con{" "}
+                  <code className="font-mono">claude stop {session.external.id ?? ""}</code> para usarla desde acá.
+                </>
+              ) : (
+                <>
+                  Esta conversación está abierta en una terminal{session.external.pid ? ` (pid ${session.external.pid})` : ""}. Cerrala con{" "}
+                  <code className="font-mono">/exit</code> para usarla desde acá: dos procesos sobre la misma conversación la rompen.
+                </>
+              )}
+            </span>
+          </div>
+        )}
         {menuOpen && matches.length > 0 && (
           <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border bg-popover shadow-lg">
             <div className="border-b px-3 py-1.5 text-[0.7rem] text-muted-foreground">

@@ -21,6 +21,7 @@ export function sessionStatus(s: Session): StatusView {
     case "starting":
       return { label: "Iniciando", tone: "working", pulse: true }
     case "stopped":
+      if (s.external) return { label: s.external.kind === "background" ? "En segundo plano" : "En una terminal", tone: "attention", pulse: false }
       if (s.taskState === "reported_done") return { label: "Terminó", tone: "done", pulse: false }
       return { label: "Detenida", tone: "idle", pulse: false }
     case "idle":

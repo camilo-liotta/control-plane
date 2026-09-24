@@ -609,16 +609,24 @@ export class Tools {
     void this.reloadSessions(account.id, "skills")
   }
 
+  /** Después de instalar una skill desde afuera: que las vistas y las sesiones abiertas la vean. */
+  skillsChanged(accountId: string) {
+    this.invalidate(accountId)
+    void this.reloadSessions(accountId, "skills")
+  }
+
   createSkill(
     accountId: string,
     projectId: string | null,
-    input: { scope: "user" | "project"; name: string; description: string; body: string }
+    input: { scope: "user" | "project"; name: string; description: string; body: string; content?: string }
   ): { path: string } {
     const account = this.account(accountId)
     const project = this.project(projectId)
-    const name = input.name.trim().toLowerCase()
+    // Con el SKILL.md entero (el que escribió Claude y revisaste), el nombre sale de su frontmatter.
+    const fromContent = input.content ? parseFrontmatter(input.content) : null
+    const name = (fromContent?.name ?? input.name).trim().toLowerCase()
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error("El nombre va en minúsculas, con números y guiones (ej. revisar-migraciones)")
-    if (!input.description.trim()) throw new Error("Escribí para qué sirve: Claude la usa para decidir cuándo cargarla")
+    if (!(fromContent ? fromContent.description : input.description)?.trim()) throw new Error("Escribí para qué sirve: Claude la usa para decidir cuándo cargarla")
     const dirs = this.skillDirs(account, project)
     const base = input.scope === "user" ? dirs.user : dirs.project
     if (!base) throw new Error("Elegí un proyecto")
@@ -627,7 +635,10 @@ export class Tools {
     fs.mkdirSync(dir, { recursive: true })
     const description = oneLine(input.description, 1000).replace(/"/g, '\\"')
     const file = path.join(dir, "SKILL.md")
-    fs.writeFileSync(file, `---\nname: ${name}\ndescription: "${description}"\n---\n\n${input.body.trim() || `# ${name}\n`}\n`)
+    const content = input.content?.trim()
+      ? input.content.trimEnd() + "\n"
+      : `---\nname: ${name}\ndescription: "${description}"\n---\n\n${input.body.trim() || `# ${name}\n`}\n`
+    fs.writeFileSync(file, content)
     this.invalidate(account.id)
     void this.reloadSessions(account.id, "skills")
     return { path: file }

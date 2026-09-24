@@ -1,10 +1,12 @@
-import { FilePen, Plus, Trash2 } from "lucide-react"
+import { FilePen, Plus, Sparkles, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import type { SkillInfo, SkillState, ToolsView } from "@shared/types"
+import type { CatalogSkill, SkillInfo, SkillState, ToolsView } from "@shared/types"
 
+import { DiffView } from "@/components/timeline/diff-view"
 import { Markdown } from "@/components/timeline/markdown"
+import { AiSkillSearch, SkillMarketplaces } from "@/components/tools/skill-market"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -89,11 +91,16 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
   const [draft, setDraft] = useState("")
   const [busy, setBusy] = useState(false)
   const [removing, setRemoving] = useState(false)
+  const [instruction, setInstruction] = useState("")
+  const [proposal, setProposal] = useState<string | null>(null)
+  const [proposing, setProposing] = useState(false)
 
   useEffect(() => {
     setFile(null)
     setError(null)
     setEditing(false)
+    setProposal(null)
+    setInstruction("")
     if (!skill?.path) return
     api.readSkill(view.accountId, skill.name, view.projectId).then(
       (f) => {
@@ -112,6 +119,37 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
       setFile((f) => (f ? { ...f, content: draft } : f))
       setEditing(false)
       toast.success("Skill guardada", { description: "Las sesiones abiertas la recargan." })
+      onChanged()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const propose = async () => {
+    if (!skill || !instruction.trim()) return
+    setProposing(true)
+    try {
+      const r = await api.aiEditSkill(view.accountId, skill.name, instruction, view.projectId)
+      setProposal(r.content)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProposing(false)
+    }
+  }
+
+  const applyProposal = async () => {
+    if (!skill || !proposal) return
+    setBusy(true)
+    try {
+      await api.saveSkill(view.accountId, skill.name, proposal, view.projectId)
+      setFile((f) => (f ? { ...f, content: proposal } : f))
+      setDraft(proposal)
+      setProposal(null)
+      setInstruction("")
+      toast.success("Cambio aplicado", { description: "Las sesiones abiertas recargan la skill." })
       onChanged()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -157,7 +195,44 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
               <Skeleton className="h-4 w-5/6" />
             </div>
           )}
-          {file && !editing && <Markdown text={body || "_(vacía)_"} />}
+          {file && skill?.editable && !editing && (
+            <div className="mb-4 space-y-2 rounded-lg border bg-muted/30 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-medium">
+                <Sparkles className="size-3.5 text-claude" />
+                Modificar con IA
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void propose()}
+                  placeholder="Ej: agregá un paso para correr los tests antes de terminar"
+                  className="text-sm"
+                />
+                <Button size="sm" variant="outline" onClick={() => void propose()} disabled={proposing || !instruction.trim()}>
+                  {proposing ? <Spinner /> : <Sparkles />}
+                  Proponer
+                </Button>
+              </div>
+              {proposing && <p className="text-xs text-muted-foreground">Claude está reescribiendo la skill…</p>}
+              {proposal && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Esto cambiaría. No se guarda hasta que lo apliques.</p>
+                  <DiffView oldText={file.content} newText={proposal} maxLines={200} />
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => setProposal(null)}>
+                      Descartar
+                    </Button>
+                    <Button size="sm" onClick={() => void applyProposal()} disabled={busy}>
+                      {busy && <Spinner />}
+                      Aplicar el cambio
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {file && !editing && !proposal && <Markdown text={body || "_(vacía)_"} />}
           {file && editing && <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} className="min-h-[60svh] font-mono text-xs" />}
         </div>
         {file && skill?.editable && (
@@ -205,19 +280,44 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
 
 function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsView; open: boolean; onOpenChange: (v: boolean) => void; onCreated: () => void }) {
   const [scope, setScope] = useState<"user" | "project">(view.projectId ? "project" : "user")
+  const [mode, setMode] = useState<"ai" | "manual">("ai")
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [body, setBody] = useState("")
+  const [need, setNeed] = useState("")
+  const [generated, setGenerated] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
   const [saving, setSaving] = useState(false)
+  const generate = async () => {
+    setGenerating(true)
+    try {
+      const r = await api.aiDraftSkill(view.accountId, need, scope, view.projectId)
+      setGenerated(r.content)
+      setName(r.name)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGenerating(false)
+    }
+  }
   const save = async () => {
     setSaving(true)
     try {
-      await api.createSkill(view.accountId, { scope, name, description, body, projectId: view.projectId })
+      await api.createSkill(view.accountId, {
+        scope,
+        name,
+        description,
+        body,
+        ...(mode === "ai" && generated ? { content: generated } : {}),
+        projectId: view.projectId,
+      })
       toast.success(`Skill ${name} creada`, { description: "Las sesiones abiertas la cargan al instante." })
       onOpenChange(false)
       setName("")
       setDescription("")
       setBody("")
+      setNeed("")
+      setGenerated(null)
       onCreated()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -227,16 +327,35 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Nueva skill</DialogTitle>
           <DialogDescription>Una carpeta con su SKILL.md, como las que crea Claude Code.</DialogDescription>
         </DialogHeader>
+        <div className="flex gap-1 rounded-lg bg-muted p-1 text-sm">
+          {(["ai", "manual"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={mode === m ? "flex-1 rounded-md bg-background px-3 py-1 font-medium shadow-xs" : "flex-1 rounded-md px-3 py-1 text-muted-foreground"}
+            >
+              {m === "ai" ? "Que la escriba Claude" : "Escribirla yo"}
+            </button>
+          ))}
+        </div>
         <FieldGroup>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="sk-name">Nombre</FieldLabel>
-              <Input id="sk-name" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/\s+/g, "-"))} placeholder="revisar-migraciones" className="font-mono" />
+              <Input
+                id="sk-name"
+                value={name}
+                onChange={(e) => setName(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
+                placeholder={mode === "ai" ? "lo propone Claude" : "revisar-migraciones"}
+                className="font-mono"
+                disabled={mode === "ai"}
+              />
             </Field>
             <Field>
               <FieldLabel>Dónde</FieldLabel>
@@ -251,21 +370,57 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
               </Select>
             </Field>
           </div>
-          <Field>
-            <FieldLabel htmlFor="sk-desc">Para qué sirve</FieldLabel>
-            <Input id="sk-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Usala antes de aplicar una migración de base de datos…" />
-            <FieldDescription>Claude lee esto para decidir cuándo usarla.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="sk-body">Instrucciones</FieldLabel>
-            <Textarea id="sk-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Pasos, reglas, ejemplos…" className="min-h-40 font-mono text-xs" />
-          </Field>
+          {mode === "ai" ? (
+            <>
+              <Field>
+                <FieldLabel htmlFor="sk-need">Qué tiene que saber hacer</FieldLabel>
+                <Textarea
+                  id="sk-need"
+                  value={need}
+                  onChange={(e) => setNeed(e.target.value)}
+                  placeholder="Ej: revisar una migración SQL de Postgres antes de aplicarla: locks, índices concurrentes, backfills en lotes."
+                  className="min-h-20"
+                />
+                <FieldDescription>
+                  {scope === "project" ? "Para una skill del proyecto, Claude puede leer el repo (sin tocar nada) para adaptarla." : "Claude la escribe; la revisás antes de crearla."} Usa tu plan.
+                </FieldDescription>
+              </Field>
+              <div className="flex justify-end">
+                <Button size="sm" variant="outline" onClick={() => void generate()} disabled={generating || !need.trim()}>
+                  {generating ? <Spinner /> : <Sparkles />}
+                  {generated ? "Rehacer" : "Escribirla"}
+                </Button>
+              </div>
+              {generating && <p className="text-xs text-muted-foreground">Claude está escribiendo la skill (tarda unos segundos)…</p>}
+              {generated !== null && (
+                <Field>
+                  <FieldLabel htmlFor="sk-generated">SKILL.md (podés editarlo)</FieldLabel>
+                  <Textarea id="sk-generated" value={generated} onChange={(e) => setGenerated(e.target.value)} className="min-h-64 font-mono text-xs" />
+                </Field>
+              )}
+            </>
+          ) : (
+            <>
+              <Field>
+                <FieldLabel htmlFor="sk-desc">Para qué sirve</FieldLabel>
+                <Input id="sk-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Usala antes de aplicar una migración de base de datos…" />
+                <FieldDescription>Claude lee esto para decidir cuándo usarla.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="sk-body">Instrucciones</FieldLabel>
+                <Textarea id="sk-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Pasos, reglas, ejemplos…" className="min-h-40 font-mono text-xs" />
+              </Field>
+            </>
+          )}
         </FieldGroup>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={() => void save()} disabled={saving || !name.trim() || !description.trim()}>
+          <Button
+            onClick={() => void save()}
+            disabled={saving || (mode === "ai" ? !generated?.trim() : !name.trim() || !description.trim())}
+          >
             {saving && <Spinner />}
             Crear
           </Button>
@@ -278,9 +433,11 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
 export function SkillSection({ view, onChanged, readOnly = false }: { view: ToolsView; onChanged: () => void; readOnly?: boolean }) {
   const [open, setOpen] = useState<SkillInfo | null>(null)
   const [creating, setCreating] = useState(false)
+  const [marketSkill, setMarketSkill] = useState<CatalogSkill | null>(null)
   const total = view.skills.reduce((n, s) => n + (s.state === "off" ? 0 : (s.tokens ?? 0)), 0)
   return (
     <div className="space-y-5">
+      {!readOnly && <AiSkillSearch view={view} onChanged={onChanged} onOpenSkill={setMarketSkill} />}
       <div className="flex flex-wrap items-center gap-3">
         <p className="flex-1 text-sm text-muted-foreground">
           {view.skills.length} skills{total ? ` · su listado ocupa ~${tokens(total)} tokens en cada sesión` : ""}.
@@ -323,6 +480,7 @@ export function SkillSection({ view, onChanged, readOnly = false }: { view: Tool
           </section>
         )
       })}
+      {!readOnly && <SkillMarketplaces view={view} onChanged={onChanged} openSkill={marketSkill} setOpenSkill={setMarketSkill} />}
       <SkillSheet skill={open} view={view} onClose={() => setOpen(null)} onChanged={onChanged} />
       {!readOnly && <NewSkillDialog view={view} open={creating} onOpenChange={setCreating} onCreated={onChanged} />}
     </div>

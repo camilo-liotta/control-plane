@@ -12,6 +12,7 @@ import type {
   ServerMessage,
   Session,
   StoredEvent,
+  TurnProgress,
 } from "@shared/types"
 
 import { api } from "./api"
@@ -39,6 +40,8 @@ interface State {
   accounts: Record<string, Account>
   /** Compactaciones en curso por sesión (borrador, espera, aplicando). */
   compactions: Record<string, CompactionState>
+  /** Turno en curso de cada sesión que está trabajando: cuándo empezó y cuántos tokens van. */
+  turns: Record<string, TurnProgress | undefined>
   meta: Meta | null
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
@@ -72,6 +75,7 @@ export const useStore = create<State>((set, get) => ({
   unread: {},
   accounts: {},
   compactions: {},
+  turns: {},
   meta: null,
   focused: null,
 
@@ -92,6 +96,7 @@ export const useStore = create<State>((set, get) => ({
           reports: byId(snapshot.reports),
           accounts: byId(snapshot.accounts),
           compactions: Object.fromEntries((snapshot.compactions ?? []).map((c) => [c.sessionId, c])),
+          turns: Object.fromEntries((snapshot.turns ?? []).map((t) => [t.sessionId, t.turn])),
           meta: snapshot.meta,
           partials: {},
         })
@@ -186,6 +191,9 @@ export const useStore = create<State>((set, get) => ({
       case "compaction":
         set((s) => ({ compactions: { ...s.compactions, [msg.state.sessionId]: msg.state } }))
         break
+      case "turn":
+        set((s) => ({ turns: { ...s.turns, [msg.sessionId]: msg.turn ?? undefined } }))
+        break
       case "toast":
         notify(msg)
         break
@@ -230,10 +238,11 @@ export function useCurrentAccount(): Account | null {
   return accounts.find((a) => a.id === selected) ?? accounts.find((a) => a.isDefault) ?? accounts[0] ?? null
 }
 
-/** Proyectos de la cuenta elegida, ordenados por fecha de creación (referencia estable entre renders). */
-export function useProjects() {
+/** Proyectos de la cuenta elegida (u otra), ordenados por fecha de creación (referencia estable entre renders). */
+export function useProjects(of?: Account | null) {
   const projects = useStore((s) => s.projects)
-  const account = useCurrentAccount()
+  const current = useCurrentAccount()
+  const account = of ?? current
   const accountId = account?.id ?? null
   const isDefault = account?.isDefault ?? true
   return useMemo(

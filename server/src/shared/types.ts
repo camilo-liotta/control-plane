@@ -159,6 +159,49 @@ export interface Session {
   subagents: SubagentBrief[]
   /** Uso de contexto al terminar el último turno. */
   context: ContextUsage | null
+  /** La conversación está abierta fuera del dashboard (en una terminal o en segundo plano). */
+  external: ExternalSession | null
+}
+
+export interface RepoInfo {
+  path: string
+  /** Relativo a la carpeta del proyecto ("" si es la raíz). */
+  name: string
+  isRoot: boolean
+  branch: string | null
+  remote: string | null
+  github: { owner: string; repo: string; url: string; branchUrl: string | null } | null
+  head: { hash: string; subject: string; at: number | null; author: string | null } | null
+  /** Archivos con cambios sin commitear (null si no se pudo leer). */
+  changes: number | null
+  ahead: number | null
+  behind: number | null
+  /** Otros worktrees del repo (donde suelen trabajar las sesiones en sus ramas). */
+  worktrees: { path: string; branch: string | null }[]
+}
+
+export interface ProjectOverview {
+  projectId: string
+  repos: RepoInfo[]
+  /** Todo lo que gastaron las sesiones del proyecto, incluidas las archivadas. */
+  tokens: TokenUsage
+  costUsd: number
+  sessions: number
+  lastActivity: { sessionId: string; name: string; kind: SessionKind; at: number; text: string | null } | null
+  at: number
+}
+
+export interface TurnProgress {
+  startedAt: number
+  /** Tokens que devolvió el modelo en este turno (estimados mientras llegan). */
+  tokens: number
+}
+
+export interface ExternalSession {
+  pid: number | null
+  kind: "interactive" | "background"
+  /** Id corto de Claude Code (para `claude stop <id>` en las de segundo plano). */
+  id: string | null
 }
 
 export interface SubagentBrief {
@@ -335,6 +378,38 @@ export interface SkillInfo {
   stateScope: "user" | "project" | "local" | null
   /** Se puede editar el archivo desde el dashboard. */
   editable: boolean
+}
+
+/** Una skill de un marketplace (fuente de skills o marketplace de plugins), para instalarla suelta. */
+export interface CatalogSkill {
+  /** "<fuente>::<carpeta relativa>" */
+  id: string
+  name: string
+  description: string
+  sourceId: string
+  sourceName: string
+  /** Si viene adentro de un plugin de un marketplace de plugins. */
+  plugin: string | null
+  /** Si ya hay una skill con ese nombre en tu cuenta o en el proyecto. */
+  installed: "user" | "project" | null
+}
+
+export interface SkillSourceView {
+  id: string
+  name: string
+  kind: "git" | "local" | "plugin-marketplace"
+  url: string | null
+  path: string
+  skills: number
+  updatedAt: number | null
+  /** Las de marketplaces de plugins se administran en Plugins. */
+  removable: boolean
+}
+
+export interface SkillMarketView {
+  sources: SkillSourceView[]
+  skills: CatalogSkill[]
+  suggested: { name: string; url: string; description: string }[]
 }
 
 export interface ToolsView {
@@ -545,6 +620,7 @@ export interface Snapshot {
   reports: Report[]
   accounts: Account[]
   compactions: CompactionState[]
+  turns: { sessionId: string; turn: TurnProgress }[]
   meta: Meta
 }
 
@@ -572,6 +648,8 @@ export type ServerMessage =
   | { type: "account_removed"; id: string }
   | { type: "meta"; meta: Meta }
   | { type: "compaction"; state: CompactionState }
+  /** El turno en curso de una sesión (null cuando termina): para el indicador de "trabajando". */
+  | { type: "turn"; sessionId: string; turn: TurnProgress | null }
   | {
       type: "toast"
       level: ToastLevel

@@ -55,10 +55,10 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
   const [, navigate] = useLocation()
   const current = useCurrentAccount()
   const accounts = useAccounts()
-  const projects = useProjects()
   const project = useStore((s) => (projectId ? s.projects[projectId] : undefined))
   // Un proyecto usa siempre su propia cuenta (aunque el selector tenga otra elegida).
   const account = project ? (accounts.find((a) => a.id === project.accountId) ?? accounts.find((a) => a.isDefault) ?? current) : current
+  const projects = useProjects(account)
   const { view, loading, error, reload } = useToolsView(account?.id ?? null, projectId)
   const [tab, setTab] = useState("mcp")
 

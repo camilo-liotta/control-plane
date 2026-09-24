@@ -11,7 +11,7 @@ import { PermissionCard, QuestionCard } from "@/components/timeline/interactive-
 import { Markdown } from "@/components/timeline/markdown"
 import { SubagentCard, SubagentContext, subagentMap } from "@/components/timeline/subagents"
 import { OutgoingMessage, TodoCard, ToolRow, type ToolCall } from "@/components/timeline/tool-card"
-import { Spinner } from "@/components/ui/spinner"
+import { WorkingIndicator } from "@/components/timeline/working-indicator"
 import { clock, duration, tokens as tokensShort, usd } from "@/lib/format"
 import { reportStatusView } from "@/lib/status"
 import { useStore, type PartialBlock } from "@/lib/store"
@@ -323,24 +323,20 @@ const EventItem = memo(function EventItem({ ev, sessionId }: { ev: StoredEvent; 
 })
 
 function LiveTail({ session, partial }: { session: Session; partial?: PartialBlock }) {
-  if (partial?.block === "text" && partial.text) {
-    return (
-      <div className="streaming-caret">
-        <Markdown text={partial.text} className="inline" />
-      </div>
-    )
-  }
-  if (session.status === "working" || session.status === "starting") {
-    return (
-      <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground">
-        <Spinner className="size-3.5 text-status-working" />
-        <span className="truncate font-mono">
-          {partial?.block === "thinking" ? "pensando…" : session.status === "starting" ? "iniciando la sesión…" : session.lastActivity || "trabajando…"}
-        </span>
-      </div>
-    )
-  }
-  return null
+  const turn = useStore((s) => s.turns[session.id])
+  const working = session.status === "working" || session.status === "starting"
+  const streaming = partial?.block === "text" && partial.text
+  if (!streaming && !working) return null
+  return (
+    <div className="space-y-3">
+      {streaming && (
+        <div className="streaming-caret">
+          <Markdown text={partial.text} className="inline" />
+        </div>
+      )}
+      {working && <WorkingIndicator session={session} turn={turn} block={partial?.block} />}
+    </div>
+  )
 }
 
 /** Renderiza una lista de ítems ya armada (la usa el chat principal y el panel de cada subagente). */

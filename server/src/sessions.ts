@@ -9,6 +9,7 @@ import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import type {
   ContextUsage,
+  ExternalSession,
   Meta,
   ModelOption,
   PendingRequest,
@@ -22,6 +23,7 @@ import type {
   SubagentSpec,
   SubagentStatus,
   TimelineEvent,
+  TokenUsage,
   UsageInfo,
   UserOrigin,
 } from "./shared/types.ts"
@@ -59,6 +61,20 @@ interface Runtime {
   lastCompactEventId: number | null
   /** La sesión espera algo tuyo que no es una pregunta de Claude (ej. elegir qué conservar al compactar). */
   hold: string | null
+  /** El turno en curso, para el indicador de "trabajando": cuándo empezó y cuántos tokens van. */
+  turn: TurnCounter | null
+  /** Lo que la sesión llevaba gastado cuando arrancó este proceso (Claude Code cuenta desde cero en cada uno). */
+  spentBefore: { usd: number; tokens: TokenUsage | null }
+}
+
+interface TurnCounter {
+  startedAt: number
+  /** Tokens finales de cada mensaje ya completo. */
+  final: Map<string, number>
+  /** Caracteres que van llegando de los mensajes en curso (≈ 4 por token). */
+  chars: Map<string, number>
+  thinking: number
+  timer: NodeJS.Timeout | null
 }
 
 const AGENT_TOOLS = new Set(["Agent", "Task"])
@@ -115,6 +131,8 @@ export interface SessionManagerOptions {
   hookUrlFor: (token: string) => string
   launchFor: (session: SessionRecord) => LaunchContext
   accountIdFor: (session: SessionRecord) => string
+  /** Si la conversación está viva fuera del dashboard (terminal o segundo plano). */
+  liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
   meta: Meta
 }
 
@@ -148,6 +166,9 @@ export class SessionManager extends EventEmitter<{
   private hookUrlFor: (token: string) => string
   private launchFor: (session: SessionRecord) => LaunchContext
   private accountIdFor: (session: SessionRecord) => string
+  private liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
+  /** Conversaciones del dashboard que hoy están abiertas en otro lado (se refresca periódicamente). */
+  private external = new Map<string, ExternalSession>()
 
   constructor(opts: SessionManagerOptions) {
     super()
@@ -158,6 +179,7 @@ export class SessionManager extends EventEmitter<{
     this.hookUrlFor = opts.hookUrlFor
     this.launchFor = opts.launchFor
     this.accountIdFor = opts.accountIdFor
+    this.liveElsewhere = opts.liveElsewhere
     this.meta = opts.meta
     const db = opts.db
     // Si el server se cortó, ninguna sesión sigue viva: arrancan como detenidas.
@@ -194,6 +216,20 @@ export class SessionManager extends EventEmitter<{
       subagentsRunning: rt ? [...rt.subagents.values()].filter((s) => s.status === "running").length : 0,
       subagents: rt ? this.subagentBriefs(rt) : [],
       context: rt?.context ?? rec.context,
+      external: rt && !rt.proc.exited ? null : (this.external.get(rec.id) ?? null),
+    }
+  }
+
+  /** Actualiza qué sesiones tienen su conversación abierta fuera del dashboard. */
+  setExternal(found: Map<string, ExternalSession>) {
+    const changed = new Set<string>([...this.external.keys(), ...found.keys()])
+    for (const id of changed) {
+      const before = JSON.stringify(this.external.get(id) ?? null)
+      const after = JSON.stringify(found.get(id) ?? null)
+      if (before === after) continue
+      if (found.has(id)) this.external.set(id, found.get(id)!)
+      else this.external.delete(id)
+      this.broadcastSession(id)
     }
   }
 
@@ -339,12 +375,26 @@ export class SessionManager extends EventEmitter<{
   // ------------------------------------------------------------------ ciclo
 
   /** Lanza el proceso si no está corriendo. Resuelve cuando el CLI terminó el handshake. */
-  start(id: string): Promise<void> {
+  async start(id: string): Promise<void> {
     const existing = this.runtimes.get(id)
     if (existing && !existing.proc.exited) return existing.ready
     const rec = this.db.getSession(id)
-    if (!rec) return Promise.reject(new Error("Sesión inexistente"))
-    if (rec.archivedAt) return Promise.reject(new Error("La sesión está archivada"))
+    if (!rec) throw new Error("Sesión inexistente")
+    if (rec.archivedAt) throw new Error("La sesión está archivada")
+    // Dos procesos sobre la misma conversación la rompen: si está abierta en otro lado, no se reanuda.
+    if (rec.startedOnce && this.liveElsewhere) {
+      const live = await this.liveElsewhere(rec).catch(() => null)
+      const again = this.runtimes.get(id)
+      if (again && !again.proc.exited) return again.ready
+      if (live) {
+        this.setExternal(new Map([...this.external, [id, live]]))
+        throw new Error(
+          live.kind === "background"
+            ? `Esta conversación corre en segundo plano en Claude Code. Detenela con: claude stop ${live.id ?? ""}`.trim()
+            : `Esta conversación está abierta en una terminal${live.pid ? ` (pid ${live.pid})` : ""}. Cerrala con /exit para usarla desde acá: dos procesos sobre la misma conversación la rompen.`
+        )
+      }
+    }
     return this.launch(rec, existing?.retried ?? false)
   }
 
@@ -381,6 +431,8 @@ export class SessionManager extends EventEmitter<{
       turnHadAssistant: false,
       lastCompactEventId: null,
       hold: null,
+      turn: null,
+      spentBefore: { usd: rec.costUsd, tokens: rec.tokens },
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -484,6 +536,8 @@ export class SessionManager extends EventEmitter<{
             rt.agentCalls.set(event.id, { input: (event.input ?? {}) as Record<string, unknown>, parent: event.parent })
           }
           if ((event.kind === "text" || event.kind === "tool_use" || event.kind === "thinking") && !event.parent) rt.turnHadAssistant = true
+          // El "acumulado" del fin de turno es el de la sesión, no el de este proceso.
+          if (event.kind === "turn_end" && event.costUsd > 0) event.costUsd += rt.spentBefore.usd
           const stored = this.addEvent(id, event)
           if (event.kind === "compact") {
             rt.lastCompactEventId = stored.id
@@ -553,7 +607,25 @@ export class SessionManager extends EventEmitter<{
         }
         case "status":
           rt.cliState = action.state
+          if (action.state === "running" && !rt.turn) this.startTurn(id, rt)
           this.setStatus(id, rt, this.deriveStatus(rt))
+          break
+        case "stream_chars":
+          if (!rt.turn) this.startTurn(id, rt)
+          rt.turn!.chars.set(action.messageId, (rt.turn!.chars.get(action.messageId) ?? 0) + action.chars)
+          this.queueTurn(id, rt)
+          break
+        case "message_tokens":
+          if (!rt.turn) break
+          rt.turn.final.set(action.messageId, action.outputTokens)
+          rt.turn.chars.delete(action.messageId)
+          rt.turn.thinking = 0
+          this.queueTurn(id, rt)
+          break
+        case "thinking_estimate":
+          if (!rt.turn) this.startTurn(id, rt)
+          rt.turn!.thinking += action.delta
+          this.queueTurn(id, rt)
           break
         case "partial":
           this.hub.broadcast({
@@ -577,9 +649,10 @@ export class SessionManager extends EventEmitter<{
           this.broadcastSession(id)
           break
         case "cost":
+          // total_cost_usd y modelUsage cuentan desde que arrancó el proceso: al reanudar se suman a lo de antes.
           this.db.updateSession(id, {
-            ...(action.totalUsd > 0 ? { costUsd: action.totalUsd } : {}),
-            ...(action.tokens ? { tokens: action.tokens } : {}),
+            ...(action.totalUsd > 0 ? { costUsd: rt.spentBefore.usd + action.totalUsd } : {}),
+            ...(action.tokens ? { tokens: addTokens(rt.spentBefore.tokens, action.tokens) } : {}),
           })
           break
         case "usage":
@@ -615,6 +688,7 @@ export class SessionManager extends EventEmitter<{
           }
           const local = !rt.turnHadAssistant
           rt.turnHadAssistant = false
+          this.endTurn(id, rt)
           const rec = this.db.getSession(id)
           if (rec) {
             this.broadcastSession(id)
@@ -692,6 +766,7 @@ export class SessionManager extends EventEmitter<{
 
   private onExit(id: string, rt: Runtime, info: ExitInfo) {
     if (this.runtimes.get(id) !== rt) return
+    this.endTurn(id, rt)
     this.runtimes.delete(id)
     for (const requestId of [...rt.pendingControl.keys()]) this.cancelControl(rt, requestId)
     // Los subagentes mueren con su sesión.
@@ -780,6 +855,50 @@ export class SessionManager extends EventEmitter<{
     const rt = this.runtimes.get(id)
     if (!rt || rt.proc.exited) throw new Error("La sesión no está corriendo")
     return rt.proc.request(subtype, payload, timeoutMs)
+  }
+
+  // ------------------------------------------------------------- turno en curso
+
+  private startTurn(id: string, rt: Runtime) {
+    rt.turn = { startedAt: now(), final: new Map(), chars: new Map(), thinking: 0, timer: null }
+    this.broadcastTurn(id, rt)
+  }
+
+  private turnTokens(t: TurnCounter): number {
+    let n = t.thinking
+    for (const v of t.final.values()) n += v
+    for (const c of t.chars.values()) n += Math.round(c / 4)
+    return n
+  }
+
+  /** Como mucho una actualización por segundo por sesión: el indicador no necesita más. */
+  private queueTurn(id: string, rt: Runtime) {
+    const t = rt.turn
+    if (!t || t.timer) return
+    t.timer = setTimeout(() => {
+      t.timer = null
+      if (rt.turn === t) this.broadcastTurn(id, rt)
+    }, 1000)
+    t.timer.unref()
+  }
+
+  private broadcastTurn(id: string, rt: Runtime) {
+    const t = rt.turn
+    this.hub.broadcast({ type: "turn", sessionId: id, turn: t ? { startedAt: t.startedAt, tokens: this.turnTokens(t) } : null })
+  }
+
+  private endTurn(id: string, rt: Runtime) {
+    if (!rt.turn) return
+    if (rt.turn.timer) clearTimeout(rt.turn.timer)
+    rt.turn = null
+    this.broadcastTurn(id, rt)
+  }
+
+  /** Turnos en curso (para quien se conecta a mitad de uno). */
+  turns(): { sessionId: string; turn: { startedAt: number; tokens: number } }[] {
+    const out: { sessionId: string; turn: { startedAt: number; tokens: number } }[] = []
+    for (const [id, rt] of this.runtimes) if (rt.turn) out.push({ sessionId: id, turn: { startedAt: rt.turn.startedAt, tokens: this.turnTokens(rt.turn) } })
+    return out
   }
 
   /** Marca que la sesión espera algo tuyo (aparece como "te necesita" con ese detalle), o lo limpia. */
@@ -883,6 +1002,17 @@ export class SessionManager extends EventEmitter<{
  * Mensaje con adjuntos: las imágenes van como bloques (Claude las ve directo) y todos los
  * archivos quedan listados con su ruta, para que pueda abrirlos con sus herramientas.
  */
+function addTokens(a: TokenUsage | null, b: TokenUsage): TokenUsage {
+  if (!a) return b
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    total: a.total + b.total,
+  }
+}
+
 function contentWithFiles(text: string, files: AttachmentRecord[]): Record<string, unknown>[] {
   const list = files.map((f) => `- ${f.path} (${f.name}, ${f.mime}, ${Math.max(1, Math.round(f.size / 1024))} KB)`).join("\n")
   const blocks: Record<string, unknown>[] = [

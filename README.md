@@ -6,16 +6,21 @@ Reemplaza el copy-paste entre terminales y el chat que orquesta: los workers le 
 
 No reinventa nada: cada sesión es el `claude` que ya tenés instalado, con tu login, corriendo en modo headless. El dashboard le da una UI y un poco de estructura.
 
+Es 100% local: corre en tu máquina, escucha solo en `127.0.0.1` y no tiene cuentas propias, servicios externos ni telemetría. Lo único que sale a internet es lo que ya hace Claude Code (y `git clone` cuando agregás un marketplace de skills).
+
+> *A local dashboard to run several Claude Code sessions in parallel, coordinated by an orchestrator session that drafts their prompts for your approval. The docs are in Spanish; issues and PRs in English are welcome.*
+
 ## Requisitos
 
 - **Node.js 24 o más nuevo** (corre TypeScript y SQLite nativos, sin compilar ni dependencias nativas).
 - **Claude Code** instalado y logueado (`claude --version` tiene que andar en la terminal donde levantás el dashboard).
+- **git** (para el resumen de cada proyecto y los marketplaces de skills).
 - Linux o macOS.
 
 ## Instalación y uso diario
 
 ```bash
-git clone <este repo> control-plane
+git clone <url de este repo> control-plane
 cd control-plane
 npm install
 npm start
@@ -35,6 +40,16 @@ Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga 
 6. **Bandeja**: todo lo que espera una decisión tuya, en todos los proyectos. Las preguntas de Claude (AskUserQuestion) y los pedidos de aprobación se contestan desde el chat.
 
 Atajos: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> para saltar a cualquier sesión, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>B</kbd> para ocultar la barra lateral.
+
+### El resumen del proyecto
+
+Arriba de todo en el tablero de cada proyecto:
+
+- **Repositorios**: el de la carpeta y los que haya adentro (hasta dos niveles), con su rama, archivos con cambios, commits por subir o por bajar, el último commit y sus worktrees. Si el remoto es de GitHub, el repo, la rama y el commit llevan a su página.
+- **Tokens y costo** gastados en el proyecto: la suma de todas sus sesiones, incluidas las archivadas.
+- **Última actividad**: qué sesión fue, cuándo y qué estaba haciendo, con un botón para ir a esa sesión.
+
+Solo lee git (con `--no-optional-locks`, para no competir con las sesiones que están commiteando).
 
 ### El mapa del proyecto
 
@@ -56,10 +71,11 @@ La conversación de Claude Code no se borra nunca: queda en disco y se retoma de
 
 ### En el chat de cada sesión
 
+- **Mientras trabaja**, al pie del chat aparece la línea de la terminal: `✻ Maquinando… (1m 12s · ↓ 3,4k tokens)`, con el tiempo y los tokens del turno, y debajo qué está haciendo (la herramienta que corre, "pensando…" o "escribiendo la respuesta…").
 - **Slash commands**: escribí `/` y aparecen los comandos y skills de esa sesión (`/compact`, `/context`, `/code-review`…). <kbd>↑</kbd>/<kbd>↓</kbd> para elegir, <kbd>Tab</kbd> para completar.
 - **Adjuntos**: con el clip, pegando (<kbd>Ctrl</kbd>+<kbd>V</kbd> de una captura) o arrastrando archivos al chat. Las imágenes Claude las ve directo; cualquier archivo queda guardado en disco y Claude recibe su ruta para abrirlo con sus herramientas. Las imágenes grandes se achican antes de subirlas. Se ven en el mensaje y en la sección **Adjuntos** del panel; las imágenes que devuelve una herramienta (capturas, imágenes leídas) aparecen en su fila.
 - **Modelo y esfuerzo**: se cambian desde el encabezado, en vivo: aplican desde el próximo turno sin reiniciar la sesión.
-- **Costo y tokens**: el encabezado muestra lo acumulado de la sesión (costo equivalente API y tokens, incluidos sus subagentes), el panel el desglose (entrada, salida, caché) y cada separador de turno los tokens de ese turno. El tablero suma los totales del proyecto.
+- **Costo y tokens**: el encabezado muestra lo acumulado de la sesión (costo equivalente API y tokens, incluidos sus subagentes y todas las veces que se reanudó), el panel el desglose (entrada, salida, caché) y cada separador de turno los tokens de ese turno. El tablero suma los totales del proyecto.
 
 ### Compactación: elegí qué sobrevive
 
@@ -87,7 +103,9 @@ La orquestadora puede **pedirle a un worker subagentes específicos** en sus pro
 
 ### Importar sesiones que ya tenías abiertas
 
-Desde el menú del tablero, **Importar una sesión existente** lista las conversaciones de Claude Code en la carpeta del repo. Se traen con su historial y se retoman por su id. Si la sesión sigue abierta en una terminal, cerrala antes (dos procesos sobre la misma conversación la rompen).
+Desde el menú del tablero, **Importar una sesión existente** lista las conversaciones de Claude Code en la carpeta del repo. Se traen con su historial y se retoman por su id, con el protocolo de control-plane.
+
+Una conversación que sigue abierta en una terminal (o corriendo en segundo plano) se puede importar igual, pero el dashboard **no la reanuda mientras siga abierta**: dos procesos sobre la misma conversación la rompen. La sesión lo muestra y te dice cómo cerrarla (`/exit` en la terminal, o `claude stop <id>` si está en segundo plano). Apenas la cerrás, le escribís desde el dashboard y sigue.
 
 Para lo contrario, el panel de cada sesión tiene el comando `claude --resume <id>` listo para copiar: detenela en el dashboard y abrila en una terminal.
 
@@ -123,6 +141,11 @@ Cada cuenta es un directorio de configuración de Claude Code, el que se elige c
 - **MCP**: todos los servidores con su estado (conectado, requiere login, falló, desactivado), de dónde vienen (tu cuenta, el proyecto, un plugin, un conector de claude.ai) y sus herramientas. En un proyecto, el interruptor lo **activa o desactiva solo ahí** (lo guarda Claude Code, como en `/mcp`). **Iniciar sesión** corre `claude mcp login` y abre el navegador. **Agregar servidor** (comando local, HTTP o SSE) y **Quitar** usan `claude mcp`. Los conectores de claude.ai se administran en claude.ai.
 - **Plugins**: los instalados, con lo que traen (skills, agentes, hooks, MCP) y los tokens que suman a cada sesión. Se **habilitan, actualizan y desinstalan** con `claude plugin`. **Explorar** busca en tus marketplaces e instala; si el marketplace declara un comando para instalar, primero te lo muestra y lo tenés que aceptar. En un proyecto, habilitar o instalar aplica solo para vos (`.claude/settings.local.json`). Los de tu organización se pueden deshabilitar, no desinstalar.
 - **Skills**: las tuyas, las del proyecto, las de plugins y las incluidas en Claude Code, con los tokens que ocupa su listado. El estado es el del menú de skills de Claude Code: **Activa**, **Solo el nombre**, **Solo si la pedís** (`/nombre`) o **Desactivada**; se guarda en tu cuenta o solo en el proyecto. Podés ver y **editar** el SKILL.md de las tuyas y del proyecto, **crear** una nueva o **quitarla** (se mueve a la papelera del dashboard, `~/.control-plane/trash`, no se borra).
+- **Marketplaces de skills** (al pie de Skills): repos con carpetas `SKILL.md`, como `anthropics/skills`, más las skills que traen tus marketplaces de plugins. **Agregar fuente** acepta `usuario/repo` de GitHub, una URL https o una carpeta local; los repos se clonan en `~/.control-plane/skill-sources`, nunca adentro de la configuración de Claude Code. Cada skill se puede previsualizar (avisa si trae scripts) e instalar en tu cuenta o en el proyecto: se copia su carpeta, nunca pisa una que ya tengas y no se actualiza sola.
+- **Skills con IA** (usan tu plan: son consultas a Claude sin herramientas, o con lectura del repo, que no guardan conversación):
+  - **Buscar con IA**: contás qué necesitás y Claude elige lo que sirve entre tus marketplaces de skills y de plugins y lo que ya tenés, con el porqué.
+  - **Nueva skill → Que la escriba Claude**: contás qué tiene que hacer y Claude escribe el SKILL.md (si es del proyecto, lee el repo para adaptarla). Lo revisás y editás antes de crearla.
+  - **Modificar con IA**: en una skill tuya o del proyecto, pedís el cambio y ves el diff antes de aplicarlo.
 
 Las sesiones abiertas recargan plugins y skills solas después de un cambio; un MCP nuevo lo toman al reanudarse.
 
@@ -161,6 +184,8 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
 - **Compactación**: cada sesión se lanza con hooks `PreCompact` y `PostCompact` (en `--settings`, se suman a los tuyos) que llaman al server. La salida de `PreCompact` es, para Claude Code, instrucciones extra del resumen: así viaja tu selección, y en modo "esperarme" el hook no responde hasta que elegís. El borrador se pide con `side_question` (lo mismo que `/btw`); si la sesión ya está compactando, se lee la conversación en una copia que no se guarda (`--resume --fork-session --no-session-persistence`).
 - **Herramientas**: se leen de una sesión abierta en esa carpeta (`mcp_status`, `get_context_usage`) o, si no hay, de un Claude Code sin conversación que carga la config, conecta los MCP y se cierra (no guarda nada ni corre tus hooks). Los cambios los hace Claude Code: `claude plugin`, `claude mcp`, `mcp_toggle` y `skillOverrides` en los settings.
 - **Cuentas**: cada proceso `claude` se lanza con el `CLAUDE_CONFIG_DIR` (y el comando, si tiene uno) de la cuenta del proyecto. La de siempre se lanza sin tocar el entorno. El uso del plan, los comandos y las sesiones vivas se leen por cuenta.
+- **Conversaciones abiertas en otro lado**: antes de reanudar una sesión, el server mira las sesiones vivas de Claude Code de esa cuenta (`claude agents`). Si la conversación está abierta en una terminal o en segundo plano, no lanza otro proceso y lo muestra en la sesión.
+- **Skills con IA**: `claude -p` sin herramientas (o con `Read`, `Grep` y `Glob` sobre el repo), sin MCP, sin hooks y con `--no-session-persistence`. La búsqueda pide la respuesta con `--json-schema`.
 - **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una.
 - **La orquestadora no edita archivos** por defecto (se lanza sin `Edit`/`Write`); lo podés habilitar por proyecto.
 - **Mismo checkout** por defecto, como cuando trabajás con terminales. Al crear una sesión podés marcar **Worktree aparte** para que trabaje en su propia rama.
@@ -203,7 +228,24 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/accounts.ts       cuentas (directorios de configuración de Claude Code)
   src/compaction.ts     compactación moldeable (borrador, selección, hooks)
   src/tools.ts          skills, plugins y MCP
+  src/skill-market.ts   marketplaces de skills y skills con IA
+  src/overview.ts       resumen del proyecto (git, tokens, última actividad)
   src/claude/config-settings.ts  opciones de /config
   src/prompts.ts        protocolo de orquestadora y workers
 web/      Vite + React + Tailwind + shadcn/ui
 ```
+
+## Contribuir
+
+Es un proyecto personal, pero si lo usás y querés mejorarlo, bienvenido:
+
+- **Bugs**: abrí un [issue](../../issues) con la plantilla **Reportar un bug** (versiones, pasos y logs).
+- **Mejoras**: un issue con la plantilla **Pedir una mejora**. Para algo grande, charlalo antes de escribir código.
+- **Pull requests**: un cambio por PR, con `npm run typecheck` y `npm test` en verde. Los detalles, incluido cómo probar sin tocar tu configuración de Claude Code, están en [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Seguridad**: no abras un issue público; seguí [SECURITY.md](SECURITY.md).
+
+Todo el que participa sigue el [código de conducta](CODE_OF_CONDUCT.md).
+
+## Licencia
+
+[MIT](LICENSE).

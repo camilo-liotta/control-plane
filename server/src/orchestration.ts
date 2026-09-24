@@ -689,7 +689,7 @@ export async function importSession(
   sessions: SessionManager,
   orchestration: Orchestration,
   projectId: string,
-  input: { claudeSessionId: string; name: string; role: string }
+  input: { claudeSessionId: string; name: string; role: string; allowLive?: boolean }
 ): Promise<SessionRecord> {
   const project = db.getProject(projectId)
   if (!project) throw new Error("El proyecto no existe")
@@ -697,7 +697,8 @@ export async function importSession(
     throw new Error("Esa conversación ya está en el dashboard")
   const target = orchestration.targetFor(projectId)
   const live = (await listLiveSessions(target)).find((l) => l.sessionId === input.claudeSessionId)
-  if (live)
+  // Se puede traer igual (queda registrada y el dashboard no la reanuda hasta que la cierres).
+  if (live && !input.allowLive)
     throw new Error(
       live.kind === "background"
         ? `La sesión sigue corriendo en segundo plano. Detenela con: claude stop ${live.id ?? ""}`
@@ -721,6 +722,16 @@ export async function importSession(
     level: "info",
     text: `Sesión importada desde Claude Code${events.length ? ` con ${events.length} eventos de historial` : ""}. Al reanudarla recibe el protocolo de control-plane.`,
   })
+  if (live) {
+    sessions.addEvent(rec.id, {
+      kind: "notice",
+      level: "warn",
+      text:
+        live.kind === "background"
+          ? `Sigue corriendo en segundo plano en Claude Code. Detenela con claude stop ${live.id ?? ""} y después usala desde acá.`
+          : `Sigue abierta en una terminal (pid ${live.pid}). Cerrala con /exit y después usala desde acá: el dashboard no la reanuda mientras esté abierta.`,
+    })
+  }
   return rec
 }
 

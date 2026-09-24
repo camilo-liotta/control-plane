@@ -49,6 +49,10 @@ export type Action =
   /** El resumen con el que sigue la conversación después de compactar. */
   | { type: "compact_summary"; text: string }
   | { type: "compact_failed"; reason: string }
+  /** Para el contador del turno: caracteres que van llegando, tokens finales de un mensaje, estimación del pensamiento. */
+  | { type: "stream_chars"; messageId: string; chars: number }
+  | { type: "message_tokens"; messageId: string; outputTokens: number }
+  | { type: "thinking_estimate"; delta: number }
 
 const TOOL_RESULT_MAX = 12_000
 const TOOL_INPUT_MAX = 24_000
@@ -503,6 +507,10 @@ export class StreamNormalizer {
       }
       case "commands_changed":
         return [{ type: "commands", commands: parseCommands(msg.commands) }]
+      case "thinking_tokens": {
+        const delta = Number(msg.estimated_tokens_delta ?? 0)
+        return delta > 0 && !msg.parent_tool_use_id ? [{ type: "thinking_estimate", delta }] : []
+      }
       case "task_started": {
         if (msg.task_type === "local_agent" && typeof msg.tool_use_id === "string") {
           return [
@@ -574,7 +582,8 @@ export class StreamNormalizer {
           index?: number
           message?: { id?: string }
           content_block?: { type?: string }
-          delta?: { type?: string; text?: string; thinking?: string }
+          delta?: { type?: string; text?: string; thinking?: string; partial_json?: string }
+          usage?: { output_tokens?: number }
         }
       | undefined
     if (!event) return []
@@ -593,11 +602,17 @@ export class StreamNormalizer {
         const kind = this.blockKinds.get(index)
         const messageId = this.currentMessageId
         if (!messageId) return []
+        const piece = event.delta?.text ?? event.delta?.thinking ?? event.delta?.partial_json ?? ""
+        const count: Action[] = piece ? [{ type: "stream_chars", messageId, chars: piece.length }] : []
         if (kind === "text" && event.delta?.type === "text_delta" && event.delta.text)
-          return [{ type: "partial", messageId, index, block: "text", delta: event.delta.text }]
+          return [{ type: "partial", messageId, index, block: "text", delta: event.delta.text }, ...count]
         if (kind === "thinking" && event.delta?.type === "thinking_delta" && event.delta.thinking)
-          return [{ type: "partial", messageId, index, block: "thinking", delta: event.delta.thinking }]
-        return []
+          return [{ type: "partial", messageId, index, block: "thinking", delta: event.delta.thinking }, ...count]
+        return count
+      }
+      case "message_delta": {
+        const out = Number(event.usage?.output_tokens ?? 0)
+        return this.currentMessageId && out > 0 ? [{ type: "message_tokens", messageId: this.currentMessageId, outputTokens: out }] : []
       }
       default:
         return []

@@ -20,6 +20,7 @@
   --color-status-done: var(--status-done);
   --color-status-error: var(--status-error);
   --color-status-idle: var(--status-idle);
+  --color-claude: var(--claude);
   --color-diff-add: var(--diff-add);
   --color-diff-del: var(--diff-del);
 
@@ -105,6 +106,7 @@
   --status-idle: oklch(0.64 0.012 262);
   --diff-add: oklch(0.58 0.14 152);
   --diff-del: oklch(0.577 0.215 25);
+  --claude: oklch(0.62 0.15 42);
 }
 
 .dark {
@@ -147,6 +149,7 @@
   --status-idle: oklch(0.6 0.012 262);
   --diff-add: oklch(0.72 0.14 152);
   --diff-del: oklch(0.68 0.19 24);
+  --claude: oklch(0.72 0.14 45);
 }
 
 @layer base {

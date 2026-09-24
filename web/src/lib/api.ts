@@ -3,6 +3,7 @@ import type {
   AccountAuth,
   Attachment,
   CatalogPlugin,
+  CatalogSkill,
   ClaudeSetting,
   ClaudeSettingValue,
   CompactionState,
@@ -10,9 +11,12 @@ import type {
   Draft,
   Marketplace,
   Project,
+  ProjectOverview,
   ProjectSettings,
   Report,
   Session,
+  SkillMarketView,
+  SkillSourceView,
   SkillState,
   SlashCommand,
   StoredEvent,
@@ -67,6 +71,11 @@ export interface McpInput {
   projectId?: string
 }
 
+export type AiSearchResult =
+  | { kind: "skill"; why: string; skill: CatalogSkill }
+  | { kind: "plugin"; why: string; plugin: CatalogPlugin }
+  | { kind: "installed"; why: string; installed: { name: string; description: string; scope: "user" | "project" } }
+
 export type PluginActionResult = { ok: true; message: string } | { needsConfirm: { command: string; sha256: string } }
 
 const enc = encodeURIComponent
@@ -91,6 +100,8 @@ export const api = {
   setClaudeSetting: (id: string, key: string, value: ClaudeSettingValue) =>
     request<ClaudeSetting>("PATCH", `/api/accounts/${id}/settings`, { key, value }),
   archivedSessions: (projectId: string) => request<Session[]>("GET", `/api/projects/${projectId}/archived`),
+  projectOverview: (projectId: string, refresh = false) =>
+    request<ProjectOverview>("GET", `/api/projects/${projectId}/overview${refresh ? "?refresh=1" : ""}`),
   restoreSession: (id: string) => request<Session>("POST", `/api/sessions/${id}/restore`),
   purgeSession: (id: string) => request("DELETE", `/api/sessions/${id}?purge=1`),
   suggestDirs: (path: string) => request<DirSuggestion>("GET", `/api/fs/suggest?path=${encodeURIComponent(path)}`),
@@ -102,7 +113,7 @@ export const api = {
   archiveProject: (id: string) => request<Project>("DELETE", `/api/projects/${id}`),
   reviewNow: (id: string) => request("POST", `/api/projects/${id}/review-now`),
   importable: (id: string) => request<Importable[]>("GET", `/api/projects/${id}/importable`),
-  importSession: (id: string, body: { claudeSessionId: string; name: string; role?: string }) =>
+  importSession: (id: string, body: { claudeSessionId: string; name: string; role?: string; allowLive?: boolean }) =>
     request<Session>("POST", `/api/projects/${id}/import`, body),
   releaseReview: (id: string) => request("POST", `/api/projects/${id}/release`),
   startAll: (id: string) => request("POST", `/api/projects/${id}/start-all`),
@@ -173,10 +184,32 @@ export const api = {
     request<{ path: string; content: string }>("GET", `/api/accounts/${accountId}/skills/${enc(name)}${qs({ projectId })}`),
   saveSkill: (accountId: string, name: string, content: string, projectId: string | null) =>
     request("PUT", `/api/accounts/${accountId}/skills/${enc(name)}`, { content, projectId: projectId ?? undefined }),
-  createSkill: (accountId: string, body: { scope: "user" | "project"; name: string; description: string; body: string; projectId?: string | null }) =>
+  createSkill: (
+    accountId: string,
+    body: { scope: "user" | "project"; name: string; description: string; body: string; content?: string; projectId?: string | null }
+  ) =>
     request<{ path: string }>("POST", `/api/accounts/${accountId}/skills`, { ...body, projectId: body.projectId ?? undefined }),
   deleteSkill: (accountId: string, name: string, projectId: string | null) =>
     request<{ movedTo: string }>("DELETE", `/api/accounts/${accountId}/skills/${enc(name)}${qs({ projectId })}`),
   setSkillState: (accountId: string, name: string, state: SkillState, scope: "user" | "local", projectId: string | null) =>
     request("POST", `/api/accounts/${accountId}/skills/${enc(name)}/state`, { state, scope, projectId: projectId ?? undefined }),
+
+  skillMarket: (accountId: string, projectId: string | null) =>
+    request<SkillMarketView>("GET", `/api/accounts/${accountId}/skill-market${qs({ projectId })}`),
+  addSkillSource: (accountId: string, source: string) => request<SkillSourceView>("POST", `/api/accounts/${accountId}/skill-market/sources`, { source }),
+  updateSkillSource: (accountId: string, id: string) => request("POST", `/api/accounts/${accountId}/skill-market/sources/${enc(id)}/update`),
+  removeSkillSource: (accountId: string, id: string) => request("DELETE", `/api/accounts/${accountId}/skill-market/sources/${enc(id)}`),
+  previewMarketSkill: (accountId: string, skill: string) =>
+    request<{ content: string; files: string[] }>("GET", `/api/accounts/${accountId}/skill-market/preview${qs({ skill })}`),
+  installMarketSkill: (accountId: string, skill: string, scope: "user" | "project", projectId: string | null) =>
+    request<{ path: string }>("POST", `/api/accounts/${accountId}/skill-market/install`, { skill, scope, projectId: projectId ?? undefined }),
+  aiSearchSkills: (accountId: string, query: string, projectId: string | null) =>
+    request<{ results: AiSearchResult[]; note: string | null }>("POST", `/api/accounts/${accountId}/skills/ai-search`, { query, projectId: projectId ?? undefined }),
+  aiDraftSkill: (accountId: string, description: string, scope: "user" | "project", projectId: string | null) =>
+    request<{ name: string; content: string }>("POST", `/api/accounts/${accountId}/skills/ai-draft`, { description, scope, projectId: projectId ?? undefined }),
+  aiEditSkill: (accountId: string, name: string, instruction: string, projectId: string | null) =>
+    request<{ path: string; before: string; content: string }>("POST", `/api/accounts/${accountId}/skills/${enc(name)}/ai-edit`, {
+      instruction,
+      projectId: projectId ?? undefined,
+    }),
 }

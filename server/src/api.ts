@@ -14,6 +14,8 @@ import type { Hub } from "./hub.ts"
 import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
+import type { Overview } from "./overview.ts"
+import type { SkillMarket } from "./skill-market.ts"
 import type { ClaudeSettingValue, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
@@ -26,6 +28,8 @@ interface Deps {
   accounts: Accounts
   compaction: Compaction
   tools: Tools
+  overview: Overview
+  skillMarket: SkillMarket
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -42,6 +46,7 @@ export function snapshot({ db, sessions, orchestration, accounts, compaction }: 
     reports: db.listRecentReports(now() - 2 * DAY).map((r) => orchestration.reportView(r)),
     accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
     compactions: compaction.list(),
+    turns: sessions.turns(),
     meta: sessions.meta,
   }
 }
@@ -64,7 +69,7 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket } = deps
 
   const broadcastAccount = (id: string) => {
     const a = accounts.get(id)
@@ -293,7 +298,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     })
   )
 
-  app.post<{ Params: { id: string }; Body: { claudeSessionId: string; name: string; role?: string } }>(
+  app.post<{ Params: { id: string }; Body: { claudeSessionId: string; name: string; role?: string; allowLive?: boolean } }>(
     "/api/projects/:id/import",
     (req, reply) =>
       guard(reply, async () => {
@@ -302,9 +307,14 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
           claudeSessionId: req.body.claudeSessionId,
           name: req.body.name,
           role: req.body.role ?? "",
+          allowLive: req.body.allowLive === true,
         })
         return sessions.view(db.getSession(rec.id)!)
       })
+  )
+
+  app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>("/api/projects/:id/overview", (req, reply) =>
+    guard(reply, () => overview.get(requireProject(req.params.id).id, req.query.refresh === "1"))
   )
 
   app.get<{ Params: { id: string } }>("/api/projects/:id/archived", (req, reply) =>
@@ -512,7 +522,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => tools.saveSkill(requireAccount(req.params.id).id, pid(req.body.projectId), req.params.name, String(req.body.content ?? "")))
   )
 
-  app.post<AccountParams & { Body: { projectId?: string; scope: "user" | "project"; name: string; description: string; body?: string } }>(
+  app.post<AccountParams & { Body: { projectId?: string; scope: "user" | "project"; name: string; description: string; body?: string; content?: string } }>(
     "/api/accounts/:id/skills",
     (req, reply) =>
       guard(reply, () =>
@@ -521,8 +531,57 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
           name: String(req.body.name ?? ""),
           description: String(req.body.description ?? ""),
           body: String(req.body.body ?? ""),
+          ...(typeof req.body.content === "string" && req.body.content.trim() ? { content: req.body.content } : {}),
         })
       )
+  )
+
+  // ---------------------------------------------------------------- marketplace de skills
+
+  app.get<AccountParams & { Querystring: { projectId?: string } }>("/api/accounts/:id/skill-market", (req, reply) =>
+    guard(reply, () => skillMarket.view(requireAccount(req.params.id).id, pid(req.query.projectId)))
+  )
+
+  app.post<AccountParams & { Body: { source: string } }>("/api/accounts/:id/skill-market/sources", (req, reply) =>
+    guard(reply, async () => {
+      requireAccount(req.params.id)
+      return skillMarket.addSource(String(req.body.source ?? ""))
+    })
+  )
+
+  app.post<{ Params: { id: string; sid: string } }>("/api/accounts/:id/skill-market/sources/:sid/update", (req, reply) =>
+    guard(reply, () => skillMarket.updateSource(req.params.sid))
+  )
+
+  app.delete<{ Params: { id: string; sid: string } }>("/api/accounts/:id/skill-market/sources/:sid", (req, reply) =>
+    guard(reply, () => skillMarket.removeSource(req.params.sid))
+  )
+
+  app.get<AccountParams & { Querystring: { skill: string } }>("/api/accounts/:id/skill-market/preview", (req, reply) =>
+    guard(reply, () => skillMarket.preview(requireAccount(req.params.id).id, String(req.query.skill ?? "")))
+  )
+
+  app.post<AccountParams & { Body: { skill: string; scope: "user" | "project"; projectId?: string } }>("/api/accounts/:id/skill-market/install", (req, reply) =>
+    guard(reply, () =>
+      skillMarket.install(requireAccount(req.params.id).id, pid(req.body.projectId), String(req.body.skill ?? ""), req.body.scope === "project" ? "project" : "user")
+    )
+  )
+
+  app.post<AccountParams & { Body: { query: string; projectId?: string } }>("/api/accounts/:id/skills/ai-search", (req, reply) =>
+    guard(reply, () => skillMarket.aiSearch(requireAccount(req.params.id).id, pid(req.body.projectId), String(req.body.query ?? "")))
+  )
+
+  app.post<AccountParams & { Body: { description: string; scope: "user" | "project"; projectId?: string } }>("/api/accounts/:id/skills/ai-draft", (req, reply) =>
+    guard(reply, () =>
+      skillMarket.aiDraft(requireAccount(req.params.id).id, pid(req.body.projectId), {
+        description: String(req.body.description ?? ""),
+        scope: req.body.scope === "project" ? "project" : "user",
+      })
+    )
+  )
+
+  app.post<{ Params: { id: string; name: string }; Body: { instruction: string; projectId?: string } }>("/api/accounts/:id/skills/:name/ai-edit", (req, reply) =>
+    guard(reply, () => skillMarket.aiEdit(requireAccount(req.params.id).id, pid(req.body.projectId), req.params.name, String(req.body.instruction ?? "")))
   )
 
   app.delete<{ Params: { id: string; name: string }; Querystring: { projectId?: string } }>("/api/accounts/:id/skills/:name", (req, reply) =>

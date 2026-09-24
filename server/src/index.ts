@@ -13,13 +13,16 @@ import { registerApi, snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
 import { Compaction } from "./compaction.ts"
 import { config, version } from "./config.ts"
+import { listLiveSessions, type LiveSession } from "./claude/local.ts"
 import { Db, type SessionRecord } from "./db.ts"
-import type { Meta } from "./shared/types.ts"
+import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
 import { SessionManager } from "./sessions.ts"
+import { Overview } from "./overview.ts"
+import { SkillMarket } from "./skill-market.ts"
 import { Tools } from "./tools.ts"
 
 async function claudeVersion(): Promise<string | null> {
@@ -75,6 +78,18 @@ async function main() {
     }
   }
 
+  // Sesiones vivas de Claude Code por cuenta (terminales y segundo plano), con una caché corta.
+  const liveCache = new Map<string, { at: number; list: Promise<LiveSession[]> }>()
+  const liveFor = (accountId: string) => {
+    const hit = liveCache.get(accountId)
+    if (hit && Date.now() - hit.at < 5000) return hit.list
+    const a = accounts.get(accountId) ?? accounts.defaultAccount()
+    const list = listLiveSessions({ bin: accounts.bin(a), env: accounts.env(a), configDir: accounts.dir(a) })
+    liveCache.set(accountId, { at: Date.now(), list })
+    return list
+  }
+  const asExternal = (l: LiveSession): ExternalSession => ({ pid: l.pid ?? null, kind: l.kind === "background" ? "background" : "interactive", id: l.id ?? null })
+
   const sessions = new SessionManager({
     db,
     hub,
@@ -83,6 +98,11 @@ async function main() {
     hookUrlFor: (token) => `${baseUrl}/hooks/${token}/compact`,
     launchFor,
     accountIdFor: (s) => accounts.forProject(s.projectId).id,
+    liveElsewhere: async (s) => {
+      liveCache.delete(accounts.forProject(s.projectId).id)
+      const live = (await liveFor(accounts.forProject(s.projectId).id)).find((l) => l.sessionId === s.claudeSessionId)
+      return live ? asExternal(live) : null
+    },
     meta: {
       version,
       claudeVersion: cliVersion,
@@ -128,6 +148,28 @@ async function main() {
     void accounts.authStatus(a).then(() => hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) }))
   }
 
+  // Cada tanto se mira qué conversaciones del dashboard están abiertas en una terminal, para avisarlo.
+  const refreshExternal = async () => {
+    const candidates = db.listSessions().filter((s) => !s.archivedAt && s.startedOnce && !sessions.isRunning(s.id))
+    const found = new Map<string, ExternalSession>()
+    const byAccount = new Map<string, SessionRecord[]>()
+    for (const s of candidates) {
+      const id = accounts.forProject(s.projectId).id
+      byAccount.set(id, [...(byAccount.get(id) ?? []), s])
+    }
+    for (const [accountId, list] of byAccount) {
+      const live = await liveFor(accountId).catch(() => [] as LiveSession[])
+      for (const s of list) {
+        const hit = live.find((l) => l.sessionId === s.claudeSessionId)
+        if (hit) found.set(s.id, asExternal(hit))
+      }
+    }
+    sessions.setExternal(found)
+  }
+  void refreshExternal()
+  const externalTimer = setInterval(() => void refreshExternal().catch(() => {}), 45_000)
+  externalTimer.unref()
+
   const orchestration = new Orchestration(db, hub, sessions, accounts)
   const compaction = new Compaction({
     db,
@@ -139,7 +181,8 @@ async function main() {
     },
   })
   const tools = new Tools({ db, sessions, accounts, home: config.home })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools }
+  const skillMarket = new SkillMarket({ db, accounts, tools, home: config.home })
+  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket }
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
   const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })
