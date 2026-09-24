@@ -12,7 +12,22 @@ interface UiState {
   subagent: { sessionId: string; toolUseId: string } | null
   /** Imagen abierta en grande. */
   lightbox: { id: string; name: string } | null
+  /** Cuenta de Claude Code elegida en el selector (se recuerda en este navegador). */
+  account: string | null
+  accountsDialog: boolean
+  settingsForAccount: string | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
+  selectAccount: (id: string) => void
+}
+
+const ACCOUNT_KEY = "control-plane:account"
+
+function storedAccount(): string | null {
+  try {
+    return localStorage.getItem(ACCOUNT_KEY)
+  } catch {
+    return null
+  }
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -24,5 +39,16 @@ export const useUi = create<UiState>((set) => ({
   importFor: null,
   subagent: null,
   lightbox: null,
+  account: storedAccount(),
+  accountsDialog: false,
+  settingsForAccount: null,
   set: (patch) => set(patch),
+  selectAccount: (id) => {
+    try {
+      localStorage.setItem(ACCOUNT_KEY, id)
+    } catch {
+      // sin almacenamiento local: se recuerda solo en esta pestaña
+    }
+    set({ account: id })
+  },
 }))

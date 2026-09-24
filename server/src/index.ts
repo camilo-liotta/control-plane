@@ -8,6 +8,7 @@ import fastifyStatic from "@fastify/static"
 import fastifyWebsocket from "@fastify/websocket"
 import Fastify from "fastify"
 
+import { Accounts } from "./accounts.ts"
 import { registerApi, snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
 import { config, version } from "./config.ts"
@@ -38,23 +39,26 @@ async function main() {
   const db = new Db(path.join(config.home, "control-plane.db"))
   const hub = new Hub()
   const attachments = new AttachmentStore(db)
+  const accounts = new Accounts(db)
+  await accounts.ensureDefault()
   const baseUrl = `http://${config.host}:${config.port}`
 
-  // Modelos y cuenta de la última sesión que arrancó: sirven apenas levanta el server.
+  // Modelos de la última sesión que arrancó: sirven apenas levanta el server.
   const metaFile = path.join(config.home, "meta.json")
-  let saved: Partial<Pick<Meta, "models" | "account">> = {}
+  let saved: Partial<Pick<Meta, "models">> = {}
   try {
     saved = JSON.parse(fs.readFileSync(metaFile, "utf8")) as typeof saved
   } catch {
     saved = {}
   }
 
-  const protocolFor = (s: SessionRecord) => {
+  const launchFor = (s: SessionRecord) => {
     const project = db.getProject(s.projectId)
     if (!project) throw new Error("Proyecto inexistente")
     const all = db.listSessions().filter((x) => x.projectId === s.projectId)
     const orch = all.find((x) => x.kind === "orchestrator") ?? null
     const workers = all.filter((x) => x.kind === "worker")
+    const account = accounts.forProject(s.projectId)
     return {
       protocol:
         s.kind === "orchestrator"
@@ -63,39 +67,66 @@ async function main() {
       orchestratorCanEdit: project.settings.orchestratorCanEdit,
       model: s.model ?? project.settings.defaultModel,
       effort: s.effort ?? project.settings.defaultEffort,
+      env: accounts.env(account),
+      bin: accounts.bin(account),
+      accountId: account.id,
     }
   }
 
-  const sessions = new SessionManager(db, hub, attachments, (token) => `${baseUrl}/mcp/${token}`, protocolFor, {
-    version,
-    claudeVersion: cliVersion,
-    models: Array.isArray(saved.models) ? saved.models : [],
-    account: saved.account ?? null,
-    homeDir: os.homedir(),
+  const sessions = new SessionManager({
+    db,
+    hub,
+    attachments,
+    mcpUrlFor: (token) => `${baseUrl}/mcp/${token}`,
+    launchFor,
+    accountIdFor: (s) => accounts.forProject(s.projectId).id,
+    meta: {
+      version,
+      claudeVersion: cliVersion,
+      models: Array.isArray(saved.models) ? saved.models : [],
+      account: null,
+      homeDir: os.homedir(),
+    },
   })
+
+  // Comandos por cuenta, guardados para autocompletar aunque no haya sesiones corriendo.
   const commandsFile = path.join(config.home, "commands.json")
+  let savedCommands: Record<string, unknown> = {}
   try {
-    const list = JSON.parse(fs.readFileSync(commandsFile, "utf8"))
-    if (Array.isArray(list)) sessions.seedCommands(list)
+    const raw = JSON.parse(fs.readFileSync(commandsFile, "utf8")) as unknown
+    // Formato viejo (una lista sola): es de la cuenta por defecto.
+    savedCommands = Array.isArray(raw) ? { [accounts.defaultAccount().id]: raw } : ((raw as Record<string, unknown>) ?? {})
+    sessions.seedCommands(savedCommands as Record<string, never[]>)
   } catch {
     // primera vez: se completa cuando arranque una sesión
   }
-  sessions.on("commands", (list) => {
+  sessions.on("commands", (accountId, list) => {
+    savedCommands = { ...savedCommands, [accountId]: list }
     try {
-      fs.writeFileSync(commandsFile, JSON.stringify(list))
+      fs.writeFileSync(commandsFile, JSON.stringify(savedCommands))
     } catch {
       // no es grave
     }
   })
   sessions.on("meta", (meta) => {
     try {
-      fs.writeFileSync(metaFile, JSON.stringify({ models: meta.models, account: meta.account }, null, 2))
+      fs.writeFileSync(metaFile, JSON.stringify({ models: meta.models }, null, 2))
     } catch {
       // no es grave: se vuelve a completar con la próxima sesión
     }
   })
-  const orchestration = new Orchestration(db, hub, sessions)
-  const deps = { db, hub, sessions, orchestration, attachments }
+  sessions.on("account_info", (accountId, info) => {
+    accounts.rememberAuth(accountId, info)
+    const a = accounts.get(accountId)
+    if (a) hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) })
+  })
+  // El login de cada cuenta se consulta en segundo plano al arrancar.
+  for (const a of accounts.list()) {
+    void accounts.authStatus(a).then(() => hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) }))
+  }
+
+  const orchestration = new Orchestration(db, hub, sessions, accounts)
+  const deps = { db, hub, sessions, orchestration, attachments, accounts }
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
   const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })

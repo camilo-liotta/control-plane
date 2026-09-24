@@ -62,4 +62,9 @@ export class AttachmentStore {
   get(id: string) {
     return this.db.getAttachment(id)
   }
+
+  /** Borra los archivos de una sesión eliminada. */
+  removeSession(sessionId: string) {
+    fs.rmSync(path.join(this.root, sessionId), { recursive: true, force: true })
+  }
 }

@@ -1,8 +1,10 @@
 import { useEffect } from "react"
 import { Redirect, Route, Switch } from "wouter"
 
+import { AccountsDialog } from "@/components/accounts"
 import { AppSidebar, useInboxCount } from "@/components/app-sidebar"
 import { Lightbox } from "@/components/attachments"
+import { ClaudeSettingsDialog } from "@/components/claude-settings-dialog"
 import { CommandPalette } from "@/components/command-palette"
 import { ImportSessionDialog } from "@/components/import-session-dialog"
 import { InboxSheet } from "@/components/inbox-sheet"
@@ -49,6 +51,8 @@ function Dialogs() {
       <CommandPalette />
       <SubagentSheet />
       <Lightbox />
+      <AccountsDialog />
+      <ClaudeSettingsDialog />
     </>
   )
 }

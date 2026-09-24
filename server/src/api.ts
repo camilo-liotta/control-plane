@@ -4,13 +4,15 @@ import path from "node:path"
 
 import type { FastifyInstance, FastifyReply } from "fastify"
 
+import type { Accounts } from "./accounts.ts"
 import { toRef, type AttachmentStore } from "./attachments.ts"
+import { readSettings, writeSetting } from "./claude/config-settings.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { ProjectSettings, Snapshot } from "./shared/types.ts"
+import type { ClaudeSettingValue, ProjectSettings, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
 interface Deps {
@@ -19,6 +21,7 @@ interface Deps {
   sessions: SessionManager
   orchestration: Orchestration
   attachments: AttachmentStore
+  accounts: Accounts
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -27,13 +30,13 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
-export function snapshot({ db, sessions, orchestration }: Deps): Snapshot {
+export function snapshot({ db, sessions, orchestration, accounts }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
     drafts: db.listRecentDrafts(now() - DAY),
     reports: db.listRecentReports(now() - 2 * DAY).map((r) => orchestration.reportView(r)),
-    usage: sessions.usage,
+    accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
     meta: sessions.meta,
   }
 }
@@ -56,7 +59,85 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments } = deps
+  const { db, sessions, orchestration, attachments, accounts } = deps
+
+  const broadcastAccount = (id: string) => {
+    const a = accounts.get(id)
+    if (a) deps.hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) })
+  }
+
+  const requireAccount = (id: string) => {
+    const a = accounts.get(id)
+    if (!a) throw new Error("La cuenta no existe")
+    return a
+  }
+
+  const settingsFiles = (id: string) => {
+    const a = requireAccount(id)
+    return { user: accounts.settingsFile(a), global: accounts.globalConfigFile(a) }
+  }
+
+  // ---------------------------------------------------------------- accounts
+
+  app.get<{ Querystring: { refresh?: string } }>("/api/accounts", (req, reply) =>
+    guard(reply, async () => {
+      const list = accounts.list()
+      if (req.query.refresh) await Promise.all(list.map((a) => accounts.authStatus(a, true)))
+      return list.map((a) => accounts.view(a, sessions.usageFor(a.id)))
+    })
+  )
+
+  app.get("/api/accounts/detect", (_req, reply) =>
+    guard(reply, async () => {
+      const found = accounts.detect()
+      // Para cada directorio encontrado, con qué cuenta está logueado.
+      return Promise.all(
+        found.map(async (f) => {
+          const probe = { id: `probe:${f.configDir}`, name: f.name, configDir: f.configDir, bin: null, createdAt: 0 }
+          return { ...f, auth: await accounts.authStatus(probe, true) }
+        })
+      )
+    })
+  )
+
+  app.post<{ Body: { name: string; configDir: string; bin?: string | null } }>("/api/accounts", (req, reply) =>
+    guard(reply, async () => {
+      const rec = accounts.create(req.body)
+      await accounts.authStatus(rec, true)
+      broadcastAccount(rec.id)
+      return accounts.view(rec, null)
+    })
+  )
+
+  app.patch<{ Params: { id: string }; Body: { name?: string; bin?: string | null } }>("/api/accounts/:id", (req, reply) =>
+    guard(reply, async () => {
+      const a = requireAccount(req.params.id)
+      accounts.update(a.id, req.body ?? {})
+      if (req.body?.bin !== undefined) await accounts.authStatus(accounts.get(a.id)!, true)
+      broadcastAccount(a.id)
+      return accounts.view(accounts.get(a.id)!, sessions.usageFor(a.id))
+    })
+  )
+
+  app.delete<{ Params: { id: string } }>("/api/accounts/:id", (req, reply) =>
+    guard(reply, () => {
+      accounts.remove(req.params.id)
+      deps.hub.broadcast({ type: "account_removed", id: req.params.id })
+    })
+  )
+
+  // Opciones del /config de Claude Code para una cuenta.
+  app.get<{ Params: { id: string } }>("/api/accounts/:id/settings", (req, reply) =>
+    guard(reply, () => {
+      const files = settingsFiles(req.params.id)
+      return { files, items: readSettings(files, sessions.meta.models) }
+    })
+  )
+
+  app.patch<{ Params: { id: string }; Body: { key: string; value: ClaudeSettingValue } }>(
+    "/api/accounts/:id/settings",
+    (req, reply) => guard(reply, () => writeSetting(settingsFiles(req.params.id), req.body.key, req.body.value, sessions.meta.models))
+  )
 
   const requireSession = (id: string) => {
     const s = db.getSession(id)
@@ -101,7 +182,9 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ---------------------------------------------------------------- projects
 
-  app.post<{ Body: { name?: string; repoPath: string; orchestratorName?: string; settings?: Partial<ProjectSettings> } }>(
+  app.post<{
+    Body: { name?: string; repoPath: string; orchestratorName?: string; accountId?: string; settings?: Partial<ProjectSettings> }
+  }>(
     "/api/projects",
     (req, reply) =>
       guard(reply, async () => {
@@ -109,11 +192,13 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         if (!repoPath || !fs.existsSync(repoPath) || !fs.statSync(repoPath).isDirectory())
           throw new Error("La carpeta del repo no existe")
         const name = req.body.name?.trim() || path.basename(repoPath)
+        const account = req.body.accountId ? requireAccount(req.body.accountId) : accounts.defaultAccount()
         const project = {
           id: shortId("p_"),
           name,
           repoPath,
           settings: { ...defaultSettings, ...(req.body.settings ?? {}) },
+          accountId: account.id,
           createdAt: now(),
           archivedAt: null,
         }
@@ -131,6 +216,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         void sessions.start(orch.id).catch(() => {})
         const view = orchestration.projectView(project)
         deps.hub.broadcast({ type: "project", project: view })
+        broadcastAccount(account.id)
         return view
       })
   )
@@ -183,9 +269,10 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
   app.get<{ Params: { id: string } }>("/api/projects/:id/importable", (req, reply) =>
     guard(reply, async () => {
       const p = requireProject(req.params.id)
-      const live = await listLiveSessions()
+      const target = orchestration.targetFor(p.id)
+      const live = await listLiveSessions(target)
       const ours = new Set(db.listSessions().map((s) => s.claudeSessionId))
-      return listTranscripts(p.repoPath).map((t) => {
+      return listTranscripts(p.repoPath, target?.configDir).map((t) => {
         const running = live.find((l) => l.sessionId === t.sessionId)
         return {
           ...t,
@@ -209,6 +296,10 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         })
         return sessions.view(db.getSession(rec.id)!)
       })
+  )
+
+  app.get<{ Params: { id: string } }>("/api/projects/:id/archived", (req, reply) =>
+    guard(reply, () => db.listArchivedSessions(requireProject(req.params.id).id).map((s) => sessions.view(s)))
   )
 
   app.post<{ Params: { id: string } }>("/api/projects/:id/review-now", (req, reply) =>
@@ -362,11 +453,32 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       })
   )
 
-  app.delete<{ Params: { id: string } }>("/api/sessions/:id", (req, reply) =>
+  app.delete<{ Params: { id: string }; Querystring: { purge?: string } }>("/api/sessions/:id", (req, reply) =>
     guard(reply, async () => {
+      if (req.query.purge) {
+        // Eliminar definitivamente: solo sesiones ya archivadas.
+        const s = db.getSession(req.params.id)
+        if (!s) throw new Error("La sesión no existe")
+        if (!s.archivedAt) throw new Error("Primero archivá la sesión")
+        db.purgeSession(s.id)
+        attachments.removeSession(s.id)
+        deps.hub.broadcast({ type: "project", project: orchestration.projectView(db.getProject(s.projectId)!) })
+        return { ok: true }
+      }
       const s = requireSession(req.params.id)
       if (s.kind === "orchestrator") throw new Error("La orquestadora no se puede archivar sola: archivá el proyecto")
       await sessions.archive(s.id)
+    })
+  )
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/restore", (req, reply) =>
+    guard(reply, () => {
+      const s = db.getSession(req.params.id)
+      if (!s) throw new Error("La sesión no existe")
+      const clash = db.listSessions().some((x) => x.id !== s.id && x.name.toLowerCase() === s.name.toLowerCase())
+      if (clash) throw new Error(`Ya hay otra sesión llamada ${s.name}: renombrala antes de restaurar esta`)
+      sessions.update(s.id, { archivedAt: null, status: "stopped" })
+      return sessions.view(db.getSession(s.id)!)
     })
   )
 

@@ -2,6 +2,7 @@ import { useMemo } from "react"
 import { create } from "zustand"
 
 import type {
+  Account,
   Draft,
   Meta,
   ModelOption,
@@ -10,11 +11,11 @@ import type {
   ServerMessage,
   Session,
   StoredEvent,
-  UsageInfo,
 } from "@shared/types"
 
 import { api } from "./api"
 import { notify } from "./notify"
+import { useUi } from "./ui"
 
 export interface PartialBlock {
   messageId: string
@@ -34,7 +35,7 @@ interface State {
   hasMore: Record<string, boolean>
   partials: Record<string, PartialBlock | undefined>
   unread: Record<string, number>
-  usage: UsageInfo | null
+  accounts: Record<string, Account>
   meta: Meta | null
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
@@ -66,7 +67,7 @@ export const useStore = create<State>((set, get) => ({
   hasMore: {},
   partials: {},
   unread: {},
-  usage: null,
+  accounts: {},
   meta: null,
   focused: null,
 
@@ -85,7 +86,7 @@ export const useStore = create<State>((set, get) => ({
           sessions: byId(snapshot.sessions),
           drafts: byId(snapshot.drafts),
           reports: byId(snapshot.reports),
-          usage: snapshot.usage,
+          accounts: byId(snapshot.accounts),
           meta: snapshot.meta,
           partials: {},
         })
@@ -159,7 +160,20 @@ export const useStore = create<State>((set, get) => ({
         set((s) => ({ reports: { ...s.reports, [msg.report.id]: msg.report } }))
         break
       case "usage":
-        set({ usage: msg.usage })
+        set((s) => {
+          const account = s.accounts[msg.accountId]
+          return account ? { accounts: { ...s.accounts, [msg.accountId]: { ...account, usage: msg.usage } } } : {}
+        })
+        break
+      case "account":
+        set((s) => ({ accounts: { ...s.accounts, [msg.account.id]: msg.account } }))
+        break
+      case "account_removed":
+        set((s) => {
+          const accounts = { ...s.accounts }
+          delete accounts[msg.id]
+          return { accounts }
+        })
         break
       case "meta":
         set({ meta: msg.meta })
@@ -192,10 +206,35 @@ export const useStore = create<State>((set, get) => ({
 
 // ------------------------------------------------------------------ selectores
 
-/** Proyectos ordenados por fecha de creación (referencia estable entre renders). */
+/** Cuentas ordenadas: la de siempre primero. */
+export function useAccounts() {
+  const accounts = useStore((s) => s.accounts)
+  return useMemo(
+    () => Object.values(accounts).sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name)),
+    [accounts]
+  )
+}
+
+/** La cuenta elegida en el selector (si la guardada ya no existe, la de siempre). */
+export function useCurrentAccount(): Account | null {
+  const accounts = useAccounts()
+  const selected = useUi((s) => s.account)
+  return accounts.find((a) => a.id === selected) ?? accounts.find((a) => a.isDefault) ?? accounts[0] ?? null
+}
+
+/** Proyectos de la cuenta elegida, ordenados por fecha de creación (referencia estable entre renders). */
 export function useProjects() {
   const projects = useStore((s) => s.projects)
-  return useMemo(() => Object.values(projects).sort((a, b) => a.createdAt - b.createdAt), [projects])
+  const account = useCurrentAccount()
+  const accountId = account?.id ?? null
+  const isDefault = account?.isDefault ?? true
+  return useMemo(
+    () =>
+      Object.values(projects)
+        .filter((p) => (p.accountId ? p.accountId === accountId : isDefault))
+        .sort((a, b) => a.createdAt - b.createdAt),
+    [projects, accountId, isDefault]
+  )
 }
 
 const NO_MODELS: ModelOption[] = []

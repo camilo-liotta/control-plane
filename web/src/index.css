@@ -210,9 +210,60 @@
   animation: caret 1s steps(1) infinite;
 }
 
+/* Mapa del proyecto */
+@keyframes node-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+.node-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: node-pulse 1.9s ease-out infinite;
+}
+.node-pulse-fast {
+  animation-duration: 1.05s;
+}
+@keyframes link-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+.link-flow {
+  stroke-dasharray: 3 7;
+  animation: link-flow 0.9s linear infinite;
+}
+@keyframes ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ring-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ring-spin 9s linear infinite;
+}
+@keyframes node-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+.node-dot {
+  animation: node-dot 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lamp[data-pulse="true"]::after,
-  .streaming-caret::after {
+  .streaming-caret::after,
+  .node-pulse,
+  .link-flow,
+  .ring-spin,
+  .node-dot {
     animation: none;
   }
 }

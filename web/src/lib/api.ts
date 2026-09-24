@@ -1,5 +1,9 @@
 import type {
+  Account,
+  AccountAuth,
   Attachment,
+  ClaudeSetting,
+  ClaudeSettingValue,
   Draft,
   Project,
   ProjectSettings,
@@ -42,9 +46,21 @@ export interface Importable {
 export const attachmentUrl = (id: string, download = false) => `/api/attachments/${id}${download ? "?download=1" : ""}`
 
 export const api = {
+  accounts: (refresh = false) => request<Account[]>("GET", `/api/accounts${refresh ? "?refresh=1" : ""}`),
+  detectAccounts: () => request<{ configDir: string; name: string; auth: AccountAuth }[]>("GET", "/api/accounts/detect"),
+  createAccount: (body: { name: string; configDir: string; bin?: string | null }) => request<Account>("POST", "/api/accounts", body),
+  updateAccount: (id: string, body: { name?: string; bin?: string | null }) => request<Account>("PATCH", `/api/accounts/${id}`, body),
+  removeAccount: (id: string) => request("DELETE", `/api/accounts/${id}`),
+  claudeSettings: (id: string) =>
+    request<{ files: { user: string; global: string }; items: ClaudeSetting[] }>("GET", `/api/accounts/${id}/settings`),
+  setClaudeSetting: (id: string, key: string, value: ClaudeSettingValue) =>
+    request<ClaudeSetting>("PATCH", `/api/accounts/${id}/settings`, { key, value }),
+  archivedSessions: (projectId: string) => request<Session[]>("GET", `/api/projects/${projectId}/archived`),
+  restoreSession: (id: string) => request<Session>("POST", `/api/sessions/${id}/restore`),
+  purgeSession: (id: string) => request("DELETE", `/api/sessions/${id}?purge=1`),
   suggestDirs: (path: string) => request<DirSuggestion>("GET", `/api/fs/suggest?path=${encodeURIComponent(path)}`),
 
-  createProject: (body: { name?: string; repoPath: string; settings?: Partial<ProjectSettings> }) =>
+  createProject: (body: { name?: string; repoPath: string; accountId?: string; settings?: Partial<ProjectSettings> }) =>
     request<Project>("POST", "/api/projects", body),
   updateProject: (id: string, body: { name?: string; settings?: Partial<ProjectSettings> }) =>
     request<Project>("PATCH", `/api/projects/${id}`, body),

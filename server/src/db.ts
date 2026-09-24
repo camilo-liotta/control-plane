@@ -35,8 +35,20 @@ export interface ProjectRecord {
   name: string
   repoPath: string
   settings: ProjectSettings
+  accountId: string | null
   createdAt: number
   archivedAt: number | null
+}
+
+/** Una cuenta de Claude Code: un directorio de configuración (CLAUDE_CONFIG_DIR) con su login. */
+export interface AccountRecord {
+  id: string
+  name: string
+  /** null = la de siempre (~/.claude, o CLAUDE_CONFIG_DIR si el server arrancó con esa variable). */
+  configDir: string | null
+  /** Binario a usar (por defecto, claude). */
+  bin: string | null
+  createdAt: number
 }
 
 export interface SessionRecord {
@@ -155,6 +167,16 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE sessions ADD COLUMN tokens TEXT;
   `,
+  `
+  CREATE TABLE accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    config_dir TEXT,
+    bin TEXT,
+    created_at INTEGER NOT NULL
+  );
+  ALTER TABLE projects ADD COLUMN account_id TEXT;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -173,8 +195,19 @@ function toProject(r: Row): ProjectRecord {
     name: String(r.name),
     repoPath: String(r.repo_path),
     settings: { ...defaultSettings, ...settings },
+    accountId: str(r.account_id),
     createdAt: Number(r.created_at),
     archivedAt: num(r.archived_at),
+  }
+}
+
+function toAccount(r: Row): AccountRecord {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    configDir: str(r.config_dir),
+    bin: str(r.bin),
+    createdAt: Number(r.created_at),
   }
 }
 
@@ -375,12 +408,17 @@ export class Db {
   insertProject(p: ProjectRecord) {
     this.db
       .prepare(
-        "INSERT INTO projects (id, name, repo_path, settings, created_at, archived_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO projects (id, name, repo_path, settings, account_id, created_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
       )
-      .run(p.id, p.name, p.repoPath, JSON.stringify(p.settings), p.createdAt, p.archivedAt)
+      .run(p.id, p.name, p.repoPath, JSON.stringify(p.settings), p.accountId, p.createdAt, p.archivedAt)
   }
 
-  updateProject(id: string, patch: Partial<Pick<ProjectRecord, "name" | "settings" | "archivedAt">>) {
+  /** Proyectos creados antes de que hubiera cuentas: pasan a la cuenta por defecto. */
+  assignOrphanProjects(accountId: string) {
+    this.db.prepare("UPDATE projects SET account_id = ? WHERE account_id IS NULL").run(accountId)
+  }
+
+  updateProject(id: string, patch: Partial<Pick<ProjectRecord, "name" | "settings" | "archivedAt" | "accountId">>) {
     if (patch.name !== undefined)
       this.db.prepare("UPDATE projects SET name = ? WHERE id = ?").run(patch.name, id)
     if (patch.settings !== undefined)
@@ -389,6 +427,43 @@ export class Db {
         .run(JSON.stringify(patch.settings), id)
     if (patch.archivedAt !== undefined)
       this.db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(patch.archivedAt, id)
+    if (patch.accountId !== undefined)
+      this.db.prepare("UPDATE projects SET account_id = ? WHERE id = ?").run(patch.accountId, id)
+  }
+
+  // ---------------------------------------------------------------- accounts
+
+  insertAccount(a: AccountRecord) {
+    this.db
+      .prepare("INSERT INTO accounts (id, name, config_dir, bin, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(a.id, a.name, a.configDir, a.bin, a.createdAt)
+  }
+
+  updateAccount(id: string, patch: Partial<Pick<AccountRecord, "name" | "configDir" | "bin">>) {
+    if (patch.name !== undefined) this.db.prepare("UPDATE accounts SET name = ? WHERE id = ?").run(patch.name, id)
+    if (patch.configDir !== undefined)
+      this.db.prepare("UPDATE accounts SET config_dir = ? WHERE id = ?").run(patch.configDir, id)
+    if (patch.bin !== undefined) this.db.prepare("UPDATE accounts SET bin = ? WHERE id = ?").run(patch.bin, id)
+  }
+
+  deleteAccount(id: string) {
+    this.db.prepare("DELETE FROM accounts WHERE id = ?").run(id)
+  }
+
+  getAccount(id: string): AccountRecord | null {
+    const r = this.db.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as Row | undefined
+    return r ? toAccount(r) : null
+  }
+
+  listAccounts(): AccountRecord[] {
+    return (this.db.prepare("SELECT * FROM accounts ORDER BY created_at").all() as Row[]).map(toAccount)
+  }
+
+  countProjectsByAccount(accountId: string): number {
+    const r = this.db
+      .prepare("SELECT COUNT(*) AS n FROM projects WHERE account_id = ? AND archived_at IS NULL")
+      .get(accountId) as Row
+    return Number(r.n ?? 0)
   }
 
   getProject(id: string): ProjectRecord | null {
@@ -437,6 +512,32 @@ export class Db {
       | Row
       | undefined
     return r ? toSession(r) : null
+  }
+
+  listArchivedSessions(projectId: string): SessionRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM sessions WHERE project_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC")
+        .all(projectId) as Row[]
+    ).map(toSession)
+  }
+
+  /** Borra del dashboard una sesión archivada: su historial, adjuntos y resultados (no toca el transcript de Claude Code). */
+  purgeSession(id: string) {
+    this.db.exec("BEGIN")
+    try {
+      this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id)
+      this.db.prepare("DELETE FROM attachments WHERE session_id = ?").run(id)
+      this.db.prepare("DELETE FROM reports WHERE session_id = ?").run(id)
+      this.db
+        .prepare("UPDATE drafts SET state = 'discarded' WHERE target_session_id = ? AND state IN ('staged', 'ready')")
+        .run(id)
+      this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
+      this.db.exec("COMMIT")
+    } catch (err) {
+      this.db.exec("ROLLBACK")
+      throw err
+    }
   }
 
   listSessions(): SessionRecord[] {

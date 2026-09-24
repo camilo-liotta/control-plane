@@ -50,6 +50,7 @@ export interface Project {
   name: string
   repoPath: string
   settings: ProjectSettings
+  accountId: string | null
   createdAt: number
   archivedAt: number | null
   review: ReviewState
@@ -103,6 +104,60 @@ export interface Session {
   subagentsRunning: number
   /** Tokens acumulados de la sesión (incluye a sus subagentes). */
   tokens: TokenUsage | null
+  /** Subagentes activos y recientes de este proceso (para el mapa del proyecto). */
+  subagents: SubagentBrief[]
+}
+
+export interface SubagentBrief {
+  toolUseId: string
+  name: string | null
+  description: string
+  subagentType: string | null
+  model: string | null
+  status: SubagentStatus
+  startedAt: number
+  endedAt: number | null
+  tokens: number | null
+  lastActivity: string | null
+}
+
+export interface AccountAuth {
+  loggedIn: boolean
+  email?: string
+  organization?: string
+  subscription?: string
+  method?: string
+  error?: string
+}
+
+/** Una cuenta de Claude Code (un directorio de configuración con su login). */
+export interface Account {
+  id: string
+  name: string
+  configDir: string
+  isDefault: boolean
+  bin: string | null
+  auth: AccountAuth | null
+  usage: UsageInfo | null
+  projects: number
+}
+
+export type ClaudeSettingValue = string | boolean | null
+
+/** Una opción del menú /config de Claude Code, con su valor actual en la cuenta. */
+export interface ClaudeSetting {
+  key: string
+  label: string
+  description: string
+  group: string
+  type: "boolean" | "enum"
+  options?: { value: string; label: string }[]
+  /** Dónde lo guarda Claude Code: settings.json de la cuenta o su config global (.claude.json). */
+  file: "user" | "global"
+  value: ClaudeSettingValue
+  defaultValue: ClaudeSettingValue
+  isSet: boolean
+  terminalOnly?: boolean
 }
 
 export interface TokenUsage {
@@ -327,7 +382,7 @@ export interface Snapshot {
   sessions: Session[]
   drafts: Draft[]
   reports: Report[]
-  usage: UsageInfo | null
+  accounts: Account[]
   meta: Meta
 }
 
@@ -350,7 +405,9 @@ export type ServerMessage =
   | { type: "partial_clear"; sessionId: string }
   | { type: "draft"; draft: Draft }
   | { type: "report"; report: Report }
-  | { type: "usage"; usage: UsageInfo }
+  | { type: "usage"; accountId: string; usage: UsageInfo }
+  | { type: "account"; account: Account }
+  | { type: "account_removed"; id: string }
   | { type: "meta"; meta: Meta }
   | {
       type: "toast"

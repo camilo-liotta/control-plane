@@ -44,6 +44,17 @@ export function clampJson(value: unknown, maxChars: number): unknown {
   return { _truncated: true, preview: json.slice(0, maxChars) }
 }
 
+/** Texto plano a partir de markdown (para resúmenes de una línea en tarjetas). */
+export function plainText(md: string): string {
+  return md
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, "")
+    .replace(/(\*\*|__|~~)(?=\S)(.+?)\1/g, "$2")
+    .replace(/(^|[\s(])\*(?=\S)([^*]+?)\*(?=[\s).,;:!?]|$)/g, "$1$2")
+}
+
 export function oneLine(text: string, max = 140): string {
   const flat = text.replace(/\s+/g, " ").trim()
   return flat.length > max ? flat.slice(0, max - 1) + "…" : flat

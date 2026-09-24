@@ -5,7 +5,6 @@ import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
 import { parseCommands, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
-import { config } from "./config.ts"
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import type {
@@ -18,13 +17,14 @@ import type {
   SessionStatus,
   SlashCommand,
   StoredEvent,
+  SubagentBrief,
   SubagentSpec,
   SubagentStatus,
   TimelineEvent,
   UsageInfo,
   UserOrigin,
 } from "./shared/types.ts"
-import { clampJson, errorMessage, now, oneLine, shortId, token, uuid } from "./util.ts"
+import { clampJson, errorMessage, now, oneLine, plainText, shortId, token, uuid } from "./util.ts"
 
 interface PendingControl {
   kind: "question" | "permission"
@@ -46,6 +46,7 @@ interface Runtime {
   retried: boolean
   mcpWarned: boolean
   currentModel: string | null
+  accountId: string
   /** Subagentes lanzados por esta sesión, por id de la llamada Agent. */
   subagents: Map<string, { eventId: number; status: SubagentStatus }>
   taskToTool: Map<string, string>
@@ -86,11 +87,25 @@ export interface SendOptions {
   subagents?: SubagentSpec[]
 }
 
-type ProtocolBuilder = (session: SessionRecord) => {
+/** Todo lo que hace falta para lanzar una sesión: protocolo, modelo y la cuenta con la que corre. */
+export interface LaunchContext {
   protocol: string
   orchestratorCanEdit: boolean
   model: string | null
   effort: string | null
+  env: Record<string, string>
+  bin: string
+  accountId: string
+}
+
+export interface SessionManagerOptions {
+  db: Db
+  hub: Hub
+  attachments: AttachmentStore
+  mcpUrlFor: (token: string) => string
+  launchFor: (session: SessionRecord) => LaunchContext
+  accountIdFor: (session: SessionRecord) => string
+  meta: Meta
 }
 
 /**
@@ -101,37 +116,35 @@ export class SessionManager extends EventEmitter<{
   turnEnd: [SessionRecord, TurnEndInfo]
   status: [SessionRecord, SessionStatus]
   meta: [Meta]
-  commands: [SlashCommand[]]
+  commands: [string, SlashCommand[]]
+  account_info: [string, { email?: string; organization?: string; subscription?: string }]
 }> {
   private runtimes = new Map<string, Runtime>()
   private stoppedDetail = new Map<string, string>()
   private lastTexts = new Map<string, string | null>()
-  /** Últimos comandos conocidos por sesión (sirven aunque esté detenida) y los de cualquier sesión. */
+  /** Últimos comandos conocidos por sesión (sirven aunque esté detenida) y los de cada cuenta. */
   private commands = new Map<string, SlashCommand[]>()
-  private anyCommands: SlashCommand[] = []
-  usage: UsageInfo | null = null
+  private accountCommands = new Map<string, SlashCommand[]>()
+  /** Uso del plan por cuenta (cada cuenta tiene sus propios límites). */
+  private usage = new Map<string, UsageInfo>()
   meta: Meta
   private db: Db
   private hub: Hub
   private attachments: AttachmentStore
   private mcpUrlFor: (token: string) => string
-  private protocolFor: ProtocolBuilder
+  private launchFor: (session: SessionRecord) => LaunchContext
+  private accountIdFor: (session: SessionRecord) => string
 
-  constructor(
-    db: Db,
-    hub: Hub,
-    attachments: AttachmentStore,
-    mcpUrlFor: (token: string) => string,
-    protocolFor: ProtocolBuilder,
-    meta: Meta
-  ) {
+  constructor(opts: SessionManagerOptions) {
     super()
-    this.db = db
-    this.hub = hub
-    this.attachments = attachments
-    this.mcpUrlFor = mcpUrlFor
-    this.protocolFor = protocolFor
-    this.meta = meta
+    this.db = opts.db
+    this.hub = opts.hub
+    this.attachments = opts.attachments
+    this.mcpUrlFor = opts.mcpUrlFor
+    this.launchFor = opts.launchFor
+    this.accountIdFor = opts.accountIdFor
+    this.meta = opts.meta
+    const db = opts.db
     // Si el server se cortó, ninguna sesión sigue viva: arrancan como detenidas.
     for (const s of db.listSessions()) {
       if (s.status !== "stopped") db.updateSession(s.id, { status: "stopped" })
@@ -157,31 +170,63 @@ export class SessionManager extends EventEmitter<{
     const lastText = this.lastTexts.get(rec.id) ?? null
     return {
       ...rest,
-      lastText: lastText ? oneLine(lastText, 400) : null,
+      lastText: lastText ? oneLine(plainText(lastText), 400) : null,
       status: rt ? rt.status : rec.status,
       statusDetail: rt ? rt.statusDetail : (this.stoppedDetail.get(rec.id) ?? null),
       pending,
       queuedMessages: rt?.queued.size ?? 0,
       currentModel: rt?.currentModel ?? null,
       subagentsRunning: rt ? [...rt.subagents.values()].filter((s) => s.status === "running").length : 0,
+      subagents: rt ? this.subagentBriefs(rt) : [],
     }
   }
 
+  /** Subagentes trabajando y los que terminaron hace poco (para el mapa del proyecto). */
+  private subagentBriefs(rt: Runtime): SubagentBrief[] {
+    const recent = now() - 15 * 60_000
+    const out: SubagentBrief[] = []
+    for (const sub of [...rt.subagents.values()].slice(-12)) {
+      const ev = this.db.getEvent(sub.eventId)?.event
+      if (!ev || ev.kind !== "subagent") continue
+      if (ev.status !== "running" && (ev.endedAt ?? 0) < recent) continue
+      out.push({
+        toolUseId: ev.toolUseId,
+        name: ev.name,
+        description: ev.description,
+        subagentType: ev.subagentType,
+        model: ev.model,
+        status: ev.status,
+        startedAt: ev.startedAt,
+        endedAt: ev.endedAt,
+        tokens: ev.usage?.tokens ?? null,
+        lastActivity: ev.lastActivity,
+      })
+    }
+    return out.slice(-8)
+  }
+
+  usageFor(accountId: string): UsageInfo | null {
+    return this.usage.get(accountId) ?? null
+  }
+
   commandsFor(id: string): SlashCommand[] {
-    return this.commands.get(id) ?? this.anyCommands
+    const rec = this.db.getSession(id)
+    return this.commands.get(id) ?? (rec ? this.accountCommands.get(this.accountIdFor(rec)) : undefined) ?? []
   }
 
   /** Comandos guardados de una corrida anterior (para autocompletar antes de que arranque una sesión). */
-  seedCommands(list: SlashCommand[]) {
-    if (!this.anyCommands.length) this.anyCommands = list
+  seedCommands(byAccount: Record<string, SlashCommand[]>) {
+    for (const [accountId, list] of Object.entries(byAccount)) {
+      if (Array.isArray(list) && !this.accountCommands.has(accountId)) this.accountCommands.set(accountId, list)
+    }
   }
 
-  private rememberCommands(id: string, list: SlashCommand[]) {
+  private rememberCommands(id: string, accountId: string, list: SlashCommand[]) {
     if (!list.length) return
     this.commands.set(id, list)
-    const changed = JSON.stringify(list) !== JSON.stringify(this.anyCommands)
-    this.anyCommands = list
-    if (changed) this.emit("commands", list)
+    const changed = JSON.stringify(list) !== JSON.stringify(this.accountCommands.get(accountId))
+    this.accountCommands.set(accountId, list)
+    if (changed) this.emit("commands", accountId, list)
   }
 
   get(id: string): SessionRecord | null {
@@ -287,7 +332,7 @@ export class SessionManager extends EventEmitter<{
   }
 
   private launch(rec: SessionRecord, retried: boolean): Promise<void> {
-    const built = this.protocolFor(rec)
+    const built = this.launchFor(rec)
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
       protocol: built.protocol,
@@ -295,7 +340,7 @@ export class SessionManager extends EventEmitter<{
       model: built.model,
       effort: built.effort,
     })
-    const proc = new ClaudeProcess(config.claudeBin, args, rec.cwd, env)
+    const proc = new ClaudeProcess(built.bin, args, rec.cwd, { ...env, ...built.env })
     const rt: Runtime = {
       proc,
       normalizer: new StreamNormalizer((u) => rt.ownUuids.has(u)),
@@ -310,6 +355,7 @@ export class SessionManager extends EventEmitter<{
       retried,
       mcpWarned: false,
       currentModel: null,
+      accountId: built.accountId,
       subagents: new Map(),
       taskToTool: new Map(),
       agentCalls: new Map(),
@@ -326,8 +372,8 @@ export class SessionManager extends EventEmitter<{
     rt.ready = proc
       .request("initialize", {}, 90_000)
       .then((resp) => {
-        this.captureMeta(resp)
-        this.rememberCommands(rec.id, parseCommands(resp.commands))
+        this.captureMeta(resp, rt.accountId)
+        this.rememberCommands(rec.id, rt.accountId, parseCommands(resp.commands))
         if (this.runtimes.get(rec.id) !== rt) return
         this.setStatus(rec.id, rt, rt.pendingControl.size ? "needs_input" : "idle")
       })
@@ -339,7 +385,7 @@ export class SessionManager extends EventEmitter<{
     return rt.ready
   }
 
-  private captureMeta(resp: Record<string, unknown>) {
+  private captureMeta(resp: Record<string, unknown>, accountId: string) {
     const models = Array.isArray(resp.models)
       ? (
           resp.models as {
@@ -362,13 +408,13 @@ export class SessionManager extends EventEmitter<{
     const account = (resp.account ?? null) as
       | { email?: string; organization?: string; subscriptionType?: string }
       | null
-    const next: Meta = {
-      ...this.meta,
-      models,
-      account: account
-        ? { email: account.email, organization: account.organization, subscription: account.subscriptionType }
-        : this.meta.account,
-    }
+    if (account)
+      this.emit("account_info", accountId, {
+        email: account.email,
+        organization: account.organization,
+        subscription: account.subscriptionType,
+      })
+    const next: Meta = { ...this.meta, models }
     if (JSON.stringify(next) !== JSON.stringify(this.meta)) {
       this.meta = next
       this.hub.broadcast({ type: "meta", meta: next })
@@ -417,7 +463,7 @@ export class SessionManager extends EventEmitter<{
           break
         }
         case "commands":
-          this.rememberCommands(id, action.commands)
+          this.rememberCommands(id, rt.accountId, action.commands)
           break
         case "subagent_start": {
           const call = rt.agentCalls.get(action.toolUseId)
@@ -453,6 +499,7 @@ export class SessionManager extends EventEmitter<{
             ...(action.usage ? { usage: action.usage } : {}),
             ...(action.activity ? { lastActivity: action.activity } : {}),
           } as Partial<TimelineEvent>)
+          this.broadcastSession(id)
           break
         }
         case "subagent_end": {
@@ -501,8 +548,8 @@ export class SessionManager extends EventEmitter<{
           })
           break
         case "usage":
-          this.usage = action.usage
-          this.hub.broadcast({ type: "usage", usage: action.usage })
+          this.usage.set(rt.accountId, action.usage)
+          this.hub.broadcast({ type: "usage", accountId: rt.accountId, usage: action.usage })
           break
         case "init": {
           if (action.model && action.model !== rt.currentModel) {

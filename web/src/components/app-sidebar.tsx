@@ -4,6 +4,7 @@ import { Link, useLocation } from "wouter"
 
 import type { Project, Session } from "@shared/types"
 
+import { AccountSwitcher } from "@/components/accounts"
 import { SessionLamp } from "@/components/status"
 import { useTheme } from "@/components/theme-provider"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -184,7 +185,7 @@ export function useInboxCount() {
 export function AppSidebar() {
   const projects = useProjects()
   const connected = useStore((s) => s.connected)
-  const account = useStore((s) => s.meta?.account)
+  const claudeVersion = useStore((s) => s.meta?.claudeVersion)
   const setUi = useUi((s) => s.set)
   const inbox = useInboxCount()
 
@@ -206,6 +207,7 @@ export function AppSidebar() {
             <TooltipContent>{connected ? "Conectado al server local" : "Sin conexión con el server: reintentando…"}</TooltipContent>
           </Tooltip>
         </div>
+        <AccountSwitcher />
         <button
           type="button"
           onClick={() => setUi({ inbox: true })}
@@ -244,9 +246,9 @@ export function AppSidebar() {
         <div className="flex items-center gap-1 px-1">
           <ThemeToggle />
           <NotificationsToggle />
-          {account && (
-            <span className="ml-auto truncate text-[0.7rem] text-muted-foreground" title={account.email}>
-              {account.organization ?? account.email}
+          {claudeVersion && (
+            <span className="ml-auto truncate font-mono text-[0.68rem] text-muted-foreground" title="Versión de Claude Code">
+              claude {claudeVersion}
             </span>
           )}
         </div>

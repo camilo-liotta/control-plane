@@ -2,8 +2,10 @@ import { EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Users }
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 
+import { ArchivedSessions } from "@/components/archived-sessions"
 import { DraftCard } from "@/components/draft-card"
 import { PageHeader } from "@/components/page-header"
+import { GraphLegend, ProjectGraph } from "@/components/project-graph"
 import { ReportCard } from "@/components/report-card"
 import { OrchestratorCard, WorkerCard } from "@/components/session-cards"
 import { Button } from "@/components/ui/button"
@@ -141,6 +143,16 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-6">
           <OrchestratorCard project={project} orchestrator={orchestrator} drafts={drafts} />
 
+          <section className="overflow-hidden rounded-2xl border bg-card shadow-xs">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-5 py-3">
+              <h2 className="eyebrow text-foreground/80">Mapa en vivo</h2>
+              <div className="ml-auto">
+                <GraphLegend />
+              </div>
+            </div>
+            <ProjectGraph project={project} orchestrator={orchestrator} workers={workers} drafts={drafts} reports={reports} />
+          </section>
+
           {drafts.length > 0 && (
             <section>
               <SectionTitle
@@ -208,6 +220,8 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               </div>
             </section>
           )}
+
+          <ArchivedSessions projectId={project.id} refreshKey={workers.length} />
         </div>
       </div>
     </div>

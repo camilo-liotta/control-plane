@@ -3,7 +3,7 @@ import type { UsageWindow } from "@shared/types"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useNow } from "@/hooks/use-now"
 import { percent } from "@/lib/format"
-import { useStore } from "@/lib/store"
+import { useCurrentAccount } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 function resetIn(ts: number, now: number) {
@@ -37,12 +37,12 @@ function Row({ label, window, now }: { label: string; window: UsageWindow; now: 
 
 /** Cuánto del límite del plan llevás usado (lo informa el propio Claude Code). */
 export function UsageMeter() {
-  const usage = useStore((s) => s.usage)
+  const usage = useCurrentAccount()?.usage ?? null
   const now = useNow(30_000)
   if (!usage || (!usage.fiveHour && !usage.sevenDay)) return null
   return (
     <div className="space-y-1.5 px-2 py-1">
-      <div className="eyebrow">Uso del plan</div>
+      <div className="eyebrow">Uso del plan de esta cuenta</div>
       {usage.fiveHour && <Row label="5 h" window={usage.fiveHour} now={now} />}
       {usage.sevenDay && <Row label="7 d" window={usage.sevenDay} now={now} />}
     </div>

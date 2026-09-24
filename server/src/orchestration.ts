@@ -1,4 +1,5 @@
-import { listLiveSessions, readTranscript } from "./claude/local.ts"
+import type { Accounts } from "./accounts.ts"
+import { listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
 import type { Db, ProjectRecord, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
@@ -68,11 +69,13 @@ export class Orchestration {
   private db: Db
   private hub: Hub
   private sessions: SessionManager
+  private accounts: Accounts | null
 
-  constructor(db: Db, hub: Hub, sessions: SessionManager) {
+  constructor(db: Db, hub: Hub, sessions: SessionManager, accounts: Accounts | null = null) {
     this.db = db
     this.hub = hub
     this.sessions = sessions
+    this.accounts = accounts
     sessions.on("turnEnd", (rec, info) => this.onTurnEnd(rec, info))
     sessions.on("status", (rec, status) => {
       // Si la orquestadora quedó libre (por ejemplo, tras arrancar) y hay cola, se la entregamos.
@@ -627,11 +630,18 @@ export class Orchestration {
     this.closeReview(projectId)
   }
 
+  /** Cómo invocar Claude Code con la cuenta de un proyecto. */
+  targetFor(projectId: string): ClaudeTarget | undefined {
+    if (!this.accounts) return undefined
+    const a = this.accounts.forProject(projectId)
+    return { bin: this.accounts.bin(a), env: this.accounts.env(a), configDir: this.accounts.dir(a) }
+  }
+
   /** Evita chocar con una sesión viva fuera del dashboard: los mensajes irían a la equivocada. */
-  private async assertNameFree(name: string, exceptClaudeId?: string) {
+  private async assertNameFree(name: string, exceptClaudeId?: string, projectId?: string) {
     if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}`)
     const ours = new Set(this.db.listSessions().map((s) => s.claudeSessionId))
-    const clash = (await listLiveSessions()).find(
+    const clash = (await listLiveSessions(projectId ? this.targetFor(projectId) : undefined)).find(
       (l) => l.name?.toLowerCase() === name.toLowerCase() && l.sessionId !== exceptClaudeId && !ours.has(l.sessionId ?? "")
     )
     if (clash)
@@ -640,8 +650,8 @@ export class Orchestration {
       )
   }
 
-  assertNameFreeFor(name: string, claudeSessionId: string) {
-    return this.assertNameFree(name, claudeSessionId)
+  assertNameFreeFor(name: string, claudeSessionId: string, projectId: string) {
+    return this.assertNameFree(name, claudeSessionId, projectId)
   }
 
   async createWorker(projectId: string, input: CreateWorkerInput): Promise<SessionRecord> {
@@ -649,7 +659,7 @@ export class Orchestration {
     if (!project) throw new Error("El proyecto no existe")
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre no es válido: usá letras, números y guiones")
-    await this.assertNameFree(name)
+    await this.assertNameFree(name, undefined, projectId)
     const rec = this.sessions.create({
       projectId,
       kind: "worker",
@@ -683,7 +693,8 @@ export async function importSession(
   if (!project) throw new Error("El proyecto no existe")
   if (db.listSessions().some((s) => s.claudeSessionId === input.claudeSessionId))
     throw new Error("Esa conversación ya está en el dashboard")
-  const live = (await listLiveSessions()).find((l) => l.sessionId === input.claudeSessionId)
+  const target = orchestration.targetFor(projectId)
+  const live = (await listLiveSessions(target)).find((l) => l.sessionId === input.claudeSessionId)
   if (live)
     throw new Error(
       live.kind === "background"
@@ -692,8 +703,8 @@ export async function importSession(
     )
   const name = sanitizeSessionName(input.name).toUpperCase()
   if (!name) throw new Error("El nombre no es válido: usá letras, números y guiones")
-  await orchestration.assertNameFreeFor(name, input.claudeSessionId)
-  const { events } = readTranscript(project.repoPath, input.claudeSessionId)
+  await orchestration.assertNameFreeFor(name, input.claudeSessionId, projectId)
+  const { events } = readTranscript(project.repoPath, input.claudeSessionId, target?.configDir)
   const rec = sessions.create({
     projectId,
     kind: "worker",

@@ -22,10 +22,21 @@ export interface LiveSession {
   state?: string
 }
 
-/** Sesiones de Claude Code vivas en esta máquina (las del dashboard y las de tus terminales). */
-export async function listLiveSessions(): Promise<LiveSession[]> {
+/** Cómo invocar Claude Code con una cuenta (su binario y su CLAUDE_CONFIG_DIR). */
+export interface ClaudeTarget {
+  bin: string
+  env: Record<string, string>
+  configDir: string
+}
+
+/** Sesiones de Claude Code vivas de una cuenta (las del dashboard y las de tus terminales). */
+export async function listLiveSessions(target?: ClaudeTarget): Promise<LiveSession[]> {
   try {
-    const { stdout } = await run(config.claudeBin, ["agents", "--json"], { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 })
+    const { stdout } = await run(target?.bin ?? config.claudeBin, ["agents", "--json"], {
+      timeout: 10_000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, ...(target?.env ?? {}) },
+    })
     const list = JSON.parse(stdout) as LiveSession[]
     return Array.isArray(list) ? list.filter((s) => s.pid) : []
   } catch {
@@ -33,9 +44,9 @@ export async function listLiveSessions(): Promise<LiveSession[]> {
   }
 }
 
-/** Carpeta donde Claude Code guarda los transcripts de un directorio de trabajo. */
-export function transcriptDir(cwd: string): string {
-  const base = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")
+/** Carpeta donde Claude Code guarda los transcripts de un directorio de trabajo (dentro de la cuenta). */
+export function transcriptDir(cwd: string, configDir?: string): string {
+  const base = configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")
   return path.join(base, "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"))
 }
 
@@ -75,8 +86,8 @@ function scanHead(file: string): { name: string | null; preview: string | null }
 }
 
 /** Conversaciones guardadas para un directorio, las más recientes primero. */
-export function listTranscripts(cwd: string, limit = 40): TranscriptSummary[] {
-  const dir = transcriptDir(cwd)
+export function listTranscripts(cwd: string, configDir?: string, limit = 40): TranscriptSummary[] {
+  const dir = transcriptDir(cwd, configDir)
   if (!fs.existsSync(dir)) return []
   return fs
     .readdirSync(dir)
@@ -105,9 +116,10 @@ const PEER = /<cross-session-message[^>]*from-name="([^"]*)"[^>]*>\n?([\s\S]*?)\
 export function readTranscript(
   cwd: string,
   sessionId: string,
+  configDir?: string,
   maxEvents = 600
 ): { events: { ts: number; event: TimelineEvent }[]; name: string | null } {
-  const file = path.join(transcriptDir(cwd), `${sessionId}.jsonl`)
+  const file = path.join(transcriptDir(cwd, configDir), `${sessionId}.jsonl`)
   if (!fs.existsSync(file)) return { events: [], name: null }
   const normalizer = new StreamNormalizer(() => false)
   const events: { ts: number; event: TimelineEvent }[] = []

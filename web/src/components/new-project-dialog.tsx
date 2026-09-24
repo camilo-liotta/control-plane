@@ -15,8 +15,12 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { authLine } from "@/components/accounts"
 import { api, type DirSuggestion } from "@/lib/api"
 import { basename, shortPath } from "@/lib/format"
+import { useAccounts, useCurrentAccount } from "@/lib/store"
+import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
 export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -26,6 +30,15 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [nameTouched, setNameTouched] = useState(false)
   const [suggest, setSuggest] = useState<DirSuggestion | null>(null)
   const [creating, setCreating] = useState(false)
+  const accounts = useAccounts()
+  const current = useCurrentAccount()
+  const selectAccount = useUi((s) => s.selectAccount)
+  const [accountId, setAccountId] = useState<string | null>(null)
+  const account = accounts.find((a) => a.id === (accountId ?? current?.id)) ?? current
+
+  useEffect(() => {
+    if (open) setAccountId(null)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -42,7 +55,8 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
   const create = async () => {
     setCreating(true)
     try {
-      const project = await api.createProject({ repoPath: path, name: name.trim() || undefined })
+      const project = await api.createProject({ repoPath: path, name: name.trim() || undefined, accountId: account?.id })
+      if (account && account.id !== current?.id) selectAccount(account.id)
       toast.success(`Proyecto ${project.name} creado`, { description: "La orquestadora ya está arrancando." })
       onOpenChange(false)
       navigate(`/p/${project.id}`)
@@ -102,6 +116,24 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               </div>
             )}
           </Field>
+          {accounts.length > 1 && account && (
+            <Field>
+              <FieldLabel>Cuenta de Claude Code</FieldLabel>
+              <Select value={account.id} onValueChange={setAccountId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name} · {authLine(a.auth)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>Las sesiones del proyecto van a correr con esta cuenta.</FieldDescription>
+            </Field>
+          )}
           <Field>
             <FieldLabel htmlFor="project-name">Nombre</FieldLabel>
             <Input

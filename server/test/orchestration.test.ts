@@ -100,6 +100,7 @@ describe("cola de resultados", () => {
       name: "Test",
       repoPath: dir,
       settings: { ...defaultSettings, batchWindowSec: 0.2 },
+      accountId: null,
       createdAt: Date.now(),
       archivedAt: null,
     })

@@ -36,6 +36,24 @@ Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga 
 
 Atajos: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> para saltar a cualquier sesión, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>B</kbd> para ocultar la barra lateral.
 
+### El mapa del proyecto
+
+El tablero de cada proyecto tiene un **mapa en vivo**: la orquestadora en el centro, cada sesión conectada a ella y, colgando de cada sesión, los subagentes que tiene corriendo.
+
+- **Color = estado**: trabajando, te necesita, terminó, esperando o error.
+- **Animaciones**: el nodo late mientras trabaja (más rápido si te necesita) y su línea fluye hacia la orquestadora. El anillo de la orquestadora gira mientras revisa la cola; un punto ámbar sobre una línea es un resultado de esa sesión en la cola, y un número ámbar, propuestas listas para vos.
+- **Sesiones en desuso**: las detenidas hace más de un día se ven apagadas.
+- Pasá el mouse para ver el detalle (tarea, qué está haciendo, tokens y costo) y hacé clic para abrir la sesión; en un subagente, abre lo que está haciendo. Las sesiones se pueden arrastrar para acomodarlas.
+
+### Sesiones viejas
+
+**Archivar sesión** (en el menú de la sesión) la detiene y la saca del tablero y del mapa. Al pie del tablero, **Archivadas** las lista:
+
+- **Restaurar** la vuelve al tablero; se reanuda cuando le escribís.
+- **Eliminar** borra del dashboard su historial, sus adjuntos y sus resultados.
+
+La conversación de Claude Code no se borra nunca: queda en disco y se retoma desde una terminal con `claude --resume <id>`.
+
 ### En el chat de cada sesión
 
 - **Slash commands**: escribí `/` y aparecen los comandos y skills de esa sesión (`/compact`, `/context`, `/code-review`…). <kbd>↑</kbd>/<kbd>↓</kbd> para elegir, <kbd>Tab</kbd> para completar.
@@ -69,6 +87,26 @@ La tarjeta de la orquestadora muestra la compuerta completa: **Cola → Revisand
 
 Con **Enviar las propuestas solas** (configuración del proyecto) los prompts salen apenas se cierra la revisión. Las sesiones nuevas siempre las aprobás vos.
 
+## Varias cuentas de Claude Code
+
+Cada cuenta es un directorio de configuración de Claude Code, el que se elige con `CLAUDE_CONFIG_DIR`. Ahí viven su login, sus settings y sus conversaciones. La cuenta de siempre (`~/.claude`) se crea sola la primera vez.
+
+- **Elegir la cuenta**: el selector de arriba a la izquierda funciona como el de una organización. Muestra los proyectos, el uso del plan y la configuración de esa cuenta. Cada proyecto pertenece a una cuenta, que se elige al crearlo, y todas sus sesiones corren con ella.
+- **Agregar una cuenta**: selector → **Administrar cuentas…**. Los directorios `~/.claude-*` que ya tengas aparecen detectados.
+  - Si tu comando es un alias del tipo `claude-personal` = `CLAUDE_CONFIG_DIR=~/.claude-personal claude`, poné `~/.claude-personal` como directorio y listo.
+  - Si es un script que hace algo más, ponelo además en **Comando**. Tiene que ser un ejecutable (en el `PATH` o con ruta completa): los alias y las funciones de la shell no se ven desde el server.
+- **Login**: el dashboard nunca toca credenciales. Si una cuenta figura **Sin login**, abrí una terminal con `CLAUDE_CONFIG_DIR=<directorio> claude`, usá `/login` y después **Volver a verificar los logins**.
+- Una cuenta con proyectos activos no se puede quitar: archivá sus proyectos antes. La de siempre no se quita.
+
+## Configuración de Claude Code desde el dashboard
+
+Selector de cuenta → **Configuración de Claude Code** muestra las opciones del menú `/config` de esa cuenta: tema, modo del editor, modelo por defecto, compactación automática, checkpoints, notificaciones, mensajes entre sesiones, IDE, etc.
+
+- Se guardan en los mismos archivos que usa `/config`: el `settings.json` del directorio de la cuenta y, las de IDE y copiado, en su `.claude.json` (`~/.claude.json` para la cuenta de siempre).
+- Claude Code relee `settings.json` solo, así que las sesiones abiertas toman el cambio sin reiniciarse (el modelo por defecto aplica a las sesiones nuevas). Lo de `.claude.json` aplica la próxima vez que abras Claude Code.
+- Las marcadas **en la terminal** solo se notan en la terminal (tema, vim, barra de progreso…).
+- Se cambia solo esa clave: el resto del archivo queda igual. Si el archivo no es JSON válido, no se toca y te avisa; si es un symlink (dotfiles), se escribe el archivo real.
+
 ## Cómo funciona por dentro
 
 ```
@@ -92,6 +130,7 @@ Con **Enviar las propuestas solas** (configuración del proyecto) los prompts sa
 - **Protocolo**: al arrancar, cada sesión recibe su rol, quiénes son las otras y las reglas (coordinar con `SendMessage` antes de tocar algo compartido, no pisar el checkout, reportar al terminar). Se arma en `server/src/prompts.ts` y se puede ampliar por proyecto en su configuración.
 - **Herramientas MCP de control-plane**: `list_sessions` (todas); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora). Las propuestas aceptan `subagents` para pedir subagentes específicos.
 - **Adjuntos**: se guardan en `~/.control-plane/attachments/<sesión>/` y se sirven solo a esta máquina.
+- **Cuentas**: cada proceso `claude` se lanza con el `CLAUDE_CONFIG_DIR` (y el comando, si tiene uno) de la cuenta del proyecto. La de siempre se lanza sin tocar el entorno. El uso del plan, los comandos y las sesiones vivas se leen por cuenta.
 - **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una.
 - **La orquestadora no edita archivos** por defecto (se lanza sin `Edit`/`Write`); lo podés habilitar por proyecto.
 - **Mismo checkout** por defecto, como cuando trabajás con terminales. Al crear una sesión podés marcar **Worktree aparte** para que trabaje en su propia rama.
@@ -107,7 +146,8 @@ Variables de entorno (opcionales):
 | `CONTROL_PLANE_PORT` | `4700` | Puerto del server |
 | `CONTROL_PLANE_HOST` | `127.0.0.1` | Interfaz donde escucha (dejalo en localhost) |
 | `CONTROL_PLANE_HOME` | `~/.control-plane` | Base de datos local |
-| `CLAUDE_BIN` | `claude` | Binario de Claude Code |
+| `CLAUDE_BIN` | `claude` | Binario de Claude Code (para las cuentas sin comando propio) |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |
 
 Por proyecto (menú del tablero → Configuración): auto-envío, ventana de agrupación, si la orquestadora puede editar, modelo y esfuerzo por defecto, e instrucciones extra para los workers y para la orquestadora. Las instrucciones aplican al iniciar o reanudar cada sesión.
 
@@ -120,6 +160,7 @@ El estado del dashboard es local de cada máquina: el repo solo tiene el código
 - **Un nombre de sesión "ya existe fuera del dashboard"**: hay una sesión viva con ese nombre en una terminal. Los mensajes entre sesiones se dirigen por nombre, así que no se permite repetirlo: elegí otro o cerrala e importala.
 - **La sesión terminó inesperadamente**: el aviso en el chat muestra el final del error de `claude`. Reanudala desde el encabezado.
 - **Puerto ocupado**: `CONTROL_PLANE_PORT=4800 npm start`.
+- **Una cuenta figura "Sin login" pero en la terminal anda**: el directorio tiene que ser exactamente el que usa tu comando. `alias claude-personal` (o `type claude-personal`) te muestra cuál es.
 
 ## Estructura
 
@@ -128,6 +169,8 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/shared/types.ts   tipos compartidos con la web
   src/claude/           proceso, normalización del stream, transcripts
   src/orchestration.ts  cola de resultados y propuestas
+  src/accounts.ts       cuentas (directorios de configuración de Claude Code)
+  src/claude/config-settings.ts  opciones de /config
   src/prompts.ts        protocolo de orquestadora y workers
 web/      Vite + React + Tailwind + shadcn/ui
 ```
