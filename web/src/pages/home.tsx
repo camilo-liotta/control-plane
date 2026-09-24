@@ -7,7 +7,7 @@ import { SessionLamp } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Kbd } from "@/components/ui/kbd"
-import { shortPath } from "@/lib/format"
+import { shortPath, tokens, totals, usd } from "@/lib/format"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
@@ -94,6 +94,10 @@ export function Home() {
                 <p className="text-xs text-muted-foreground">
                   {working ? `${working} trabajando` : "Nadie trabajando ahora"}
                   {p.review.queued ? ` · ${p.review.queued} en cola` : ""}
+                  {(() => {
+                    const t = totals([orchestrator, ...workers].filter((s) => s !== null))
+                    return t.tokens > 0 ? ` · ${usd(t.cost)} · ${tokens(t.tokens)} tokens` : ""
+                  })()}
                 </p>
               </Link>
             )

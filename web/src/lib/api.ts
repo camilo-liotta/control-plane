@@ -1,4 +1,14 @@
-import type { Draft, Project, ProjectSettings, Report, Session, StoredEvent } from "@shared/types"
+import type {
+  Attachment,
+  Draft,
+  Project,
+  ProjectSettings,
+  Report,
+  Session,
+  SlashCommand,
+  StoredEvent,
+  SubagentSpec,
+} from "@shared/types"
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -29,6 +39,8 @@ export interface Importable {
   imported: boolean
 }
 
+export const attachmentUrl = (id: string, download = false) => `/api/attachments/${id}${download ? "?download=1" : ""}`
+
 export const api = {
   suggestDirs: (path: string) => request<DirSuggestion>("GET", `/api/fs/suggest?path=${encodeURIComponent(path)}`),
 
@@ -55,7 +67,12 @@ export const api = {
   events: (id: string, before?: number, limit = 300) =>
     request<StoredEvent[]>("GET", `/api/sessions/${id}/events?limit=${limit}${before ? `&before=${before}` : ""}`),
   sessionReports: (id: string) => request<Report[]>("GET", `/api/sessions/${id}/reports`),
-  send: (id: string, text: string) => request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text }),
+  send: (id: string, text: string, attachmentIds: string[] = []) =>
+    request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds }),
+  upload: (id: string, file: { name: string; mime: string; data: string }) =>
+    request<Attachment>("POST", `/api/sessions/${id}/attachments`, file),
+  attachments: (id: string) => request<Attachment[]>("GET", `/api/sessions/${id}/attachments`),
+  commands: (id: string) => request<SlashCommand[]>("GET", `/api/sessions/${id}/commands`),
   start: (id: string) => request("POST", `/api/sessions/${id}/start`),
   stop: (id: string) => request("POST", `/api/sessions/${id}/stop`),
   interrupt: (id: string) => request("POST", `/api/sessions/${id}/interrupt`),
@@ -64,10 +81,13 @@ export const api = {
   permission: (id: string, requestId: string, allow: boolean) =>
     request("POST", `/api/sessions/${id}/permission`, { requestId, allow }),
 
-  sendDraft: (id: string, edits: { title?: string; prompt?: string; name?: string; role?: string } = {}) =>
-    request<Draft>("POST", `/api/drafts/${id}/send`, edits),
+  sendDraft: (
+    id: string,
+    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: SubagentSpec[] } = {}
+  ) => request<Draft>("POST", `/api/drafts/${id}/send`, edits),
   discardDraft: (id: string) => request<Draft>("POST", `/api/drafts/${id}/discard`),
-  editDraft: (id: string, edits: { title?: string; prompt?: string }) => request<Draft>("PATCH", `/api/drafts/${id}`, edits),
+  editDraft: (id: string, edits: { title?: string; prompt?: string; subagents?: SubagentSpec[] }) =>
+    request<Draft>("PATCH", `/api/drafts/${id}`, edits),
 
   dismissReport: (id: string) => request("POST", `/api/reports/${id}/dismiss`),
 }

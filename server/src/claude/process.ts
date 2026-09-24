@@ -137,10 +137,11 @@ export class ClaudeProcess extends EventEmitter<{
     return this.child.stdin.write(JSON.stringify(obj) + "\n")
   }
 
-  sendUser(text: string, uuid: string, sessionId: string): boolean {
+  /** content: texto, o bloques (texto + imágenes) cuando hay adjuntos. */
+  sendUser(content: string | Record<string, unknown>[], uuid: string, sessionId: string): boolean {
     return this.send({
       type: "user",
-      message: { role: "user", content: text },
+      message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: sessionId,
       uuid,

@@ -22,6 +22,7 @@ import { useState } from "react"
 
 import type { StoredEvent, TimelineEvent } from "@shared/types"
 
+import { ImageThumb } from "@/components/attachments"
 import { DiffView, diffStats } from "@/components/timeline/diff-view"
 import { Markdown } from "@/components/timeline/markdown"
 import { Spinner } from "@/components/ui/spinner"
@@ -101,7 +102,7 @@ function describe(call: ToolCall, root?: string): Described {
         icon: FileText,
         title: <>Leyó <span className="font-mono">{path()}</span></>,
         meta: input.offset || input.limit ? `líneas ${str(input.offset) || "1"}–${input.limit ? Number(input.offset ?? 1) + Number(input.limit) : "…"}` : undefined,
-        detail: result?.content ? <Pre>{lines(result.content, 40)}</Pre> : null,
+        detail: result?.content && !result.images?.length ? <Pre>{lines(result.content, 40)}</Pre> : null,
       }
     case "Edit": {
       const oldText = str(input.old_string)
@@ -214,7 +215,9 @@ function describe(call: ToolCall, root?: string): Described {
         detail: (
           <div className="space-y-1.5">
             {Object.keys(input).length > 0 && <Pre>{JSON.stringify(input, null, 2)}</Pre>}
-            {result?.content && <Pre>{lines(result.content, 60)}</Pre>}
+            {result?.content && !(result.images?.length && /^(\[imagen\]\s*)+$/.test(result.content)) && (
+              <Pre>{lines(result.content, 60)}</Pre>
+            )}
           </div>
         ),
       }
@@ -224,8 +227,26 @@ function describe(call: ToolCall, root?: string): Described {
 
 /** Una llamada a herramienta: una línea compacta que se expande para ver el detalle. */
 export function ToolRow({ call, root, live }: { call: ToolCall; root?: string; live: boolean }) {
-  const [open, setOpen] = useState(false)
-  const d = describe(call, root)
+  const images = call.result?.images ?? []
+  const [open, setOpen] = useState(images.length > 0)
+  const base = describe(call, root)
+  // Las imágenes que devuelve una herramienta (capturas, imágenes leídas) se ven en el detalle.
+  const d: Described = images.length
+    ? {
+        ...base,
+        meta: base.meta ?? `${images.length} ${images.length === 1 ? "imagen" : "imágenes"}`,
+        detail: (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {images.map((img) => (
+                <ImageThumb key={img.id} att={img} className={images.length === 1 ? "max-h-72 max-w-md" : "size-28"} />
+              ))}
+            </div>
+            {base.detail}
+          </div>
+        ),
+      }
+    : base
   const Icon = d.icon
   const error = call.result?.isError
   const pending = !call.result

@@ -1,12 +1,18 @@
 import path from "node:path"
 
-import type { TimelineEvent, UsageInfo } from "../shared/types.ts"
+import type { SlashCommand, SubagentUsage, TimelineEvent, TokenUsage, UsageInfo } from "../shared/types.ts"
 import { clampJson, oneLine, truncate } from "../util.ts"
 import type { CliMessage } from "./process.ts"
 
 /** Lo que el SessionManager tiene que hacer con cada mensaje del CLI. */
+export interface RawImage {
+  mediaType: string
+  data: string
+}
+
 export type Action =
-  | { type: "event"; event: TimelineEvent }
+  /** images: imágenes crudas (base64) que el SessionManager guarda como adjuntos. */
+  | { type: "event"; event: TimelineEvent; images?: RawImage[] }
   | { type: "status"; state: "running" | "idle" | "requires_action" }
   | {
       type: "partial"
@@ -17,7 +23,7 @@ export type Action =
     }
   | { type: "partial_clear" }
   | { type: "activity"; text: string }
-  | { type: "cost"; totalUsd: number }
+  | { type: "cost"; totalUsd: number; tokens: TokenUsage | null }
   | { type: "usage"; usage: UsageInfo }
   | {
       type: "init"
@@ -28,6 +34,18 @@ export type Action =
   | { type: "turn_end"; ok: boolean; aborted: boolean; result: string }
   | { type: "command"; uuid: string; state: string }
   | { type: "reset"; newSessionId: string }
+  | { type: "commands"; commands: SlashCommand[] }
+  | {
+      type: "subagent_start"
+      toolUseId: string
+      taskId: string
+      description: string
+      subagentType: string | null
+      background: boolean
+      prompt: string
+    }
+  | { type: "subagent_progress"; taskId: string; toolUseId: string | null; activity: string | null; usage: SubagentUsage | null }
+  | { type: "subagent_end"; taskId: string; toolUseId: string | null; status: "completed" | "failed" | "killed"; summary: string | null; usage: SubagentUsage | null }
 
 const TOOL_RESULT_MAX = 12_000
 const TOOL_INPUT_MAX = 24_000
@@ -42,6 +60,73 @@ function textOf(content: unknown): string {
     .filter(Boolean)
     .join("\n")
 }
+
+export function parseCommands(raw: unknown): SlashCommand[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((c): c is Record<string, unknown> => Boolean(c) && typeof (c as { name?: unknown }).name === "string")
+    .map((c) => ({
+      name: String(c.name),
+      description: String(c.description ?? ""),
+      argumentHint: String(c.argumentHint ?? ""),
+      ...(c.builtin ? { builtin: true } : {}),
+    }))
+}
+
+function imagesOf(content: unknown): RawImage[] {
+  if (!Array.isArray(content)) return []
+  const out: RawImage[] = []
+  for (const b of content as Block[]) {
+    const source = b.source as { type?: string; media_type?: string; data?: string } | undefined
+    if (b.type === "image" && source?.type === "base64" && typeof source.data === "string")
+      out.push({ mediaType: source.media_type ?? "image/png", data: source.data })
+  }
+  return out
+}
+
+/** La salida estructurada de leer una imagen trae el base64 entero: no vale la pena guardarla. */
+function isBinaryResult(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const v = value as { type?: string; file?: { base64?: unknown } }
+  return v.type === "image" || typeof v.file?.base64 === "string"
+}
+
+/** Suma el uso acumulado de todos los modelos de la sesión (incluye subagentes y turnos anteriores). */
+export function sessionTokens(modelUsage: unknown): TokenUsage | null {
+  if (!modelUsage || typeof modelUsage !== "object") return null
+  const t = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+  let any = false
+  for (const u of Object.values(modelUsage as Record<string, Record<string, unknown>>)) {
+    if (!u || typeof u !== "object") continue
+    any = true
+    t.input += Number(u.inputTokens ?? 0)
+    t.output += Number(u.outputTokens ?? 0)
+    t.cacheRead += Number(u.cacheReadInputTokens ?? 0)
+    t.cacheWrite += Number(u.cacheCreationInputTokens ?? 0)
+  }
+  if (!any) return null
+  t.total = t.input + t.output + t.cacheRead + t.cacheWrite
+  return t
+}
+
+function turnTokens(usage: unknown): number | undefined {
+  const u = usage as Record<string, unknown> | undefined
+  if (!u) return undefined
+  const n =
+    Number(u.input_tokens ?? 0) +
+    Number(u.output_tokens ?? 0) +
+    Number(u.cache_read_input_tokens ?? 0) +
+    Number(u.cache_creation_input_tokens ?? 0)
+  return n > 0 ? n : undefined
+}
+
+function usageOf(raw: unknown): SubagentUsage | null {
+  const u = raw as { total_tokens?: number; tool_uses?: number; duration_ms?: number } | undefined
+  if (!u || typeof u.total_tokens !== "number") return null
+  return { tokens: u.total_tokens, toolUses: Number(u.tool_uses ?? 0), durationMs: Number(u.duration_ms ?? 0) }
+}
+
+const LOCAL_OUTPUT = /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>$/
 
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content
@@ -247,6 +332,13 @@ export class StreamNormalizer {
       const uuid = typeof msg.uuid === "string" ? msg.uuid : ""
       if (uuid && this.isOwnMessage(uuid)) return []
       const text = textOf(content)
+      const local = LOCAL_OUTPUT.exec(text.trim())
+      if (local) {
+        const body = (local[2] ?? "").trim()
+        return body
+          ? [{ type: "event", event: { kind: "notice", level: local[1] === "stderr" ? "warn" : "info", text: body } }]
+          : []
+      }
       if (!text.trim() || msg.isSynthetic) return []
       return [{ type: "event", event: { kind: "user", text, origin: "external", uuid } }]
     }
@@ -256,6 +348,11 @@ export class StreamNormalizer {
     for (const block of content as Block[]) {
       if (block.type === "tool_result") {
         const { text, truncated } = truncate(toolResultText(block.content), TOOL_RESULT_MAX)
+        const images = imagesOf(block.content)
+        const structured =
+          msg.tool_use_result !== undefined && !isBinaryResult(msg.tool_use_result)
+            ? { structured: clampJson(msg.tool_use_result, TOOL_RESULT_MAX) }
+            : {}
         actions.push({
           type: "event",
           event: {
@@ -264,11 +361,10 @@ export class StreamNormalizer {
             content: text,
             isError: Boolean(block.is_error),
             ...(truncated ? { truncated } : {}),
-            ...(msg.tool_use_result !== undefined
-              ? { structured: clampJson(msg.tool_use_result, TOOL_RESULT_MAX) }
-              : {}),
+            ...structured,
             parent,
           },
+          ...(images.length ? { images } : {}),
         })
       } else if (block.type === "text" && parent === null) {
         const text = String(block.text ?? "")
@@ -292,6 +388,7 @@ export class StreamNormalizer {
       ? oneLine(errors.filter((e) => !e.startsWith("[ede_diagnostic]")).join(" · ") || String(msg.result ?? "Error"), 400)
       : undefined
     const cost = Number(msg.total_cost_usd ?? 0)
+    const tokens = turnTokens(msg.usage)
     const actions: Action[] = [
       {
         type: "event",
@@ -301,13 +398,15 @@ export class StreamNormalizer {
           subtype: String(msg.subtype ?? ""),
           durationMs: Number(msg.duration_ms ?? 0),
           costUsd: cost,
+          ...(tokens ? { tokens } : {}),
           ...(terminal ? { terminalReason: terminal } : {}),
           ...(errorText ? { error: errorText } : {}),
         },
       },
       { type: "turn_end", ok: !isError, aborted, result: String(msg.result ?? "") },
     ]
-    if (cost > 0) actions.push({ type: "cost", totalUsd: cost })
+    const total = sessionTokens(msg.modelUsage)
+    if (cost > 0 || total) actions.push({ type: "cost", totalUsd: cost, tokens: total })
     return actions
   }
 
@@ -355,12 +454,66 @@ export class StreamNormalizer {
         const max = Number(msg.max_retries ?? 0)
         return [{ type: "activity", text: `Reintentando la API (${attempt}/${max})…` }]
       }
-      case "task_started":
-        return typeof msg.description === "string"
-          ? [{ type: "activity", text: oneLine(msg.description, 120) }]
-          : []
-      case "task_notification":
-        return typeof msg.summary === "string" ? [{ type: "activity", text: oneLine(msg.summary, 120) }] : []
+      case "commands_changed":
+        return [{ type: "commands", commands: parseCommands(msg.commands) }]
+      case "task_started": {
+        if (msg.task_type === "local_agent" && typeof msg.tool_use_id === "string") {
+          return [
+            {
+              type: "subagent_start",
+              toolUseId: msg.tool_use_id,
+              taskId: String(msg.task_id ?? ""),
+              description: String(msg.description ?? "subagente"),
+              subagentType: typeof msg.subagent_type === "string" ? msg.subagent_type : null,
+              background: Boolean(msg.is_backgrounded),
+              prompt: String(msg.prompt ?? ""),
+            },
+          ]
+        }
+        if (msg.owned_by_subagent) return []
+        return typeof msg.description === "string" ? [{ type: "activity", text: oneLine(msg.description, 120) }] : []
+      }
+      case "task_progress":
+        return [
+          {
+            type: "subagent_progress",
+            taskId: String(msg.task_id ?? ""),
+            toolUseId: typeof msg.tool_use_id === "string" ? msg.tool_use_id : null,
+            activity: typeof msg.description === "string" ? oneLine(msg.description.replace(/^Running /, ""), 160) : null,
+            usage: usageOf(msg.usage),
+          },
+        ]
+      case "task_updated": {
+        const patch = (msg.patch ?? {}) as { status?: string; error?: string }
+        if (patch.status === "completed" || patch.status === "failed" || patch.status === "killed") {
+          return [
+            {
+              type: "subagent_end",
+              taskId: String(msg.task_id ?? ""),
+              toolUseId: null,
+              status: patch.status,
+              summary: patch.error ? oneLine(patch.error, 300) : null,
+              usage: null,
+            },
+          ]
+        }
+        return []
+      }
+      case "task_notification": {
+        const status = msg.status === "failed" ? "failed" : msg.status === "stopped" ? "killed" : "completed"
+        const actions: Action[] = [
+          {
+            type: "subagent_end",
+            taskId: String(msg.task_id ?? ""),
+            toolUseId: typeof msg.tool_use_id === "string" ? msg.tool_use_id : null,
+            status,
+            summary: typeof msg.summary === "string" ? oneLine(msg.summary, 300) : null,
+            usage: usageOf(msg.usage),
+          },
+        ]
+        if (typeof msg.summary === "string" && !msg.owned_by_subagent) actions.push({ type: "activity", text: oneLine(msg.summary, 120) })
+        return actions
+      }
       default:
         return []
     }

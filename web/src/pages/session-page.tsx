@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
 import { Composer } from "@/components/composer"
+import { ModelPicker, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
 import { SessionLamp, StatusPill } from "@/components/status"
@@ -33,7 +34,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
-import { usd } from "@/lib/format"
+import { tokens, usd } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -92,6 +93,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const loadOlder = useStore((s) => s.loadOlder)
   const focus = useStore((s) => s.focus)
   const scroller = useRef<HTMLDivElement>(null)
+  const column = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [showJump, setShowJump] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -183,10 +185,13 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             </Link>
             {isOrch ? ` · ${session.name}` : session.role ? ` · ${session.role}` : ""}
             {session.costUsd > 0 && ` · ${usd(session.costUsd)}`}
+            {session.tokens && session.tokens.total > 0 && ` · ${tokens(session.tokens.total)} tokens`}
           </>
         }
         actions={
           <>
+            {events && <SubagentsChip session={session} events={events} />}
+            <ModelPicker session={session} />
             {running ? (
               <Button size="sm" variant="ghost" onClick={() => act(() => api.stop(session.id), "Sesión detenida")}>
                 <Square />
@@ -227,7 +232,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
         }
       />
       <div className="flex min-h-0 flex-1">
-        <div className="relative flex min-w-0 flex-1 flex-col">
+        <div ref={column} className="relative flex min-w-0 flex-1 flex-col">
           <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl px-4 py-6">
               {hasMore && (
@@ -272,7 +277,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
               Ir a lo último
             </button>
           )}
-          <Composer session={session} />
+          <Composer session={session} dropTarget={column} />
         </div>
         <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
       </div>

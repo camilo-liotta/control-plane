@@ -6,6 +6,7 @@ import { Link } from "wouter"
 import type { Draft } from "@shared/types"
 
 import { TonePill } from "@/components/status"
+import { cleanSpecs, SubagentSpecEditor, SubagentSpecList } from "@/components/subagent-specs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -25,6 +26,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
   const [prompt, setPrompt] = useState(draft.prompt)
   const [name, setName] = useState(draft.newSession?.name ?? "")
   const [role, setRole] = useState(draft.newSession?.role ?? "")
+  const [subagents, setSubagents] = useState(draft.subagents)
   const [busy, setBusy] = useState<null | "send" | "discard" | "save">(null)
 
   const view = draftStateView[draft.state]
@@ -36,6 +38,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
     setPrompt(draft.prompt)
     setName(draft.newSession?.name ?? "")
     setRole(draft.newSession?.role ?? "")
+    setSubagents(draft.subagents)
     setEditing(true)
   }
 
@@ -59,7 +62,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
         api.sendDraft(
           draft.id,
           editing
-            ? { title, prompt, ...(draft.kind === "session" ? { name, role } : {}) }
+            ? { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "session" ? { name, role } : {}) }
             : {}
         ),
       draft.kind === "session" ? `Sesión ${name || draft.newSession?.name} creada` : `Enviado a ${target?.name ?? "la sesión"}`
@@ -116,6 +119,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
             className="min-h-40 text-sm leading-relaxed"
             autoFocus
           />
+          <SubagentSpecEditor specs={subagents} onChange={setSubagents} />
         </div>
       ) : (
         <>
@@ -145,6 +149,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
               {expanded ? "Ver menos" : "Ver el prompt completo"}
             </button>
           )}
+          <SubagentSpecList specs={draft.subagents} />
         </>
       )}
 
@@ -167,7 +172,9 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
                 size="sm"
                 variant="outline"
                 disabled={busy !== null}
-                onClick={() => run("save", () => api.editDraft(draft.id, { title, prompt }), "Cambios guardados")}
+                onClick={() =>
+                  run("save", () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents) }), "Cambios guardados")
+                }
               >
                 {busy === "save" && <Spinner />}
                 Guardar

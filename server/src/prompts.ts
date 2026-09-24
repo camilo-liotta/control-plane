@@ -1,5 +1,5 @@
 import type { ProjectRecord, SessionRecord } from "./db.ts"
-import type { Draft } from "./shared/types.ts"
+import type { Draft, SubagentSpec } from "./shared/types.ts"
 
 /**
  * Protocolo que se agrega al system prompt de cada sesión (--append-system-prompt).
@@ -29,6 +29,7 @@ ${peerList}
 - Trabajá de forma autónoma: decidí vos lo razonable y no reportes cada paso.
 - Otras sesiones editan el mismo repo al mismo tiempo. Antes de tocar algo compartido (schemas, contratos, configuración, archivos fuera de tu tarea) avisale a la sesión afectada con SendMessage. Con list_sessions (control-plane) o ListAgents ves quién está haciendo qué. Si otra sesión te avisa algo, tenelo en cuenta antes de seguir.
 ${self.worktree ? "" : "- Cuidá el checkout compartido: no cambies de rama (git checkout/switch), no uses git stash, git reset --hard, git clean ni reescribas historia. Si commiteás, agregá solo tus archivos (git add <rutas>), nunca git add -A ni git add .\n"}- No le escribas a la orquestadora para contarle avances: ella recibe tu resultado final.
+- Podés usar subagentes (herramienta Agent) para repartir partes de tu tarea o investigar en paralelo. Si el prompt trae una sección "Subagentes que tenés que lanzar", lanzalos tal cual se indica y después integrá lo que devuelvan antes de reportar.
 
 ## Al terminar
 Cuando termines la tarea, o si quedás bloqueado y necesitás una decisión, llamá una vez a la herramienta report_result de control-plane con:
@@ -68,6 +69,10 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 - read_results: trae los resultados nuevos que haya en la cola.
 No uses SendMessage para darles tareas a los workers: todo prompt pasa por propose_prompt, así el usuario lo ve y lo aprueba.
 
+## Subagentes
+- En propose_prompt y propose_session podés pedirle al worker subagentes específicos con el parámetro subagents: cada uno con name, role (quién es), task (qué hace), rules (cláusulas o restricciones), model (haiku, sonnet, opus o fable, opcional), background (si corre en paralelo mientras el worker sigue) y readOnly (si solo lee). Usalo cuando una tarea tenga partes independientes o necesite una mirada especializada (por ejemplo, un revisor o alguien que escriba tests). El worker los lanza y el usuario ve su trabajo en el dashboard.
+- Vos también podés usar subagentes (Agent, por ejemplo de tipo Explore) para investigar el repo antes de proponer.
+
 ## Cómo escribir un prompt
 Que sea autocontenido: contexto, objetivo, alcance (qué sí y qué no), archivos o áreas involucradas, con qué sesiones tiene que coordinarse, criterio de terminado y qué tiene que incluir en su report_result. Escribilo en español.
 
@@ -78,6 +83,40 @@ Los resultados de los workers te llegan en lotes con el encabezado "[control-pla
 3. Tus propuestas quedan "en preparación" y control-plane no las libera mientras haya resultados sin leer. Si llegan más mientras trabajás, te los va a entregar antes de liberarlas.
 Al cerrar cada revisión, dale al usuario un resumen corto: qué volvió, qué cambia y qué proponés, y por qué.${extra ? `\n\n## Instrucciones del proyecto\n${extra}` : ""}
 `
+}
+
+/**
+ * Suma al prompt las instrucciones para lanzar los subagentes que pidió la orquestadora.
+ * Cada uno se lanza con la herramienta Agent de Claude Code, con su rol, tarea y reglas en el prompt.
+ */
+export function withSubagents(prompt: string, subagents: SubagentSpec[]): string {
+  if (!subagents.length) return prompt
+  const blocks = subagents.map((s, i) => {
+    const rules = s.rules.filter((r) => r.trim())
+    const params = [
+      `description: "${s.name}"`,
+      `name: "${s.name}"`,
+      `subagent_type: "${s.readOnly ? "Explore" : "general-purpose"}"`,
+      s.model ? `model: "${s.model}"` : null,
+      `run_in_background: ${s.background ? "true" : "false"}`,
+    ].filter(Boolean)
+    const body = [
+      `Sos ${s.role.trim() || s.name}.`,
+      "",
+      `Tarea: ${s.task.trim()}`,
+      ...(rules.length ? ["", "Reglas:", ...rules.map((r) => `- ${r.trim()}`)] : []),
+      ...(s.readOnly ? ["", "Solo lectura: no edites archivos."] : []),
+      "",
+      "Cuando termines, devolvé un resumen de lo que hiciste o encontraste, con los detalles que se necesiten para seguir.",
+    ].join("\n")
+    return `### ${i + 1}. ${s.name}\nParámetros de Agent: ${params.join(", ")}\nPrompt del subagente:\n"""\n${body}\n"""`
+  })
+  return `${prompt}
+
+## Subagentes que tenés que lanzar
+Lanzalos con la herramienta Agent usando exactamente estos parámetros (los que no dependen entre sí pueden ir en paralelo). Cuando terminen, integrá sus resultados, verificá y seguí con la tarea.
+
+${blocks.join("\n\n")}`
 }
 
 export function formatDraftLine(d: Draft, targetName: string | null): string {

@@ -4,6 +4,7 @@ import path from "node:path"
 
 import type { FastifyInstance, FastifyReply } from "fastify"
 
+import { toRef, type AttachmentStore } from "./attachments.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
 import type { Hub } from "./hub.ts"
@@ -17,7 +18,12 @@ interface Deps {
   hub: Hub
   sessions: SessionManager
   orchestration: Orchestration
+  attachments: AttachmentStore
 }
+
+/** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
+const INLINE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"])
+const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|typescript|sql|csv))/
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -50,7 +56,7 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration } = deps
+  const { db, sessions, orchestration, attachments } = deps
 
   const requireSession = (id: string) => {
     const s = db.getSession(id)
@@ -250,16 +256,65 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     })
   )
 
-  app.post<{ Params: { id: string }; Body: { text: string } }>("/api/sessions/:id/messages", (req, reply) =>
+  app.post<{ Params: { id: string }; Body: { text: string; attachmentIds?: string[] } }>("/api/sessions/:id/messages", (req, reply) =>
     guard(reply, async () => {
       const s = requireSession(req.params.id)
-      const text = req.body.text?.trim()
-      if (!text) throw new Error("El mensaje está vacío")
+      const text = req.body.text?.trim() ?? ""
+      const files = (req.body.attachmentIds ?? []).map((aid) => {
+        const a = attachments.get(aid)
+        if (!a || a.sessionId !== s.id) throw new Error("Un adjunto ya no existe: volvé a subirlo")
+        return a
+      })
+      if (!text && !files.length) throw new Error("El mensaje está vacío")
       // Si la sesión no tenía tarea, tu primer mensaje directo pasa a ser su tarea.
-      if (s.kind === "worker" && s.taskState === "none")
+      if (s.kind === "worker" && s.taskState === "none" && text)
         sessions.update(s.id, { taskTitle: text.split("\n")[0]!.slice(0, 80), taskState: "assigned" })
-      return sessions.send(s.id, text, { origin: "user" })
+      return sessions.send(s.id, text, { origin: "user", attachments: files })
     })
+  )
+
+  app.post<{ Params: { id: string }; Body: { name: string; mime?: string; data: string } }>(
+    "/api/sessions/:id/attachments",
+    (req, reply) =>
+      guard(reply, () => {
+        const s = requireSession(req.params.id)
+        if (!req.body?.data) throw new Error("El archivo está vacío")
+        const rec = attachments.save(s.id, {
+          name: req.body.name || "archivo",
+          mime: req.body.mime || "application/octet-stream",
+          data: Buffer.from(req.body.data, "base64"),
+          source: "user",
+        })
+        return { ...toRef(rec), source: rec.source, createdAt: rec.createdAt, sessionId: rec.sessionId }
+      })
+  )
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/attachments", (req, reply) =>
+    guard(reply, () => {
+      requireSession(req.params.id)
+      return db.listAttachments(req.params.id).map(({ path: _p, ...a }) => a)
+    })
+  )
+
+  app.get<{ Params: { id: string }; Querystring: { download?: string } }>("/api/attachments/:id", async (req, reply) => {
+    const a = attachments.get(req.params.id)
+    if (!a || !fs.existsSync(a.path)) return reply.code(404).send({ error: "El adjunto no existe" })
+    const inline = !req.query.download && (INLINE_TYPES.has(a.mime) || TEXT_TYPES.test(a.mime))
+    const type = INLINE_TYPES.has(a.mime) ? a.mime : TEXT_TYPES.test(a.mime) ? "text/plain; charset=utf-8" : a.mime
+    reply
+      .header("content-type", type)
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "sandbox")
+      .header("cache-control", "private, max-age=31536000, immutable")
+      .header(
+        "content-disposition",
+        `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(a.name)}`
+      )
+    return reply.send(fs.createReadStream(a.path))
+  })
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/commands", (req, reply) =>
+    guard(reply, () => sessions.commandsFor(requireSession(req.params.id).id))
   )
 
   app.post<{ Params: { id: string } }>("/api/sessions/:id/start", (req, reply) =>
@@ -300,11 +355,9 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
           if (clash) throw new Error(`Ya existe una sesión llamada ${name}`)
           await sessions.rename(s.id, name)
         }
-        const patch: Record<string, unknown> = {}
-        if (req.body.role !== undefined) patch.role = req.body.role.trim()
-        if (req.body.model !== undefined) patch.model = req.body.model || null
-        if (req.body.effort !== undefined) patch.effort = req.body.effort || null
-        if (Object.keys(patch).length) sessions.update(s.id, patch)
+        if (req.body.role !== undefined) sessions.update(s.id, { role: req.body.role.trim() })
+        if (req.body.model !== undefined) await sessions.setModel(s.id, req.body.model || null)
+        if (req.body.effort !== undefined) await sessions.setEffort(s.id, req.body.effort || null)
         return sessions.view(db.getSession(s.id)!)
       })
   )
@@ -319,7 +372,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ------------------------------------------------------------------ drafts
 
-  app.post<{ Params: { id: string }; Body: { title?: string; prompt?: string; name?: string; role?: string } }>(
+  app.post<{ Params: { id: string }; Body: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown } }>(
     "/api/drafts/:id/send",
     (req, reply) => guard(reply, () => orchestration.sendDraft(req.params.id, req.body ?? {}))
   )
@@ -328,7 +381,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => orchestration.discardDraft(req.params.id))
   )
 
-  app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string } }>("/api/drafts/:id", (req, reply) =>
+  app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string; subagents?: unknown } }>("/api/drafts/:id", (req, reply) =>
     guard(reply, () => orchestration.editDraft(req.params.id, req.body ?? {}))
   )
 

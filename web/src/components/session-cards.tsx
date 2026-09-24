@@ -1,4 +1,4 @@
-import { Compass, Inbox, LockOpen } from "lucide-react"
+import { Bot, Compass, Inbox, LockOpen } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useNow } from "@/hooks/use-now"
 import { api } from "@/lib/api"
-import { timeAgo } from "@/lib/format"
+import { timeAgo, tokens } from "@/lib/format"
 import { reportStatusView } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -33,6 +33,15 @@ export function WorkerCard({ session, lastReport }: { session: Session; lastRepo
         {unread > 0 && (
           <span className="rounded-full bg-foreground px-1.5 font-mono text-[0.65rem] text-background">{unread}</span>
         )}
+        {session.subagentsRunning > 0 && (
+          <span
+            className="inline-flex items-center gap-1 font-mono text-[0.68rem] text-status-working"
+            title={`${session.subagentsRunning} subagentes trabajando`}
+          >
+            <Bot className="size-3.5" />
+            {session.subagentsRunning}
+          </span>
+        )}
         <StatusPill session={session} className="ml-auto" />
       </div>
       {session.role && <p className="mt-1 truncate text-xs text-muted-foreground">{session.role}</p>}
@@ -45,7 +54,12 @@ export function WorkerCard({ session, lastReport }: { session: Session; lastRepo
       <div className="mt-auto pt-3">
         <div className="flex items-center gap-2 font-mono text-[0.72rem] text-muted-foreground">
           <span className="truncate">{session.lastActivity ?? "—"}</span>
-          <span className="ml-auto shrink-0">{timeAgo(session.lastActivityAt, now)}</span>
+          <span className="ml-auto shrink-0">
+            {session.tokens && session.tokens.total > 0 && (
+              <span title={`${session.tokens.total.toLocaleString("es-AR")} tokens`}>{tokens(session.tokens.total)} · </span>
+            )}
+            {timeAgo(session.lastActivityAt, now)}
+          </span>
         </div>
         {lastReport && (
           <div className="mt-2 flex items-center gap-2 border-t pt-2 text-xs">

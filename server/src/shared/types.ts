@@ -97,6 +97,59 @@ export interface Session {
   queuedMessages: number
   /** Último texto que escribió la sesión (para las tarjetas). */
   lastText: string | null
+  /** Modelo que está usando ahora el proceso (lo informa el CLI en cada turno). */
+  currentModel: string | null
+  /** Subagentes trabajando en este momento. */
+  subagentsRunning: number
+  /** Tokens acumulados de la sesión (incluye a sus subagentes). */
+  tokens: TokenUsage | null
+}
+
+export interface TokenUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  total: number
+}
+
+/** Subagente que la orquestadora le pide a un worker, con su rol, tarea y reglas. */
+export interface SubagentSpec {
+  name: string
+  role: string
+  task: string
+  rules: string[]
+  model: string | null
+  background: boolean
+  readOnly: boolean
+}
+
+export interface AttachmentRef {
+  id: string
+  name: string
+  mime: string
+  size: number
+}
+
+export interface Attachment extends AttachmentRef {
+  sessionId: string
+  source: "user" | "tool"
+  createdAt: number
+}
+
+export interface SlashCommand {
+  name: string
+  description: string
+  argumentHint: string
+  builtin?: boolean
+}
+
+export type SubagentStatus = "running" | "completed" | "failed" | "killed"
+
+export interface SubagentUsage {
+  tokens: number
+  toolUses: number
+  durationMs: number
 }
 
 export type DraftKind = "prompt" | "session"
@@ -122,6 +175,7 @@ export interface Draft {
   decidedAt: number | null
   edited: boolean
   revision: number
+  subagents: SubagentSpec[]
 }
 
 export type ReportStatus = "done" | "blocked" | "partial"
@@ -153,6 +207,9 @@ export type TimelineEvent =
       uuid: string
       draftId?: string
       draftTitle?: string
+      attachments?: AttachmentRef[]
+      /** Subagentes que pidió la orquestadora en esta propuesta (el texto enviado incluye sus instrucciones). */
+      subagents?: SubagentSpec[]
     }
   | { kind: "peer"; from: string; body: string }
   | {
@@ -178,6 +235,7 @@ export type TimelineEvent =
       structured?: unknown
       truncated?: boolean
       parent: string | null
+      images?: AttachmentRef[]
     }
   | {
       kind: "turn_end"
@@ -185,6 +243,8 @@ export type TimelineEvent =
       subtype: string
       durationMs: number
       costUsd: number
+      /** Tokens de este turno (entrada + salida + caché). */
+      tokens?: number
       terminalReason?: string
       error?: string
     }
@@ -206,6 +266,25 @@ export type TimelineEvent =
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
   | { kind: "batch"; reportIds: string[]; text: string; followUp: boolean }
   | { kind: "compact"; trigger: string; preTokens: number }
+  | {
+      kind: "subagent"
+      toolUseId: string
+      taskId: string
+      description: string
+      subagentType: string | null
+      name: string | null
+      model: string | null
+      background: boolean
+      prompt: string
+      status: SubagentStatus
+      startedAt: number
+      endedAt: number | null
+      usage: SubagentUsage | null
+      lastActivity: string | null
+      summary: string | null
+      /** Llamada Agent que lanzó a este subagente, si es un subagente de otro subagente. */
+      parent: string | null
+    }
 
 export interface StoredEvent {
   id: number
@@ -231,6 +310,8 @@ export interface ModelOption {
   label: string
   description?: string
   efforts?: string[]
+  /** Id real del modelo (ej. claude-sonnet-5), para reconocer el que está usando una sesión. */
+  resolved?: string
 }
 
 export interface Meta {

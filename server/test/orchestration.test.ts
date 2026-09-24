@@ -75,6 +75,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     lastActivity: null,
     lastActivityAt: null,
     costUsd: 0,
+    tokens: null,
     createdAt: Date.now(),
     archivedAt: null,
   }
@@ -212,6 +213,24 @@ describe("cola de resultados", () => {
     const created = db.listSessions().find((s) => s.name === "TESTS-E2E")
     assert.ok(created)
     assert.equal(sessions.sent.at(-1)!.id, created.id)
+  })
+
+  it("los subagentes pedidos viajan con la propuesta y salen en el prompt", async () => {
+    const msg = orch.proposePrompt(orq, {
+      session: "BACKEND",
+      title: "Migrar",
+      prompt: "Migrá la tabla",
+      subagents: [{ name: "revisor", role: "revisor de SQL", task: "Revisá la migración", readOnly: true }],
+    })
+    assert.match(msg, /1 subagente \(revisor\)/)
+    sessions.endTurn(orq)
+    const [ready] = db.listDrafts({ projectId, states: ["ready"] })
+    assert.equal(ready!.subagents.length, 1)
+    await orch.sendDraft(ready!.id, {})
+    const last = sessions.sent.at(-1)!
+    assert.match(last.text, /^Migrá la tabla/)
+    assert.match(last.text, /subagent_type: "Explore"/)
+    assert.match(last.text, /Revisá la migración/)
   })
 
   it("read_results trae la cola a mitad de turno", async () => {

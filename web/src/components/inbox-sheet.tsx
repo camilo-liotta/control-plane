@@ -42,7 +42,7 @@ export function InboxSheet() {
 
   return (
     <Sheet open={open} onOpenChange={(v) => setUi({ inbox: v })}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+      <SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>Bandeja</SheetTitle>
           <SheetDescription>Lo que espera una decisión tuya, en todos los proyectos.</SheetDescription>

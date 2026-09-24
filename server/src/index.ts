@@ -9,8 +9,10 @@ import fastifyWebsocket from "@fastify/websocket"
 import Fastify from "fastify"
 
 import { registerApi, snapshot } from "./api.ts"
+import { AttachmentStore } from "./attachments.ts"
 import { config, version } from "./config.ts"
 import { Db, type SessionRecord } from "./db.ts"
+import type { Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
 import { Orchestration } from "./orchestration.ts"
@@ -35,7 +37,17 @@ async function main() {
 
   const db = new Db(path.join(config.home, "control-plane.db"))
   const hub = new Hub()
+  const attachments = new AttachmentStore(db)
   const baseUrl = `http://${config.host}:${config.port}`
+
+  // Modelos y cuenta de la última sesión que arrancó: sirven apenas levanta el server.
+  const metaFile = path.join(config.home, "meta.json")
+  let saved: Partial<Pick<Meta, "models" | "account">> = {}
+  try {
+    saved = JSON.parse(fs.readFileSync(metaFile, "utf8")) as typeof saved
+  } catch {
+    saved = {}
+  }
 
   const protocolFor = (s: SessionRecord) => {
     const project = db.getProject(s.projectId)
@@ -54,17 +66,39 @@ async function main() {
     }
   }
 
-  const sessions = new SessionManager(db, hub, (token) => `${baseUrl}/mcp/${token}`, protocolFor, {
+  const sessions = new SessionManager(db, hub, attachments, (token) => `${baseUrl}/mcp/${token}`, protocolFor, {
     version,
     claudeVersion: cliVersion,
-    models: [],
-    account: null,
+    models: Array.isArray(saved.models) ? saved.models : [],
+    account: saved.account ?? null,
     homeDir: os.homedir(),
   })
+  const commandsFile = path.join(config.home, "commands.json")
+  try {
+    const list = JSON.parse(fs.readFileSync(commandsFile, "utf8"))
+    if (Array.isArray(list)) sessions.seedCommands(list)
+  } catch {
+    // primera vez: se completa cuando arranque una sesión
+  }
+  sessions.on("commands", (list) => {
+    try {
+      fs.writeFileSync(commandsFile, JSON.stringify(list))
+    } catch {
+      // no es grave
+    }
+  })
+  sessions.on("meta", (meta) => {
+    try {
+      fs.writeFileSync(metaFile, JSON.stringify({ models: meta.models, account: meta.account }, null, 2))
+    } catch {
+      // no es grave: se vuelve a completar con la próxima sesión
+    }
+  })
   const orchestration = new Orchestration(db, hub, sessions)
-  const deps = { db, hub, sessions, orchestration }
+  const deps = { db, hub, sessions, orchestration, attachments }
 
-  const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 })
+  // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
+  const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })
 
   // Solo para esta máquina: rechaza otros hosts (DNS rebinding) y orígenes ajenos.
   const allowedHosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`])

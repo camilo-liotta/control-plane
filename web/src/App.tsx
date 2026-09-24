@@ -2,12 +2,14 @@ import { useEffect } from "react"
 import { Redirect, Route, Switch } from "wouter"
 
 import { AppSidebar, useInboxCount } from "@/components/app-sidebar"
+import { Lightbox } from "@/components/attachments"
 import { CommandPalette } from "@/components/command-palette"
 import { ImportSessionDialog } from "@/components/import-session-dialog"
 import { InboxSheet } from "@/components/inbox-sheet"
 import { NewProjectDialog } from "@/components/new-project-dialog"
 import { NewSessionDialog } from "@/components/new-session-dialog"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
+import { SubagentSheet } from "@/components/subagent-sheet"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { useStore } from "@/lib/store"
@@ -45,6 +47,8 @@ function Dialogs() {
       />
       <InboxSheet />
       <CommandPalette />
+      <SubagentSheet />
+      <Lightbox />
     </>
   )
 }

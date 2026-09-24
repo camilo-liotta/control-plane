@@ -28,6 +28,8 @@ export function buildLaunch(
     "--verbose",
     "--include-partial-messages",
     "--replay-user-messages",
+    // Que el trabajo de los subagentes (texto incluido) llegue al stream para verlo en vivo.
+    "--forward-subagent-text",
     "--permission-prompt-tool",
     "stdio",
     "--dangerously-skip-permissions",

@@ -17,7 +17,7 @@ import {
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
-import { shortPath } from "@/lib/format"
+import { shortPath, tokens, totals, usd } from "@/lib/format"
 import { openDrafts, projectReports, projectSessions, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
@@ -88,7 +88,20 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     <div className="flex h-full flex-col">
       <PageHeader
         title={project.name}
-        subtitle={<span className="font-mono">{shortPath(project.repoPath)}</span>}
+        subtitle={
+          <>
+            <span className="font-mono">{shortPath(project.repoPath)}</span>
+            {(() => {
+              const t = totals([orchestrator, ...workers].filter((s) => s !== null))
+              return t.cost > 0 || t.tokens > 0 ? (
+                <span title="Total del proyecto (equivalente API; con tu plan no se cobra aparte)">
+                  {" "}
+                  · {usd(t.cost)} · {tokens(t.tokens)} tokens
+                </span>
+              ) : null
+            })()}
+          </>
+        }
         actions={
           <>
             <Button size="sm" onClick={() => setUi({ newSessionFor: project.id })}>

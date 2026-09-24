@@ -3,20 +3,23 @@ import { memo, useMemo, useState } from "react"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
+import { AttachmentList } from "@/components/attachments"
 import { DraftCard } from "@/components/draft-card"
+import { SubagentSpecList } from "@/components/subagent-specs"
 import { TonePill } from "@/components/status"
 import { PermissionCard, QuestionCard } from "@/components/timeline/interactive-cards"
 import { Markdown } from "@/components/timeline/markdown"
+import { SubagentCard, SubagentContext, subagentMap } from "@/components/timeline/subagents"
 import { OutgoingMessage, TodoCard, ToolRow, type ToolCall } from "@/components/timeline/tool-card"
 import { Spinner } from "@/components/ui/spinner"
-import { clock, duration, usd } from "@/lib/format"
+import { clock, duration, tokens as tokensShort, usd } from "@/lib/format"
 import { reportStatusView } from "@/lib/status"
 import { useStore, type PartialBlock } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 type Ev<K extends TimelineEvent["kind"]> = StoredEvent & { event: Extract<TimelineEvent, { kind: K }> }
 
-type Item =
+export type Item =
   | { type: "event"; ev: StoredEvent }
   | { type: "tool"; id: number; call: ToolCall }
 
@@ -28,6 +31,8 @@ export function buildItems(events: StoredEvent[]): Item[] {
   const calls = new Map<string, ToolCall>()
   for (const e of events) {
     const ev = e.event
+    // El estado de los subagentes se muestra dentro de su tarjeta, no como un ítem aparte.
+    if (ev.kind === "subagent") continue
     const parent = "parent" in ev ? ev.parent : null
     if (parent) {
       const owner = calls.get(parent)
@@ -61,14 +66,22 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
         </span>
       )}
       {event.origin === "external" && <span className="text-xs text-muted-foreground">Desde fuera del dashboard</span>}
-      <div
-        className={cn(
-          "max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap break-words",
-          event.origin === "draft" && "border border-status-working/25 bg-status-working/8"
-        )}
-      >
-        {event.text}
-      </div>
+      {event.attachments && event.attachments.length > 0 && <AttachmentList items={event.attachments} />}
+      {event.text && (
+        <div
+          className={cn(
+            "max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap break-words",
+            event.origin === "draft" && "border border-status-working/25 bg-status-working/8"
+          )}
+        >
+          {event.text}
+        </div>
+      )}
+      {event.subagents && event.subagents.length > 0 && (
+        <div className="w-full max-w-[85%] [&>div]:mt-0">
+          <SubagentSpecList specs={event.subagents} />
+        </div>
+      )}
       <span className="font-mono text-[0.65rem] text-muted-foreground/70">{clock(ev.ts)}</span>
     </div>
   )
@@ -129,13 +142,14 @@ function Notice({ ev }: { ev: Ev<"notice"> }) {
 }
 
 function TurnEnd({ ev }: { ev: Ev<"turn_end"> }) {
-  const { ok, durationMs, costUsd, error, terminalReason } = ev.event
+  const { ok, durationMs, costUsd, error, terminalReason, tokens } = ev.event
   const aborted = Boolean(terminalReason?.startsWith("aborted"))
   return (
     <div className="flex items-center gap-3 py-1 text-[0.7rem] text-muted-foreground/80">
       <div className="h-px flex-1 bg-border" />
       <span className="font-mono">
         {aborted ? "interrumpido" : ok ? "turno terminado" : "error"} · {duration(durationMs)}
+        {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
         {costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
       </span>
       <div className="h-px flex-1 bg-border" />
@@ -233,6 +247,9 @@ function ToolItem({ call, root, live }: { call: ToolCall; root?: string; live: b
     case "mcp__control-plane__propose_prompt":
     case "mcp__control-plane__propose_session":
       return <ProposalCall call={call} root={root} live={live} />
+    case "Agent":
+    case "Task":
+      return <SubagentCard call={call} live={live} />
     default:
       return <ToolRow call={call} root={root} live={live} />
   }
@@ -298,10 +315,18 @@ function LiveTail({ session, partial }: { session: Session; partial?: PartialBlo
   return null
 }
 
-export function Timeline({ session, events }: { session: Session; events: StoredEvent[] }) {
-  const partial = useStore((s) => s.partials[session.id])
-  const items = useMemo(() => buildItems(events), [events])
-  const live = session.status === "working" || session.status === "needs_input"
+/** Renderiza una lista de ítems ya armada (la usa el chat principal y el panel de cada subagente). */
+export function TimelineItems({
+  items,
+  sessionId,
+  root,
+  live,
+}: {
+  items: Item[]
+  sessionId: string
+  root?: string
+  live: boolean
+}) {
   const lastTurnIndex = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]!
@@ -310,17 +335,31 @@ export function Timeline({ session, events }: { session: Session; events: Stored
     }
     return -1
   }, [items])
-
   return (
-    <div className="flex flex-col gap-3">
+    <>
       {items.map((it, i) =>
         it.type === "tool" ? (
-          <ToolItem key={it.id} call={it.call} root={session.cwd} live={live && i > lastTurnIndex} />
+          <ToolItem key={it.id} call={it.call} root={root} live={live && i > lastTurnIndex} />
         ) : (
-          <EventItem key={it.ev.id} ev={it.ev} sessionId={session.id} />
+          <EventItem key={it.ev.id} ev={it.ev} sessionId={sessionId} />
         )
       )}
-      <LiveTail session={session} partial={partial} />
-    </div>
+    </>
+  )
+}
+
+export function Timeline({ session, events }: { session: Session; events: StoredEvent[] }) {
+  const partial = useStore((s) => s.partials[session.id])
+  const items = useMemo(() => buildItems(events), [events])
+  const subagents = useMemo(() => ({ sessionId: session.id, map: subagentMap(events) }), [events, session.id])
+  const live = session.status === "working" || session.status === "needs_input" || session.subagentsRunning > 0
+
+  return (
+    <SubagentContext.Provider value={subagents}>
+      <div className="flex flex-col gap-3">
+        <TimelineItems items={items} sessionId={session.id} root={session.cwd} live={live} />
+        <LiveTail session={session} partial={partial} />
+      </div>
+    </SubagentContext.Provider>
   )
 }

@@ -1,10 +1,12 @@
 import { EventEmitter } from "node:events"
+import fs from "node:fs"
 
+import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
-import { StreamNormalizer } from "./claude/normalize.ts"
+import { parseCommands, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
 import { config } from "./config.ts"
-import type { Db, SessionRecord } from "./db.ts"
+import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import type {
   Meta,
@@ -14,7 +16,10 @@ import type {
   Session,
   SessionKind,
   SessionStatus,
+  SlashCommand,
   StoredEvent,
+  SubagentSpec,
+  SubagentStatus,
   TimelineEvent,
   UsageInfo,
   UserOrigin,
@@ -40,7 +45,15 @@ interface Runtime {
   startedAt: number
   retried: boolean
   mcpWarned: boolean
+  currentModel: string | null
+  /** Subagentes lanzados por esta sesión, por id de la llamada Agent. */
+  subagents: Map<string, { eventId: number; status: SubagentStatus }>
+  taskToTool: Map<string, string>
+  /** Llamadas Agent/Task vistas (para saber nombre, modelo y de quién dependen). */
+  agentCalls: Map<string, { input: Record<string, unknown>; parent: string | null }>
 }
+
+const AGENT_TOOLS = new Set(["Agent", "Task"])
 
 export interface TurnEndInfo {
   ok: boolean
@@ -67,6 +80,10 @@ export interface SendOptions {
   draftTitle?: string
   /** Evento a guardar en lugar del mensaje de usuario (ej. un lote de resultados). */
   event?: TimelineEvent
+  attachments?: AttachmentRecord[]
+  /** Lo que se muestra en el chat si es distinto de lo que se envía (ej. sin las instrucciones de subagentes). */
+  display?: string
+  subagents?: SubagentSpec[]
 }
 
 type ProtocolBuilder = (session: SessionRecord) => {
@@ -83,20 +100,27 @@ type ProtocolBuilder = (session: SessionRecord) => {
 export class SessionManager extends EventEmitter<{
   turnEnd: [SessionRecord, TurnEndInfo]
   status: [SessionRecord, SessionStatus]
+  meta: [Meta]
+  commands: [SlashCommand[]]
 }> {
   private runtimes = new Map<string, Runtime>()
   private stoppedDetail = new Map<string, string>()
   private lastTexts = new Map<string, string | null>()
+  /** Últimos comandos conocidos por sesión (sirven aunque esté detenida) y los de cualquier sesión. */
+  private commands = new Map<string, SlashCommand[]>()
+  private anyCommands: SlashCommand[] = []
   usage: UsageInfo | null = null
   meta: Meta
   private db: Db
   private hub: Hub
+  private attachments: AttachmentStore
   private mcpUrlFor: (token: string) => string
   private protocolFor: ProtocolBuilder
 
   constructor(
     db: Db,
     hub: Hub,
+    attachments: AttachmentStore,
     mcpUrlFor: (token: string) => string,
     protocolFor: ProtocolBuilder,
     meta: Meta
@@ -104,6 +128,7 @@ export class SessionManager extends EventEmitter<{
     super()
     this.db = db
     this.hub = hub
+    this.attachments = attachments
     this.mcpUrlFor = mcpUrlFor
     this.protocolFor = protocolFor
     this.meta = meta
@@ -137,7 +162,26 @@ export class SessionManager extends EventEmitter<{
       statusDetail: rt ? rt.statusDetail : (this.stoppedDetail.get(rec.id) ?? null),
       pending,
       queuedMessages: rt?.queued.size ?? 0,
+      currentModel: rt?.currentModel ?? null,
+      subagentsRunning: rt ? [...rt.subagents.values()].filter((s) => s.status === "running").length : 0,
     }
+  }
+
+  commandsFor(id: string): SlashCommand[] {
+    return this.commands.get(id) ?? this.anyCommands
+  }
+
+  /** Comandos guardados de una corrida anterior (para autocompletar antes de que arranque una sesión). */
+  seedCommands(list: SlashCommand[]) {
+    if (!this.anyCommands.length) this.anyCommands = list
+  }
+
+  private rememberCommands(id: string, list: SlashCommand[]) {
+    if (!list.length) return
+    this.commands.set(id, list)
+    const changed = JSON.stringify(list) !== JSON.stringify(this.anyCommands)
+    this.anyCommands = list
+    if (changed) this.emit("commands", list)
   }
 
   get(id: string): SessionRecord | null {
@@ -177,6 +221,20 @@ export class SessionManager extends EventEmitter<{
     return stored
   }
 
+  /** Guarda como adjuntos las imágenes que devolvió una herramienta (capturas, imágenes leídas). */
+  private storeImages(sessionId: string, images: RawImage[]) {
+    return images.map((img, i) => {
+      const ext = img.mediaType.split("/")[1] ?? "png"
+      const rec = this.attachments.save(sessionId, {
+        name: `imagen-${Date.now()}-${i + 1}.${ext}`,
+        mime: img.mediaType,
+        data: Buffer.from(img.data, "base64"),
+        source: "tool",
+      })
+      return toRef(rec)
+    })
+  }
+
   private patchEvent(eventId: number, patch: Partial<TimelineEvent>) {
     const stored = this.db.getEvent(eventId)
     if (!stored) return
@@ -207,6 +265,7 @@ export class SessionManager extends EventEmitter<{
       lastActivity: null,
       lastActivityAt: null,
       costUsd: 0,
+      tokens: null,
       createdAt: now(),
       archivedAt: null,
     }
@@ -250,6 +309,10 @@ export class SessionManager extends EventEmitter<{
       startedAt: now(),
       retried,
       mcpWarned: false,
+      currentModel: null,
+      subagents: new Map(),
+      taskToTool: new Map(),
+      agentCalls: new Map(),
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -264,6 +327,7 @@ export class SessionManager extends EventEmitter<{
       .request("initialize", {}, 90_000)
       .then((resp) => {
         this.captureMeta(resp)
+        this.rememberCommands(rec.id, parseCommands(resp.commands))
         if (this.runtimes.get(rec.id) !== rt) return
         this.setStatus(rec.id, rt, rt.pendingControl.size ? "needs_input" : "idle")
       })
@@ -277,12 +341,21 @@ export class SessionManager extends EventEmitter<{
 
   private captureMeta(resp: Record<string, unknown>) {
     const models = Array.isArray(resp.models)
-      ? (resp.models as { value: string; displayName?: string; description?: string; supportedEffortLevels?: string[] }[]).map(
+      ? (
+          resp.models as {
+            value: string
+            displayName?: string
+            description?: string
+            supportedEffortLevels?: string[]
+            resolvedModel?: string
+          }[]
+        ).map(
           (m): ModelOption => ({
             value: m.value,
             label: m.displayName ?? m.value,
             description: m.description,
             efforts: m.supportedEffortLevels,
+            resolved: m.resolvedModel,
           })
         )
       : this.meta.models
@@ -299,6 +372,7 @@ export class SessionManager extends EventEmitter<{
     if (JSON.stringify(next) !== JSON.stringify(this.meta)) {
       this.meta = next
       this.hub.broadcast({ type: "meta", meta: next })
+      this.emit("meta", next)
     }
   }
 
@@ -327,9 +401,74 @@ export class SessionManager extends EventEmitter<{
     }
     for (const action of rt.normalizer.handle(msg)) {
       switch (action.type) {
-        case "event":
-          this.addEvent(id, action.event)
+        case "event": {
+          const event = action.event
+          if (action.images?.length && event.kind === "tool_result") {
+            try {
+              event.images = this.storeImages(id, action.images)
+            } catch {
+              // si no se puede guardar, la imagen queda como "[imagen]" en el texto
+            }
+          }
+          if (event.kind === "tool_use" && AGENT_TOOLS.has(event.name)) {
+            rt.agentCalls.set(event.id, { input: (event.input ?? {}) as Record<string, unknown>, parent: event.parent })
+          }
+          this.addEvent(id, event)
           break
+        }
+        case "commands":
+          this.rememberCommands(id, action.commands)
+          break
+        case "subagent_start": {
+          const call = rt.agentCalls.get(action.toolUseId)
+          const input = call?.input ?? {}
+          const ev = this.addEvent(id, {
+            kind: "subagent",
+            toolUseId: action.toolUseId,
+            taskId: action.taskId,
+            description: action.description,
+            subagentType: action.subagentType,
+            name: typeof input.name === "string" ? input.name : null,
+            model: typeof input.model === "string" ? input.model : null,
+            background: action.background,
+            prompt: action.prompt || String(input.prompt ?? ""),
+            status: "running",
+            startedAt: now(),
+            endedAt: null,
+            usage: null,
+            lastActivity: null,
+            summary: null,
+            parent: call?.parent ?? null,
+          })
+          rt.subagents.set(action.toolUseId, { eventId: ev.id, status: "running" })
+          rt.taskToTool.set(action.taskId, action.toolUseId)
+          this.broadcastSession(id)
+          break
+        }
+        case "subagent_progress": {
+          const toolUseId = action.toolUseId ?? rt.taskToTool.get(action.taskId)
+          const sub = toolUseId ? rt.subagents.get(toolUseId) : undefined
+          if (!sub) break
+          this.patchEvent(sub.eventId, {
+            ...(action.usage ? { usage: action.usage } : {}),
+            ...(action.activity ? { lastActivity: action.activity } : {}),
+          } as Partial<TimelineEvent>)
+          break
+        }
+        case "subagent_end": {
+          const toolUseId = action.toolUseId ?? rt.taskToTool.get(action.taskId)
+          const sub = toolUseId ? rt.subagents.get(toolUseId) : undefined
+          if (!sub || sub.status !== "running") break
+          sub.status = action.status
+          this.patchEvent(sub.eventId, {
+            status: action.status,
+            endedAt: now(),
+            ...(action.summary ? { summary: action.summary } : {}),
+            ...(action.usage ? { usage: action.usage } : {}),
+          } as Partial<TimelineEvent>)
+          this.broadcastSession(id)
+          break
+        }
         case "status":
           rt.cliState = action.state
           this.setStatus(id, rt, this.deriveStatus(rt))
@@ -348,17 +487,28 @@ export class SessionManager extends EventEmitter<{
           this.hub.broadcast({ type: "partial_clear", sessionId: id })
           break
         case "activity":
-          this.db.updateSession(id, { lastActivity: oneLine(action.text, 160), lastActivityAt: now() })
+          // Sin marcas de markdown (los resúmenes de subagentes suelen traer títulos y negritas).
+          this.db.updateSession(id, {
+            lastActivity: oneLine(action.text.replace(/(^|\s)#{1,6}\s+/g, "$1").replace(/\*\*/g, ""), 160),
+            lastActivityAt: now(),
+          })
           this.broadcastSession(id)
           break
         case "cost":
-          this.db.updateSession(id, { costUsd: action.totalUsd })
+          this.db.updateSession(id, {
+            ...(action.totalUsd > 0 ? { costUsd: action.totalUsd } : {}),
+            ...(action.tokens ? { tokens: action.tokens } : {}),
+          })
           break
         case "usage":
           this.usage = action.usage
           this.hub.broadcast({ type: "usage", usage: action.usage })
           break
         case "init": {
+          if (action.model && action.model !== rt.currentModel) {
+            rt.currentModel = action.model
+            this.broadcastSession(id)
+          }
           const rec = this.db.getSession(id)
           if (!rec) break
           const patch: Partial<SessionRecord> = {}
@@ -459,6 +609,12 @@ export class SessionManager extends EventEmitter<{
     if (this.runtimes.get(id) !== rt) return
     this.runtimes.delete(id)
     for (const requestId of [...rt.pendingControl.keys()]) this.cancelControl(rt, requestId)
+    // Los subagentes mueren con su sesión.
+    for (const sub of rt.subagents.values()) {
+      if (sub.status !== "running") continue
+      sub.status = "killed"
+      this.patchEvent(sub.eventId, { status: "killed", endedAt: now(), summary: "La sesión se detuvo" } as Partial<TimelineEvent>)
+    }
     const rec = this.db.getSession(id)
     if (!rec) return
 
@@ -508,16 +664,19 @@ export class SessionManager extends EventEmitter<{
     rt.ownUuids.add(u)
     if (rt.ownUuids.size > 500) rt.ownUuids.delete(rt.ownUuids.values().next().value!)
     rt.queued.add(u)
+    const files = opts.attachments ?? []
     const event: TimelineEvent = opts.event ?? {
       kind: "user",
-      text,
+      text: opts.display ?? text,
       origin: opts.origin,
       uuid: u,
       ...(opts.draftId ? { draftId: opts.draftId } : {}),
       ...(opts.draftTitle ? { draftTitle: opts.draftTitle } : {}),
+      ...(files.length ? { attachments: files.map(toRef) } : {}),
+      ...(opts.subagents?.length ? { subagents: opts.subagents } : {}),
     }
     const stored = this.addEvent(id, event)
-    if (!rt.proc.sendUser(text, u, rec.claudeSessionId)) {
+    if (!rt.proc.sendUser(files.length ? contentWithFiles(text, files) : text, u, rec.claudeSessionId)) {
       rt.queued.delete(u)
       throw new Error("No se pudo escribir en la sesión")
     }
@@ -565,6 +724,20 @@ export class SessionManager extends EventEmitter<{
     this.setStatus(id, rt, this.deriveStatus(rt))
   }
 
+  /** Cambia el modelo: queda guardado y, si la sesión está corriendo, aplica desde el próximo turno. */
+  async setModel(id: string, model: string | null) {
+    this.update(id, { model })
+    const rt = this.runtimes.get(id)
+    if (rt && !rt.proc.exited) await rt.proc.request("set_model", { model }, 15_000)
+  }
+
+  async setEffort(id: string, effort: string | null) {
+    this.update(id, { effort })
+    const rt = this.runtimes.get(id)
+    if (rt && !rt.proc.exited && effort)
+      await rt.proc.request("apply_flag_settings", { settings: { effortLevel: effort } }, 15_000)
+  }
+
   async rename(id: string, name: string) {
     this.update(id, { name })
     const rt = this.runtimes.get(id)
@@ -581,6 +754,29 @@ export class SessionManager extends EventEmitter<{
   async shutdown() {
     await Promise.all([...this.runtimes.values()].map((rt) => rt.proc.close(2000)))
   }
+}
+
+/**
+ * Mensaje con adjuntos: las imágenes van como bloques (Claude las ve directo) y todos los
+ * archivos quedan listados con su ruta, para que pueda abrirlos con sus herramientas.
+ */
+function contentWithFiles(text: string, files: AttachmentRecord[]): Record<string, unknown>[] {
+  const list = files.map((f) => `- ${f.path} (${f.name}, ${f.mime}, ${Math.max(1, Math.round(f.size / 1024))} KB)`).join("\n")
+  const blocks: Record<string, unknown>[] = [
+    {
+      type: "text",
+      text: `${text || "Te paso estos archivos."}\n\nArchivos adjuntos (guardados en disco; podés abrirlos con tus herramientas):\n${list}`,
+    },
+  ]
+  for (const f of files) {
+    if (!VISION_TYPES.has(f.mime) || f.size > 5 * 1024 * 1024) continue
+    try {
+      blocks.push({ type: "image", source: { type: "base64", media_type: f.mime, data: fs.readFileSync(f.path).toString("base64") } })
+    } catch {
+      // si no se puede leer, queda la ruta en el texto
+    }
+  }
+  return blocks
 }
 
 function normalizeQuestions(raw: unknown): Question[] {

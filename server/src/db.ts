@@ -3,6 +3,7 @@ import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 import type {
+  Attachment,
   Draft,
   DraftKind,
   DraftState,
@@ -13,7 +14,9 @@ import type {
   SessionKind,
   SessionStatus,
   StoredEvent,
+  SubagentSpec,
   TaskState,
+  TokenUsage,
   TimelineEvent,
 } from "./shared/types.ts"
 
@@ -55,6 +58,7 @@ export interface SessionRecord {
   lastActivity: string | null
   lastActivityAt: number | null
   costUsd: number
+  tokens: TokenUsage | null
   createdAt: number
   archivedAt: number | null
 }
@@ -134,6 +138,23 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX reports_project ON reports(project_id, state);
   `,
+  `
+  ALTER TABLE drafts ADD COLUMN subagents TEXT;
+  CREATE TABLE attachments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX attachments_session ON attachments(session_id, created_at);
+  `,
+  `
+  ALTER TABLE sessions ADD COLUMN tokens TEXT;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -177,8 +198,29 @@ function toSession(r: Row): SessionRecord {
     lastActivity: str(r.last_activity),
     lastActivityAt: num(r.last_activity_at),
     costUsd: Number(r.cost_usd ?? 0),
+    tokens: parseTokens(r.tokens),
     createdAt: Number(r.created_at),
     archivedAt: num(r.archived_at),
+  }
+}
+
+function parseTokens(raw: unknown): TokenUsage | null {
+  if (!raw) return null
+  try {
+    const t = JSON.parse(String(raw)) as TokenUsage
+    return typeof t.total === "number" ? t : null
+  } catch {
+    return null
+  }
+}
+
+function parseSubagents(raw: unknown): SubagentSpec[] {
+  if (!raw) return []
+  try {
+    const list = JSON.parse(String(raw)) as SubagentSpec[]
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
   }
 }
 
@@ -206,6 +248,24 @@ function toDraft(r: Row): Draft {
     decidedAt: num(r.decided_at),
     edited: bool(r.edited),
     revision: Number(r.revision ?? 1),
+    subagents: parseSubagents(r.subagents),
+  }
+}
+
+export interface AttachmentRecord extends Attachment {
+  path: string
+}
+
+function toAttachment(r: Row): AttachmentRecord {
+  return {
+    id: String(r.id),
+    sessionId: String(r.session_id),
+    name: String(r.name),
+    mime: String(r.mime),
+    size: Number(r.size),
+    path: String(r.path),
+    source: r.source === "tool" ? "tool" : "user",
+    createdAt: Number(r.created_at),
   }
 }
 
@@ -246,6 +306,7 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   lastActivity: "last_activity",
   lastActivityAt: "last_activity_at",
   costUsd: "cost_usd",
+  tokens: "tokens",
   createdAt: "created_at",
   archivedAt: "archived_at",
 }
@@ -260,6 +321,7 @@ const DRAFT_COLUMNS: Partial<Record<keyof Draft, string>> = {
   decidedAt: "decided_at",
   edited: "edited",
   revision: "revision",
+  subagents: "subagents",
 }
 
 const REPORT_COLUMNS: Partial<Record<keyof Report, string>> = {
@@ -451,8 +513,8 @@ export class Db {
     this.db
       .prepare(
         `INSERT INTO drafts (id, project_id, kind, target_session_id, new_session, title, prompt, state,
-          created_by, created_at, updated_at, decided_at, edited, revision)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          created_by, created_at, updated_at, decided_at, edited, revision, subagents)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         d.id,
@@ -468,7 +530,8 @@ export class Db {
         d.updatedAt,
         d.decidedAt,
         d.edited ? 1 : 0,
-        d.revision
+        d.revision,
+        d.subagents.length ? JSON.stringify(d.subagents) : null
       )
   }
 
@@ -514,6 +577,38 @@ export class Db {
         )
         .all(sinceMs) as Row[]
     ).map(toDraft)
+  }
+
+  // ------------------------------------------------------------- attachments
+
+  insertAttachment(a: AttachmentRecord) {
+    this.db
+      .prepare(
+        "INSERT INTO attachments (id, session_id, name, mime, size, path, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      )
+      .run(a.id, a.sessionId, a.name, a.mime, a.size, a.path, a.source, a.createdAt)
+  }
+
+  getAttachment(id: string): AttachmentRecord | null {
+    const r = this.db.prepare("SELECT * FROM attachments WHERE id = ?").get(id) as Row | undefined
+    return r ? toAttachment(r) : null
+  }
+
+  listAttachments(sessionId: string): AttachmentRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM attachments WHERE session_id = ? ORDER BY created_at DESC LIMIT 200")
+        .all(sessionId) as Row[]
+    ).map(toAttachment)
+  }
+
+  /** Eventos de subagente de una sesión (para reconstruir su estado). */
+  listSubagentEvents(sessionId: string): StoredEvent[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM events WHERE session_id = ? AND kind = 'subagent' ORDER BY id")
+        .all(sessionId) as Row[]
+    ).map((r) => this.toStored(r))
   }
 
   // ----------------------------------------------------------------- reports

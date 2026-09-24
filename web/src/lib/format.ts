@@ -30,6 +30,23 @@ export function usd(value: number): string {
   return `US$ ${value.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: value < 1 ? 3 : 2 })}`
 }
 
+/** Tokens en corto: 850 · 12,3 k · 450 k · 1,2 M. */
+export function tokens(n: number): string {
+  if (n < 1000) return String(Math.round(n))
+  if (n < 100_000) return `${(n / 1000).toFixed(1).replace(".", ",").replace(",0", "")} k`
+  if (n < 1_000_000) return `${Math.round(n / 1000)} k`
+  return `${(n / 1_000_000).toFixed(1).replace(".", ",").replace(",0", "")} M`
+}
+
+export function tokensFull(n: number): string {
+  return Math.round(n).toLocaleString("es-AR")
+}
+
+/** Suma costo y tokens de varias sesiones (totales de un proyecto). */
+export function totals(list: { costUsd: number; tokens: { total: number } | null }[]) {
+  return list.reduce((acc, s) => ({ cost: acc.cost + s.costUsd, tokens: acc.tokens + (s.tokens?.total ?? 0) }), { cost: 0, tokens: 0 })
+}
+
 export function percent(value: number): string {
   return `${Math.round(value * 100)}%`
 }

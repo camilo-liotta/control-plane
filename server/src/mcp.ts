@@ -19,6 +19,22 @@ const STATUS_ES: Record<SessionStatus, string> = {
   error: "con error",
 }
 
+
+const subagentSchema = z
+  .array(
+    z.object({
+      name: z.string().describe("Nombre corto del subagente, en minúsculas y con guiones (ej. revisor-sql)."),
+      role: z.string().describe("Quién es y en qué se especializa."),
+      task: z.string().describe("Qué tiene que hacer, concreto."),
+      rules: z.array(z.string()).optional().describe("Cláusulas o restricciones que tiene que respetar."),
+      model: z.enum(["haiku", "sonnet", "opus", "fable"]).optional().describe("Modelo del subagente (si no, usa el del worker)."),
+      background: z.boolean().optional().describe("true: corre en paralelo mientras el worker sigue con otra cosa."),
+      readOnly: z.boolean().optional().describe("true: solo lee y analiza, no edita archivos."),
+    })
+  )
+  .optional()
+  .describe("Subagentes específicos que el worker tiene que lanzar para esta tarea.")
+
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean }
 
 const ok = (text: string): ToolResult => ({ content: [{ type: "text", text }] })
@@ -105,9 +121,10 @@ function buildServer(
           session: z.string().describe("Nombre de la sesión destino, tal como aparece en list_sessions."),
           title: z.string().describe("Título corto de la tarea (se muestra en el dashboard)."),
           prompt: z.string().min(1).describe("Prompt completo y autocontenido para la sesión."),
+          subagents: subagentSchema,
         },
       },
-      wrap((args: { session: string; title: string; prompt: string }) => orchestration.proposePrompt(self, args))
+      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown }) => orchestration.proposePrompt(self, args))
     )
 
     server.registerTool(
@@ -121,9 +138,12 @@ function buildServer(
           role: z.string().describe("Rol o responsabilidad de la sesión."),
           title: z.string().describe("Título corto de la primera tarea."),
           prompt: z.string().min(1).describe("Primer prompt, completo y autocontenido."),
+          subagents: subagentSchema,
         },
       },
-      wrap((args: { name: string; role: string; title: string; prompt: string }) => orchestration.proposeSession(self, args))
+      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown }) =>
+        orchestration.proposeSession(self, args)
+      )
     )
 
     server.registerTool(
@@ -136,9 +156,12 @@ function buildServer(
           title: z.string().optional(),
           prompt: z.string().optional(),
           session: z.string().optional().describe("Nueva sesión destino."),
+          subagents: subagentSchema,
         },
       },
-      wrap((args: { id: string; title?: string; prompt?: string; session?: string }) => orchestration.updateProposal(self, args))
+      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown }) =>
+        orchestration.updateProposal(self, args)
+      )
     )
 
     server.registerTool(

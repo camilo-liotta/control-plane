@@ -1,13 +1,15 @@
 import { Check, Copy, TerminalSquare } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
-import type { Project, Report, Session } from "@shared/types"
+import type { Attachment, Project, Report, Session } from "@shared/types"
 
+import { FileChip, ImageThumb, isImage } from "@/components/attachments"
+import { SubagentList } from "@/components/timeline/subagents"
 import { DraftCard } from "@/components/draft-card"
 import { ReportCard } from "@/components/report-card"
 import { ReviewGate } from "@/components/review-gate"
 import { api } from "@/lib/api"
-import { shortPath, timeAgo, usd } from "@/lib/format"
+import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { openDrafts, projectReports, useModels, useStore } from "@/lib/store"
 
 function Section({ title, children, count }: { title: string; children: React.ReactNode; count?: number }) {
@@ -61,8 +63,31 @@ const TASK_STATE: Record<Session["taskState"], string> = {
 export function SessionPanel({ session, project }: { session: Session; project: Project }) {
   const allDrafts = useStore((s) => s.drafts)
   const allReports = useStore((s) => s.reports)
+  const events = useStore((s) => s.events[session.id])
   const models = useModels()
   const [history, setHistory] = useState<Report[] | null>(null)
+  const [files, setFiles] = useState<Attachment[]>([])
+  const attachmentCount = useMemo(
+    () =>
+      (events ?? []).reduce((n, e) => {
+        if (e.event.kind === "user") return n + (e.event.attachments?.length ?? 0)
+        if (e.event.kind === "tool_result") return n + (e.event.images?.length ?? 0)
+        return n
+      }, 0),
+    [events]
+  )
+  const hasSubagents = useMemo(() => (events ?? []).some((e) => e.event.kind === "subagent"), [events])
+
+  useEffect(() => {
+    let cancelled = false
+    api.attachments(session.id).then(
+      (list) => !cancelled && setFiles(list),
+      () => {}
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [session.id, attachmentCount])
   const isOrch = session.kind === "orchestrator"
 
   const drafts = useMemo(
@@ -151,6 +176,30 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           </Section>
         </>
       )}
+      {hasSubagents && (
+        <Section title="Subagentes" count={session.subagentsRunning || undefined}>
+          <SubagentList sessionId={session.id} events={events ?? []} limit={12} />
+        </Section>
+      )}
+      {files.length > 0 && (
+        <Section title="Adjuntos" count={files.length}>
+          {files.some(isImage) && (
+            <div className="mb-2 grid grid-cols-4 gap-1.5">
+              {files.filter(isImage).slice(0, 16).map((f) => (
+                <ImageThumb key={f.id} att={f} className="aspect-square" />
+              ))}
+            </div>
+          )}
+          <div className="flex flex-col gap-1.5">
+            {files
+              .filter((f) => !isImage(f))
+              .slice(0, 20)
+              .map((f) => (
+                <FileChip key={f.id} att={f} />
+              ))}
+          </div>
+        </Section>
+      )}
       <Section title="Detalles">
         <dl>
           {session.role && <Detail label="Rol">{session.role}</Detail>}
@@ -167,6 +216,25 @@ export function SessionPanel({ session, project }: { session: Session; project: 
               {usd(session.costUsd)} (equivalente API)
             </span>
           </Detail>
+          {session.tokens && session.tokens.total > 0 && (
+            <>
+              <Detail label="Tokens">
+                <span className="font-mono" title={`${tokensFull(session.tokens.total)} tokens en total (incluye subagentes)`}>
+                  {tokensFull(session.tokens.total)}
+                </span>
+              </Detail>
+              <div className="grid grid-cols-[auto_1fr] gap-x-3 pb-1 pl-[5.5rem] font-mono text-[0.7rem] whitespace-nowrap text-muted-foreground">
+                <span>entrada</span>
+                <span>{tokens(session.tokens.input)}</span>
+                <span>salida</span>
+                <span>{tokens(session.tokens.output)}</span>
+                <span>caché leída</span>
+                <span>{tokens(session.tokens.cacheRead)}</span>
+                <span>caché escrita</span>
+                <span>{tokens(session.tokens.cacheWrite)}</span>
+              </div>
+            </>
+          )}
           <Detail label="Creada">{timeAgo(session.createdAt)}</Detail>
         </dl>
         <div className="mt-3 space-y-1.5">

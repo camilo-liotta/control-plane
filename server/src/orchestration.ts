@@ -1,9 +1,9 @@
 import { listLiveSessions, readTranscript } from "./claude/local.ts"
 import type { Db, ProjectRecord, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
-import { formatDraftLine } from "./prompts.ts"
+import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
-import type { Draft, Project, Report, ReportStatus, ReviewState } from "./shared/types.ts"
+import type { Draft, Project, Report, ReportStatus, ReviewState, SubagentSpec } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
 
 const STATUS_LABEL: Record<ReportStatus, string> = {
@@ -15,6 +15,32 @@ const STATUS_LABEL: Record<ReportStatus, string> = {
 interface Decision {
   at: number
   text: string
+}
+
+const SUBAGENT_MODELS = new Set(["haiku", "sonnet", "opus", "fable"])
+
+/** Normaliza los subagentes que llegan de la orquestadora o de tus ediciones. */
+export function normalizeSubagents(raw: unknown): SubagentSpec[] {
+  if (!Array.isArray(raw)) return []
+  return raw.slice(0, 12).map((item, i) => {
+    const s = (item ?? {}) as Record<string, unknown>
+    const name = sanitizeSessionName(String(s.name ?? "")).toLowerCase() || `subagente-${i + 1}`
+    const rules = Array.isArray(s.rules)
+      ? s.rules.map((r) => String(r).trim()).filter(Boolean)
+      : typeof s.rules === "string"
+        ? s.rules.split("\n").map((r) => r.trim()).filter(Boolean)
+        : []
+    const model = typeof s.model === "string" && SUBAGENT_MODELS.has(s.model) ? s.model : null
+    return {
+      name,
+      role: String(s.role ?? "").trim(),
+      task: String(s.task ?? "").trim(),
+      rules,
+      model,
+      background: Boolean(s.background),
+      readOnly: Boolean(s.readOnly),
+    }
+  }).filter((s) => s.task)
 }
 
 export interface CreateWorkerInput {
@@ -366,7 +392,7 @@ export class Orchestration {
     return `\n\n⚠️ Hay ${queued.length} ${queued.length === 1 ? "resultado nuevo" : "resultados nuevos"} en la cola (${names}). Leelos con read_results antes de terminar: tus propuestas no se liberan hasta que la cola esté vacía.`
   }
 
-  proposePrompt(orch: SessionRecord, input: { session: string; title: string; prompt: string }): string {
+  proposePrompt(orch: SessionRecord, input: { session: string; title: string; prompt: string; subagents?: unknown }): string {
     const target = this.findSessionByName(orch.projectId, input.session)
     if (!target || target.kind !== "worker") {
       const names = this.workersOf(orch.projectId).map((w) => w.name).join(", ") || "ninguna"
@@ -387,14 +413,16 @@ export class Orchestration {
       decidedAt: null,
       edited: false,
       revision: 1,
+      subagents: normalizeSubagents(input.subagents),
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
-    return `Propuesta ${d.id} creada para ${target.name}. Queda en preparación hasta que termines el turno; después la aprueba el usuario${this.db.getProject(orch.projectId)?.settings.autoDispatch ? " (el proyecto tiene auto-envío: se va a enviar sola)" : ""}.${this.openDraftGuard(orch.projectId)}`
+    const subs = d.subagents.length ? ` Con ${d.subagents.length} ${d.subagents.length === 1 ? "subagente" : "subagentes"} (${d.subagents.map((s) => s.name).join(", ")}).` : ""
+    return `Propuesta ${d.id} creada para ${target.name}.${subs} Queda en preparación hasta que termines el turno; después la aprueba el usuario${this.db.getProject(orch.projectId)?.settings.autoDispatch ? " (el proyecto tiene auto-envío: se va a enviar sola)" : ""}.${this.openDraftGuard(orch.projectId)}`
   }
 
-  proposeSession(orch: SessionRecord, input: { name: string; role: string; title: string; prompt: string }): string {
+  proposeSession(orch: SessionRecord, input: { name: string; role: string; title: string; prompt: string; subagents?: unknown }): string {
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
     if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}. Elegí otro nombre o usá propose_prompt.`)
@@ -413,6 +441,7 @@ export class Orchestration {
       decidedAt: null,
       edited: false,
       revision: 1,
+      subagents: normalizeSubagents(input.subagents),
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
@@ -420,7 +449,10 @@ export class Orchestration {
     return `Propuesta ${d.id} creada: sesión nueva ${name}. El usuario la tiene que aprobar para que se cree.${this.openDraftGuard(orch.projectId)}`
   }
 
-  updateProposal(orch: SessionRecord, input: { id: string; title?: string; prompt?: string; session?: string }): string {
+  updateProposal(
+    orch: SessionRecord,
+    input: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown }
+  ): string {
     const d = this.db.getDraft(input.id)
     if (!d || d.projectId !== orch.projectId) throw new Error(`No existe la propuesta ${input.id}.`)
     if (d.state === "sent" || d.state === "discarded")
@@ -428,6 +460,7 @@ export class Orchestration {
     const patch: Partial<Draft> = { state: "staged", updatedAt: now(), revision: d.revision + 1 }
     if (input.title !== undefined) patch.title = input.title.trim()
     if (input.prompt !== undefined) patch.prompt = input.prompt.trim()
+    if (input.subagents !== undefined) patch.subagents = normalizeSubagents(input.subagents)
     if (input.session !== undefined && d.kind === "prompt") {
       const target = this.findSessionByName(orch.projectId, input.session)
       if (!target || target.kind !== "worker") throw new Error(`No existe la sesión "${input.session}".`)
@@ -455,7 +488,10 @@ export class Orchestration {
     return open
       .map((d) => {
         const target = d.targetSessionId ? (this.db.getSession(d.targetSessionId)?.name ?? null) : null
-        return `${formatDraftLine(d, target)}\n${d.prompt}`
+        const subs = d.subagents.length
+          ? `\nSubagentes: ${d.subagents.map((s) => `${s.name} (${s.role || "sin rol"}): ${s.task}`).join(" | ")}`
+          : ""
+        return `${formatDraftLine(d, target)}\n${d.prompt}${subs}`
       })
       .join("\n\n")
   }
@@ -486,7 +522,7 @@ export class Orchestration {
   /** Aprueba y envía una propuesta (con tus ediciones, si las hay). */
   async sendDraft(
     id: string,
-    edits: { title?: string; prompt?: string; name?: string; role?: string },
+    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown },
     auto = false
   ): Promise<Draft> {
     const d = this.db.getDraft(id)
@@ -496,16 +532,22 @@ export class Orchestration {
     if (d.state !== "ready") throw new Error("La propuesta ya no está pendiente")
     const title = edits.title?.trim() || d.title
     const prompt = edits.prompt?.trim() || d.prompt
-    const edited = prompt !== d.prompt || title !== d.title || Boolean(edits.name || edits.role)
+    const subagents = edits.subagents !== undefined ? normalizeSubagents(edits.subagents) : d.subagents
+    const edited =
+      prompt !== d.prompt ||
+      title !== d.title ||
+      Boolean(edits.name || edits.role) ||
+      JSON.stringify(subagents) !== JSON.stringify(d.subagents)
+    const message = withSubagents(prompt, subagents)
     // La marcamos antes de mandar para que un doble click no la envíe dos veces.
-    this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now(), title, prompt, edited })
+    this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now(), title, prompt, edited, subagents })
     try {
       if (d.kind === "prompt") {
         if (!d.targetSessionId) throw new Error("La propuesta no tiene sesión destino")
         const target = this.db.getSession(d.targetSessionId)
         if (!target || target.archivedAt) throw new Error("La sesión destino ya no existe")
         this.sessions.update(target.id, { taskTitle: title, taskState: "assigned" })
-        await this.sessions.send(target.id, prompt, { origin: "draft", draftId: d.id, draftTitle: title })
+        await this.sessions.send(target.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
         this.noteDecision(
           d.projectId,
           `${auto ? "Se envió automáticamente" : edited ? "Aprobó con cambios" : "Aprobó"} ${d.id} → ${target.name}: "${title}"${edited ? `. Versión enviada:\n${prompt}` : ""}`
@@ -517,7 +559,7 @@ export class Orchestration {
         if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}`)
         const worker = await this.createWorker(d.projectId, { name, role })
         this.sessions.update(worker.id, { taskTitle: title, taskState: "assigned" })
-        await this.sessions.send(worker.id, prompt, { origin: "draft", draftId: d.id, draftTitle: title })
+        await this.sessions.send(worker.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
         this.noteDecision(d.projectId, `Creó la sesión ${name} (${d.id}) con el prompt "${title}"${edited ? " (con cambios)" : ""}`)
       }
     } catch (err) {
@@ -541,13 +583,14 @@ export class Orchestration {
     return this.db.getDraft(d.id)!
   }
 
-  editDraft(id: string, edits: { title?: string; prompt?: string }): Draft {
+  editDraft(id: string, edits: { title?: string; prompt?: string; subagents?: unknown }): Draft {
     const d = this.db.getDraft(id)
     if (!d) throw new Error("La propuesta no existe")
     if (d.state !== "ready") throw new Error("Solo se pueden editar propuestas listas")
     this.db.updateDraft(d.id, {
       title: edits.title?.trim() || d.title,
       prompt: edits.prompt?.trim() || d.prompt,
+      ...(edits.subagents !== undefined ? { subagents: normalizeSubagents(edits.subagents) } : {}),
       edited: true,
       updatedAt: now(),
     })
