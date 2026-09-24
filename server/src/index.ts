@@ -1,0 +1,130 @@
+import { execFile } from "node:child_process"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { promisify } from "node:util"
+
+import fastifyStatic from "@fastify/static"
+import fastifyWebsocket from "@fastify/websocket"
+import Fastify from "fastify"
+
+import { registerApi, snapshot } from "./api.ts"
+import { config, version } from "./config.ts"
+import { Db, type SessionRecord } from "./db.ts"
+import { Hub } from "./hub.ts"
+import { registerMcp } from "./mcp.ts"
+import { Orchestration } from "./orchestration.ts"
+import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
+import { SessionManager } from "./sessions.ts"
+
+async function claudeVersion(): Promise<string | null> {
+  try {
+    const { stdout } = await promisify(execFile)(config.claudeBin, ["--version"], { timeout: 15_000 })
+    return stdout.trim().split(" ")[0] ?? null
+  } catch {
+    return null
+  }
+}
+
+async function main() {
+  const cliVersion = await claudeVersion()
+  if (!cliVersion) {
+    console.error(`No encontré el binario de Claude Code ("${config.claudeBin}"). Instalalo o definí CLAUDE_BIN.`)
+    process.exit(1)
+  }
+
+  const db = new Db(path.join(config.home, "control-plane.db"))
+  const hub = new Hub()
+  const baseUrl = `http://${config.host}:${config.port}`
+
+  const protocolFor = (s: SessionRecord) => {
+    const project = db.getProject(s.projectId)
+    if (!project) throw new Error("Proyecto inexistente")
+    const all = db.listSessions().filter((x) => x.projectId === s.projectId)
+    const orch = all.find((x) => x.kind === "orchestrator") ?? null
+    const workers = all.filter((x) => x.kind === "worker")
+    return {
+      protocol:
+        s.kind === "orchestrator"
+          ? orchestratorProtocol(project, s, workers)
+          : workerProtocol(project, s, orch, workers.filter((w) => w.id !== s.id)),
+      orchestratorCanEdit: project.settings.orchestratorCanEdit,
+      model: s.model ?? project.settings.defaultModel,
+      effort: s.effort ?? project.settings.defaultEffort,
+    }
+  }
+
+  const sessions = new SessionManager(db, hub, (token) => `${baseUrl}/mcp/${token}`, protocolFor, {
+    version,
+    claudeVersion: cliVersion,
+    models: [],
+    account: null,
+    homeDir: os.homedir(),
+  })
+  const orchestration = new Orchestration(db, hub, sessions)
+  const deps = { db, hub, sessions, orchestration }
+
+  const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 })
+
+  // Solo para esta máquina: rechaza otros hosts (DNS rebinding) y orígenes ajenos.
+  const allowedHosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`])
+  const allowedOrigins = new Set([
+    `http://127.0.0.1:${config.port}`,
+    `http://localhost:${config.port}`,
+    ...config.devOrigins,
+  ])
+  app.addHook("onRequest", async (req, reply) => {
+    if (!allowedHosts.has(String(req.headers.host ?? ""))) {
+      return reply.code(403).send({ error: "host no permitido" })
+    }
+    const origin = req.headers.origin
+    if (origin && !allowedOrigins.has(origin) && !req.url.startsWith("/mcp/")) {
+      return reply.code(403).send({ error: "origen no permitido" })
+    }
+  })
+
+  await app.register(fastifyWebsocket)
+  app.get("/ws", { websocket: true }, (socket) => {
+    hub.add(socket, { type: "hello", snapshot: snapshot(deps) })
+  })
+
+  registerApi(app, deps)
+  registerMcp(app, deps)
+
+  if (fs.existsSync(config.webDist)) {
+    await app.register(fastifyStatic, { root: config.webDist })
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method === "GET" && !req.url.startsWith("/api") && !req.url.startsWith("/mcp")) {
+        return reply.sendFile("index.html")
+      }
+      return reply.code(404).send({ error: "no encontrado" })
+    })
+  } else if (config.production) {
+    console.warn("No encontré web/dist: corré `npm run build` para servir el dashboard.")
+  }
+
+  await app.listen({ host: config.host, port: config.port })
+  const ui = config.production || fs.existsSync(config.webDist) ? baseUrl : "http://localhost:4701"
+  console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
+  console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
+  console.log(`Datos: ${config.home}`)
+
+  let closing = false
+  const shutdown = async (signal: string) => {
+    if (closing) return
+    closing = true
+    console.log(`\n${signal}: cerrando sesiones…`)
+    orchestration.dispose()
+    await sessions.shutdown().catch(() => {})
+    await app.close().catch(() => {})
+    db.close()
+    process.exit(0)
+  }
+  process.on("SIGINT", () => void shutdown("SIGINT"))
+  process.on("SIGTERM", () => void shutdown("SIGTERM"))
+}
+
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
