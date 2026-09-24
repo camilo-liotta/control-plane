@@ -145,10 +145,10 @@ export const api = {
 
   sendDraft: (
     id: string,
-    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: SubagentSpec[] } = {}
+    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: SubagentSpec[]; fresh?: boolean } = {}
   ) => request<Draft>("POST", `/api/drafts/${id}/send`, edits),
   discardDraft: (id: string) => request<Draft>("POST", `/api/drafts/${id}/discard`),
-  editDraft: (id: string, edits: { title?: string; prompt?: string; subagents?: SubagentSpec[] }) =>
+  editDraft: (id: string, edits: { title?: string; prompt?: string; subagents?: SubagentSpec[]; fresh?: boolean }) =>
     request<Draft>("PATCH", `/api/drafts/${id}`, edits),
 
   dismissReport: (id: string) => request("POST", `/api/reports/${id}/dismiss`),
@@ -157,6 +157,7 @@ export const api = {
   compactionApply: (id: string, selection: CompactionSelection) =>
     request("POST", `/api/sessions/${id}/compaction/apply`, selection),
   compactionDirect: (id: string) => request("POST", `/api/sessions/${id}/compaction/direct`),
+  compactionResend: (id: string) => request("POST", `/api/sessions/${id}/compaction/resend`),
   compactionDiscard: (id: string) => request("DELETE", `/api/sessions/${id}/compaction`),
   refreshContext: (id: string) => request<ContextUsage | null>("POST", `/api/sessions/${id}/context`),
 

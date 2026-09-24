@@ -3,7 +3,7 @@ import { promisify } from "node:util"
 
 import type { Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
-import type { SessionManager } from "./sessions.ts"
+import type { SessionManager, TurnEndInfo } from "./sessions.ts"
 import type { CompactionDraft, CompactionSection, CompactionState, ContextUsage, TimelineEvent } from "./shared/types.ts"
 import { errorMessage, now, oneLine } from "./util.ts"
 
@@ -77,6 +77,9 @@ const bullet = (text: string) => text.trim().slice(0, 4000).replace(/\n+/g, "\n 
  * modelo, y que lo descartado no aparezca en ningún lado (tampoco citando mensajes).
  */
 export function compactInstructions(sel: CompactionSelection): { text: string; kept: number; dropped: number } {
+  // Sin borrador (por ejemplo, con el contexto tan lleno que no se pudo armar): tus instrucciones van
+  // como las de /compact, y Claude Code arma su resumen de siempre siguiéndolas.
+  if (!sel.sections.length) return { text: sel.extra?.trim() ?? "", kept: 0, dropped: 0 }
   const keptSections: { title: string; points: string[] }[] = []
   const dropped: string[] = []
   for (const s of sel.sections) {
@@ -141,6 +144,12 @@ interface Entry {
   retry: (Applied & { at: number }) | null
   /** Ya avisamos que el contexto se está llenando (se reinicia al compactar). */
   warned: boolean
+  /** Un mensaje no entró por el contexto lleno: se reenvía después de la próxima compactación. */
+  resend: boolean
+  /** Ya compactó: el reenvío sale cuando termina ese turno (el de /compact). */
+  resendOnTurnEnd: boolean
+  /** Mandamos /compact para poder reenviar: si el turno termina sin compactar, hay que avisar. */
+  compactingForResend: boolean
 }
 
 export interface CompactionDeps {
@@ -171,11 +180,30 @@ export class Compaction {
     deps.sessions.on("context", (id, usage) => this.onContext(id, usage))
     deps.sessions.on("compacted", (id, eventId) => this.onCompacted(id, eventId))
     deps.sessions.on("compactFailed", (id) => this.onFailed(id))
-    // Si el turno terminó y la compactación no llegó a pasar (falló o se canceló), no queda "aplicando".
-    deps.sessions.on("turnEnd", (rec) => {
+    deps.sessions.on("turnEnd", (rec, info) => {
       const e = this.entries.get(rec.id)
+      // Si el turno terminó y la compactación no llegó a pasar (falló o se canceló), no queda "aplicando".
       if (e?.applying && !e.waiting) {
         e.applying = null
+        this.broadcast(rec.id)
+      }
+      if (e?.resendOnTurnEnd) {
+        e.resendOnTurnEnd = false
+        e.compactingForResend = false
+        e.resend = false
+        this.deps.sessions.setHold(rec.id, null)
+        this.broadcast(rec.id)
+        void this.deps.sessions.resendUnsent(rec.id).catch((err: unknown) => this.notice(rec.id, "warn", `No pude reenviar el mensaje: ${errorMessage(err)}`))
+      } else if (e?.compactingForResend && info.local) {
+        // El /compact terminó sin compactar (por ejemplo, "No messages to compact"): el mensaje sigue sin salir.
+        e.compactingForResend = false
+        this.notice(rec.id, "warn", "No se pudo compactar, así que el mensaje no salió. Probá de nuevo, o empezá la sesión de cero.")
+        this.broadcast(rec.id)
+      } else if (info.contextFull) this.onContextFull(rec, info)
+      else if (e?.resend && info.ok && !info.local) {
+        // Siguió por otro lado (mandaste otra cosa y entró): el mensaje viejo ya no se reenvía.
+        e.resend = false
+        this.deps.sessions.setHold(rec.id, null)
         this.broadcast(rec.id)
       }
     })
@@ -184,7 +212,18 @@ export class Compaction {
   private entry(id: string): Entry {
     let e = this.entries.get(id)
     if (!e) {
-      e = { draft: null, drafting: null, error: null, waiting: null, applying: null, retry: null, warned: false }
+      e = {
+        draft: null,
+        drafting: null,
+        error: null,
+        waiting: null,
+        applying: null,
+        retry: null,
+        warned: false,
+        resend: false,
+        resendOnTurnEnd: false,
+        compactingForResend: false,
+      }
       this.entries.set(id, e)
     }
     return e
@@ -199,11 +238,12 @@ export class Compaction {
       error: e?.error ?? null,
       waiting: e?.waiting ? { since: e.waiting.since, deadline: e.waiting.deadline } : null,
       applying: Boolean(e?.applying),
+      resendPending: Boolean(e?.resend || e?.resendOnTurnEnd),
     }
   }
 
   list(): CompactionState[] {
-    return [...this.entries.keys()].map((id) => this.view(id)).filter((s) => s.draft || s.drafting || s.error || s.waiting || s.applying)
+    return [...this.entries.keys()].map((id) => this.view(id)).filter((s) => s.draft || s.drafting || s.error || s.waiting || s.applying || s.resendPending)
   }
 
   private broadcast(id: string) {
@@ -234,7 +274,10 @@ export class Compaction {
         const raw = e.waiting ? await this.askFork(rec) : await this.askSession(id)
         e.draft = { sections: parseDraft(raw), createdAt: now(), contextTokens: tokens }
       } catch (err) {
-        e.error = errorMessage(err)
+        const msg = errorMessage(err)
+        e.error = /prompt is too long/i.test(msg)
+          ? "El contexto está tan lleno que Claude no puede armar el borrador. Compactá sin revisar, o escribí abajo qué tiene que conservar el resumen."
+          : msg
       } finally {
         e.drafting = null
         this.broadcast(id)
@@ -300,10 +343,11 @@ export class Compaction {
       this.finishWait(id, text)
       return
     }
+    await this.pinResend(id)
     try {
       await this.deps.sessions.send(id, `/compact ${text}`, {
         origin: "control",
-        event: { kind: "notice", level: "info", text: compactNotice(kept, dropped) },
+        event: { kind: "notice", level: "info", text: sel.sections.length ? compactNotice(kept, dropped) : "Compactando con tus instrucciones." },
       })
     } catch (err) {
       e.applying = null
@@ -321,7 +365,17 @@ export class Compaction {
       this.finishWait(id, "")
       return
     }
+    await this.pinResend(id)
     await this.deps.sessions.send(id, "/compact", { origin: "user" })
+  }
+
+  /** Si el último mensaje no entró, que salga después de esta compactación (también tras reiniciar el server). */
+  private async pinResend(id: string) {
+    const e = this.entry(id)
+    if (e.resend || (await this.deps.sessions.holdUnsent(id))) {
+      e.resend = true
+      e.compactingForResend = true
+    }
   }
 
   private finishWait(id: string, text: string, reason: "chosen" | "timeout" | "closed" = "chosen") {
@@ -438,12 +492,23 @@ export class Compaction {
     const e = this.entries.get(id)
     if (!e) return
     const stored = this.deps.db.getEvent(eventId)
-    if (stored && stored.event.kind === "compact" && e.applying) {
+    if (stored && stored.event.kind === "compact" && e.applying && (e.applying.kept || e.applying.dropped)) {
       stored.event = { ...stored.event, kept: e.applying.kept, dropped: e.applying.dropped } as TimelineEvent
       this.deps.db.updateEvent(stored)
       this.deps.hub.broadcast({ type: "event_update", event: stored })
     }
-    this.entries.set(id, { draft: null, drafting: e.drafting, error: null, waiting: e.waiting, applying: null, retry: null, warned: false })
+    this.entries.set(id, {
+      draft: null,
+      drafting: e.drafting,
+      error: null,
+      waiting: e.waiting,
+      applying: null,
+      retry: null,
+      warned: false,
+      resend: false,
+      resendOnTurnEnd: e.resend || e.resendOnTurnEnd,
+      compactingForResend: e.compactingForResend,
+    })
     this.broadcast(id)
   }
 
@@ -459,6 +524,65 @@ export class Compaction {
       text: "Tu selección quedó guardada: se usa sola la próxima vez que Claude compacte esta sesión.",
     })
     this.broadcast(id)
+  }
+
+  // ------------------------------------------------------------- contexto lleno
+
+  /**
+   * Claude Code no mandó el mensaje porque la conversación ya no entra ("Prompt is too long") y no
+   * compactó solo (le pasa sin terminal). Hacemos lo que hubiera hecho: compactar con /compact, que
+   * sí puede con una conversación pasada del límite, y reenviar. En modo "esperarme" elegís vos cómo.
+   */
+  private onContextFull(rec: SessionRecord, info: TurnEndInfo) {
+    const project = this.deps.db.getProject(rec.projectId)
+    const ctx = this.deps.sessions.contextOf(rec.id)
+    const pct = ctx ? ` (${Math.round((ctx.tokens / ctx.max) * 100)}%)` : ""
+    const e = this.entry(rec.id)
+    if (info.retried) {
+      e.resend = false
+      this.notice(rec.id, "warn", "Tampoco entró después de compactar: puede que el mensaje solo sea demasiado largo. Probá mandarlo en partes.")
+      this.broadcast(rec.id)
+      return
+    }
+    e.resend = true
+    if (project?.settings.compactMode === "ask") {
+      this.notice(rec.id, "warn", `El contexto está lleno${pct} y el mensaje no salió. Elegí qué conservar al compactar (o compactá directo) y lo reenvío solo.`)
+      this.deps.sessions.setHold(rec.id, "Contexto lleno: compactá para seguir")
+      this.deps.hub.broadcast({
+        type: "toast",
+        level: "warn",
+        title: `${rec.name} tiene el contexto lleno`,
+        body: "El mensaje no salió. Compactá y se reenvía solo.",
+        projectId: rec.projectId,
+        sessionId: rec.id,
+        open: "compaction",
+      })
+      this.broadcast(rec.id)
+      return
+    }
+    this.notice(rec.id, "info", `El contexto se llenó${pct} y Claude Code no compactó solo: compacto la conversación y reenvío el mensaje.`)
+    void this.compactAndResend(rec.id).catch((err: unknown) => this.notice(rec.id, "warn", `No pude compactar: ${errorMessage(err)}`))
+  }
+
+  /** Compacta como /compact y, cuando termina, reenvía lo que no había entrado. */
+  async compactAndResend(id: string) {
+    this.session(id)
+    if (!(await this.deps.sessions.holdUnsent(id))) throw new Error("No hay un mensaje sin enviar")
+    const e = this.entry(id)
+    e.resend = true
+    e.compactingForResend = true
+    this.broadcast(id)
+    try {
+      await this.deps.sessions.send(id, "/compact", { origin: "control", event: { kind: "notice", level: "info", text: "Compactando para que entre el mensaje…" } })
+    } catch (err) {
+      e.compactingForResend = false
+      this.broadcast(id)
+      throw err
+    }
+  }
+
+  private notice(id: string, level: "info" | "warn", text: string) {
+    this.deps.sessions.addEvent(id, { kind: "notice", level, text })
   }
 
   /** Al apagar el server: nadie queda esperando (las sesiones compactan como siempre). */

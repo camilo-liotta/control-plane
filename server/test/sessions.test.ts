@@ -7,8 +7,10 @@ import { after, afterEach, before, beforeEach, describe, it } from "node:test"
 import { AttachmentStore } from "../src/attachments.ts"
 import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import { Hub } from "../src/hub.ts"
+import { lastCostState } from "../src/claude/local.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { ExternalSession } from "../src/shared/types.ts"
+import { writeFakeClaude } from "./fake-claude.ts"
 
 describe("una conversación abierta en otro lado", () => {
   let dir: string
@@ -64,23 +66,6 @@ describe("una conversación abierta en otro lado", () => {
   })
 })
 
-// Claude Code de mentira: contesta el handshake y cierra cada turno con el costo acumulado de ESTE proceso,
-// como hace el de verdad (total_cost_usd y modelUsage arrancan de cero en cada proceso).
-const FAKE_CLAUDE = `#!/usr/bin/env node
-import readline from "node:readline"
-let turns = 0
-const out = (m) => process.stdout.write(JSON.stringify(m) + "\\n")
-for await (const line of readline.createInterface({ input: process.stdin })) {
-  const msg = JSON.parse(line)
-  if (msg.type === "control_request") out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: {} } })
-  else if (msg.type === "user") {
-    turns++
-    const t = { inputTokens: 10 * turns, outputTokens: 5 * turns, cacheReadInputTokens: 100 * turns, cacheCreationInputTokens: 0 }
-    out({ type: "result", subtype: "success", is_error: false, result: "ok", total_cost_usd: 0.25 * turns, usage: {}, modelUsage: { "claude-x": t } })
-  }
-}
-`
-
 describe("lo gastado en una sesión", () => {
   let dir: string
   let db: Db
@@ -89,8 +74,7 @@ describe("lo gastado en una sesión", () => {
 
   before(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-spend-"))
-    const bin = path.join(dir, "claude.mjs")
-    fs.writeFileSync(bin, FAKE_CLAUDE, { mode: 0o755 })
+    const bin = writeFakeClaude(dir)
     db = new Db(path.join(dir, "t.db"))
     db.insertProject({ id: "p1", name: "P", repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 1, archivedAt: null })
     sessions = new SessionManager({
@@ -99,7 +83,7 @@ describe("lo gastado en una sesión", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
-      launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: {}, bin, accountId: "acc" }),
+      launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
     })
@@ -117,19 +101,70 @@ describe("lo gastado en una sesión", () => {
     assert.ok(check(), "no llegó a tiempo")
   }
 
-  it("se suma entre procesos: reanudar no lo vuelve a cero", async () => {
+  it("se suma entre procesos sin contar dos veces lo que Claude Code restaura al reanudar", async () => {
     await sessions.send(rec.id, "uno", { origin: "user" })
     await until(() => db.getSession(rec.id)!.costUsd === 0.25)
     await sessions.send(rec.id, "dos", { origin: "user" })
     await until(() => db.getSession(rec.id)!.costUsd === 0.5)
     assert.equal(db.getSession(rec.id)!.tokens?.total, 230)
 
+    // Al cerrarse guarda su cost-state; el proceso nuevo sigue desde ahí (0,5 + 0,25), como Claude Code.
     await sessions.stop(rec.id)
     await sessions.send(rec.id, "tres", { origin: "user" })
-    await until(() => db.getSession(rec.id)!.costUsd === 0.75)
+    await until(() => db.getSession(rec.id)!.costUsd !== 0.5)
+    assert.equal(db.getSession(rec.id)!.costUsd, 0.75)
     const t = db.getSession(rec.id)!.tokens!
     assert.deepEqual([t.input, t.output, t.cacheRead, t.total], [30, 15, 300, 345])
     const ends = db.listEvents(rec.id).map((e) => e.event).filter((e) => e.kind === "turn_end")
     assert.deepEqual(ends.map((e) => e.kind === "turn_end" && e.costUsd), [0.25, 0.5, 0.75], "el acumulado del fin de turno sigue al de la sesión")
+  })
+
+  it("/clear empieza una conversación nueva sin perder lo gastado antes", async () => {
+    const s = sessions.create({ projectId: "p1", kind: "worker", name: "GAMMA", role: "", cwd: dir, claudeSessionId: "c-3" })
+    await sessions.send(s.id, "uno", { origin: "user" })
+    await until(() => db.getSession(s.id)!.costUsd === 0.25 && sessions.statusOf(s.id) === "idle")
+    await sessions.clearConversation(s.id)
+    assert.notEqual(db.getSession(s.id)!.claudeSessionId, "c-3", "sigue con el id nuevo")
+    // Claude Code arranca los totales de la conversación nueva en cero: lo de antes queda como base.
+    await sessions.send(s.id, "dos", { origin: "user" })
+    await until(() => db.getSession(s.id)!.costUsd !== 0.25)
+    assert.equal(db.getSession(s.id)!.costUsd, 0.5)
+    assert.equal(db.getSession(s.id)!.tokens?.total, 230)
+    await sessions.stop(s.id)
+  })
+
+  it("una conversación importada arranca con lo que ya había gastado y suma solo lo nuevo", async () => {
+    const other = sessions.create({ projectId: "p1", kind: "worker", name: "BETA", role: "", cwd: dir, claudeSessionId: "c-2" })
+    const tdir = path.join(dir, "projects", dir.replace(/[^A-Za-z0-9]/g, "-"))
+    fs.mkdirSync(tdir, { recursive: true })
+    const usage = { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 1000, cacheCreationInputTokens: 0 }
+    fs.writeFileSync(path.join(tdir, "c-2.jsonl"), JSON.stringify({ type: "cost-state", sessionId: "c-2", totalCostUSD: 10, modelUsage: { "claude-x": usage } }) + "\n")
+    const spent = lastCostState(dir, "c-2", dir)
+    assert.deepEqual(spent, { usd: 10, tokens: { input: 100, output: 50, cacheRead: 1000, cacheWrite: 0, total: 1150 } })
+    db.updateSession(other.id, { costUsd: spent!.usd, tokens: spent!.tokens })
+    await sessions.send(other.id, "hola", { origin: "user" })
+    await until(() => db.getSession(other.id)!.costUsd !== 10)
+    assert.equal(db.getSession(other.id)!.costUsd, 10.25)
+    assert.equal(db.getSession(other.id)!.tokens?.total, 1265)
+    await sessions.stop(other.id)
+  })
+})
+
+describe("el último cost-state del transcript", () => {
+  it("lo encuentra aunque haya líneas enormes después y lo ignora si es de otra conversación", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-cost-"))
+    const tdir = path.join(dir, "projects", "-repo")
+    fs.mkdirSync(tdir, { recursive: true })
+    const line = (o: object) => JSON.stringify(o) + "\n"
+    fs.writeFileSync(
+      path.join(tdir, "s1.jsonl"),
+      line({ type: "cost-state", sessionId: "s1", totalCostUSD: 1, modelUsage: {} }) +
+        line({ type: "cost-state", sessionId: "s1", totalCostUSD: 2.5, modelUsage: { m: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4 } } }) +
+        line({ type: "assistant", message: { content: "x".repeat(3 * 1024 * 1024) } }) +
+        line({ type: "cost-state", sessionId: "otra", totalCostUSD: 99, modelUsage: {} })
+    )
+    assert.deepEqual(lastCostState("/repo", "s1", dir), { usd: 2.5, tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } })
+    assert.equal(lastCostState("/repo", "no-existe", dir), null)
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })

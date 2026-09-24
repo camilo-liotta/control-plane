@@ -1,5 +1,5 @@
-import { ArrowRight, Lock, Pencil, Send, Sparkles, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { ArrowRight, Eraser, Lock, Pencil, Send, Sparkles, Trash2 } from "lucide-react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
@@ -8,6 +8,7 @@ import type { Draft } from "@shared/types"
 import { TonePill } from "@/components/status"
 import { cleanSpecs, SubagentSpecEditor, SubagentSpecList } from "@/components/subagent-specs"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
@@ -27,7 +28,10 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
   const [name, setName] = useState(draft.newSession?.name ?? "")
   const [role, setRole] = useState(draft.newSession?.role ?? "")
   const [subagents, setSubagents] = useState(draft.subagents)
+  const [fresh, setFresh] = useState(draft.fresh)
   const [busy, setBusy] = useState<null | "send" | "discard" | "save">(null)
+  // Si la orquestadora cambia la propuesta, la casilla la sigue.
+  useEffect(() => setFresh(draft.fresh), [draft.fresh, draft.revision])
 
   const view = draftStateView[draft.state]
   const open = draft.state === "ready" || draft.state === "staged"
@@ -62,8 +66,10 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
         api.sendDraft(
           draft.id,
           editing
-            ? { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "session" ? { name, role } : {}) }
-            : {}
+            ? { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "session" ? { name, role } : { fresh }) }
+            : draft.kind === "prompt"
+              ? { fresh }
+              : {}
         ),
       draft.kind === "session" ? `Sesión ${name || draft.newSession?.name} creada` : `Enviado a ${target?.name ?? "la sesión"}`
     )
@@ -100,6 +106,11 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
           {view.label}
         </TonePill>
         {draft.revision > 1 && <span className="font-mono">rev. {draft.revision}</span>}
+        {draft.fresh && draft.state === "sent" && (
+          <span className="inline-flex items-center gap-1">
+            <Eraser className="size-3" /> empezó de cero
+          </span>
+        )}
         {draft.edited && draft.state === "sent" && <span>con tus cambios</span>}
         <span className="ml-auto">{timeAgo(draft.decidedAt ?? draft.updatedAt)}</span>
       </header>
@@ -153,6 +164,16 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
         </>
       )}
 
+      {draft.kind === "prompt" && open && (
+        <FreshToggle
+          checked={fresh}
+          onChange={setFresh}
+          disabled={draft.state !== "ready" || busy !== null}
+          targetName={target?.name}
+          context={target?.context ?? null}
+        />
+      )}
+
       {draft.state === "staged" && (
         <p className="mt-3 flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
           <Lock className="mt-0.5 size-3.5 shrink-0" />
@@ -173,7 +194,11 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
                 variant="outline"
                 disabled={busy !== null}
                 onClick={() =>
-                  run("save", () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents) }), "Cambios guardados")
+                  run(
+                    "save",
+                    () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "prompt" ? { fresh } : {}) }),
+                    "Cambios guardados"
+                  )
                 }
               >
                 {busy === "save" && <Spinner />}
@@ -202,5 +227,35 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
         </footer>
       )}
     </article>
+  )
+}
+
+/** Empezar de cero (/clear) antes del prompt: con cuánto contexto viene hoy la sesión, para decidir. */
+function FreshToggle({
+  checked,
+  onChange,
+  disabled,
+  targetName,
+  context,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  disabled: boolean
+  targetName?: string
+  context: { tokens: number; max: number } | null
+}) {
+  const pct = context?.max ? Math.round((context.tokens / context.max) * 100) : null
+  return (
+    <label className={cn("mt-3 flex items-start gap-2.5 rounded-lg border px-3 py-2 text-sm", checked && "border-claude/40 bg-claude/5", !disabled && "cursor-pointer")}>
+      <Checkbox checked={checked} onCheckedChange={(v) => onChange(v === true)} disabled={disabled} className="mt-0.5" />
+      <span className="min-w-0">
+        <span className="font-medium">Empezar de cero</span>
+        <span className="text-muted-foreground"> · /clear antes del prompt</span>
+        <span className="block text-xs text-muted-foreground">
+          {checked ? "La sesión arranca sin la conversación anterior (conserva su rol y el CLAUDE.md). " : "Sigue con lo que trae en contexto. "}
+          {pct !== null && `${targetName ?? "La sesión"} usa hoy el ${pct}% del contexto.`}
+        </span>
+      </span>
+    </label>
   )
 }

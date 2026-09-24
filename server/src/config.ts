@@ -12,7 +12,7 @@ export const config = {
   /** Binario de Claude Code (el que ya tenés instalado y logueado). */
   claudeBin: process.env.CLAUDE_BIN ?? "claude",
   /** Build de la web que sirve el server en producción. */
-  webDist: path.resolve(here, "../../web/dist"),
+  webDist: process.env.CONTROL_PLANE_WEB_DIST ? path.resolve(process.env.CONTROL_PLANE_WEB_DIST) : path.resolve(here, "../../web/dist"),
   /** Orígenes permitidos para la API (además del propio server). */
   devOrigins: ["http://localhost:4701", "http://127.0.0.1:4701"],
   production: process.env.NODE_ENV === "production",

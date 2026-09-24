@@ -184,6 +184,9 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE sessions ADD COLUMN context TEXT;
   `,
+  `
+  ALTER TABLE drafts ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -300,6 +303,7 @@ function toDraft(r: Row): Draft {
     edited: bool(r.edited),
     revision: Number(r.revision ?? 1),
     subagents: parseSubagents(r.subagents),
+    fresh: bool(r.fresh),
   }
 }
 
@@ -374,6 +378,7 @@ const DRAFT_COLUMNS: Partial<Record<keyof Draft, string>> = {
   edited: "edited",
   revision: "revision",
   subagents: "subagents",
+  fresh: "fresh",
 }
 
 const REPORT_COLUMNS: Partial<Record<keyof Report, string>> = {
@@ -633,8 +638,8 @@ export class Db {
     this.db
       .prepare(
         `INSERT INTO drafts (id, project_id, kind, target_session_id, new_session, title, prompt, state,
-          created_by, created_at, updated_at, decided_at, edited, revision, subagents)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          created_by, created_at, updated_at, decided_at, edited, revision, subagents, fresh)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         d.id,
@@ -651,7 +656,8 @@ export class Db {
         d.decidedAt,
         d.edited ? 1 : 0,
         d.revision,
-        d.subagents.length ? JSON.stringify(d.subagents) : null
+        d.subagents.length ? JSON.stringify(d.subagents) : null,
+        d.fresh ? 1 : 0
       )
   }
 

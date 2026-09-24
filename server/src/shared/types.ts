@@ -81,6 +81,8 @@ export interface CompactionState {
   waiting: { since: number; deadline: number } | null
   /** Se mandó la compactación con tu selección y todavía no terminó. */
   applying: boolean
+  /** Hay un mensaje que no entró por el contexto lleno: sale solo después de compactar. */
+  resendPending: boolean
 }
 
 export interface ReviewState {
@@ -456,6 +458,8 @@ export interface Draft {
   edited: boolean
   revision: number
   subagents: SubagentSpec[]
+  /** La sesión empieza de cero (/clear) antes de este prompt. */
+  fresh: boolean
 }
 
 export type ReportStatus = "done" | "blocked" | "partial"

@@ -7,7 +7,7 @@ import { version } from "./config.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { SessionStatus } from "./shared/types.ts"
+import type { ContextUsage, SessionStatus } from "./shared/types.ts"
 import { errorMessage } from "./util.ts"
 
 const STATUS_ES: Record<SessionStatus, string> = {
@@ -34,6 +34,19 @@ const subagentSchema = z
   )
   .optional()
   .describe("Subagentes específicos que el worker tiene que lanzar para esta tarea.")
+
+const freshSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    "true: la sesión empieza de cero (/clear) antes de este prompt. Para una tarea que no necesita lo que la sesión trae en contexto, con lo anterior cerrado. El prompt tiene que ser autocontenido."
+  )
+
+/** Cuánto contexto usa una sesión, para que la orquestadora sepa si conviene empezar de cero. */
+function contextLine(ctx: ContextUsage | null): string | null {
+  if (!ctx || !ctx.max) return null
+  return `contexto: ${Math.round((ctx.tokens / ctx.max) * 100)}% (${Math.round(ctx.tokens / 1000)}k de ${Math.round(ctx.max / 1000)}k tokens)`
+}
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean }
 
@@ -76,6 +89,7 @@ function buildServer(
             s.role ? `rol: ${s.role}` : null,
             `estado: ${STATUS_ES[sessions.statusOf(s.id)]}`,
             s.taskTitle ? `tarea: ${s.taskTitle}` : null,
+            contextLine(sessions.contextOf(s.id)),
             s.worktree ? "worktree propio" : null,
             last ? `último resultado: ${last.status} — ${last.summary.split("\n")[0]}` : null,
           ].filter(Boolean)
@@ -122,9 +136,12 @@ function buildServer(
           title: z.string().describe("Título corto de la tarea (se muestra en el dashboard)."),
           prompt: z.string().min(1).describe("Prompt completo y autocontenido para la sesión."),
           subagents: subagentSchema,
+          fresh: freshSchema,
         },
       },
-      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown }) => orchestration.proposePrompt(self, args))
+      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean }) =>
+        orchestration.proposePrompt(self, args)
+      )
     )
 
     server.registerTool(
@@ -156,10 +173,11 @@ function buildServer(
           title: z.string().optional(),
           prompt: z.string().optional(),
           session: z.string().optional().describe("Nueva sesión destino."),
+          fresh: freshSchema,
           subagents: subagentSchema,
         },
       },
-      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown }) =>
+      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown; fresh?: boolean }) =>
         orchestration.updateProposal(self, args)
       )
     )

@@ -3,7 +3,8 @@ import fs from "node:fs"
 
 import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
-import { parseCommands, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
+import { lastCostState, type RestoredSpend } from "./claude/local.ts"
+import { isContextFull, parseCommands, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
@@ -27,6 +28,7 @@ import type {
   UsageInfo,
   UserOrigin,
 } from "./shared/types.ts"
+import { withSubagents } from "./prompts.ts"
 import { clampJson, errorMessage, now, oneLine, plainText, shortId, token, uuid } from "./util.ts"
 
 interface PendingControl {
@@ -63,9 +65,32 @@ interface Runtime {
   hold: string | null
   /** El turno en curso, para el indicador de "trabajando": cuándo empezó y cuántos tokens van. */
   turn: TurnCounter | null
-  /** Lo que la sesión llevaba gastado cuando arrancó este proceso (Claude Code cuenta desde cero en cada uno). */
+  /** Lo que la sesión llevaba gastado cuando arrancó este proceso. */
   spentBefore: { usd: number; tokens: TokenUsage | null }
+  /**
+   * Lo que Claude Code restaura al reanudar (el último cost-state del transcript): sus totales siguen
+   * desde ahí. applies se decide con el primer total que informa (si es menor, no restauró nada).
+   */
+  restored: RestoredSpend & { applies: boolean | null }
+  /** Lo que se le mandó en el turno en curso, para reenviarlo si no entra. */
+  turnInputs: TurnInput[]
+  /** Lo que no entró en el último turno porque el contexto estaba lleno. */
+  failedInputs: TurnInput[] | null
+  /** El turno en curso es un reenvío: si vuelve a no entrar, no se insiste solo. */
+  resending: boolean
+  /** Los últimos totales que informó el proceso (para rebasar la cuenta si la conversación se reinicia). */
+  lastTotals: { usd: number; tokens: TokenUsage | null }
+  /** Hubo un /clear: el próximo fin de turno (el del propio /clear) dice si los totales volvieron a cero. */
+  resetPending: boolean
 }
+
+interface TurnInput {
+  text: string
+  opts: SendOptions
+}
+
+/** Aviso que reemplaza al mensaje reenviado en el chat (el original ya se ve más arriba). */
+const RESENT_NOTICE = "Reenvié el mensaje que no había entrado."
 
 interface TurnCounter {
   startedAt: number
@@ -85,6 +110,10 @@ export interface TurnEndInfo {
   result: string
   /** Turno de un comando local (/compact, /context…): el modelo no respondió nada. */
   local: boolean
+  /** No salió porque el contexto estaba lleno ("Prompt is too long"). */
+  contextFull: boolean
+  /** Era un reenvío de algo que ya no había entrado. */
+  retried: boolean
 }
 
 export interface CreateSessionInput {
@@ -433,6 +462,12 @@ export class SessionManager extends EventEmitter<{
       hold: null,
       turn: null,
       spentBefore: { usd: rec.costUsd, tokens: rec.tokens },
+      restored: { ...(lastCostState(rec.cwd, rec.claudeSessionId, built.env.CLAUDE_CONFIG_DIR) ?? { usd: 0, tokens: null }), applies: null },
+      turnInputs: [],
+      failedInputs: null,
+      resending: false,
+      lastTotals: { usd: 0, tokens: null },
+      resetPending: false,
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -536,8 +571,14 @@ export class SessionManager extends EventEmitter<{
             rt.agentCalls.set(event.id, { input: (event.input ?? {}) as Record<string, unknown>, parent: event.parent })
           }
           if ((event.kind === "text" || event.kind === "tool_use" || event.kind === "thinking") && !event.parent) rt.turnHadAssistant = true
-          // El "acumulado" del fin de turno es el de la sesión, no el de este proceso.
-          if (event.kind === "turn_end" && event.costUsd > 0) event.costUsd += rt.spentBefore.usd
+          if (event.kind === "turn_end") {
+            if (rt.resetPending) {
+              rt.resetPending = false
+              this.decideRestored(rt, event.costUsd, null)
+            }
+            // El "acumulado" del fin de turno es el de la sesión, no el de este proceso.
+            if (event.costUsd > 0) event.costUsd = rt.spentBefore.usd + this.processUsd(rt, event.costUsd)
+          }
           const stored = this.addEvent(id, event)
           if (event.kind === "compact") {
             rt.lastCompactEventId = stored.id
@@ -649,10 +690,12 @@ export class SessionManager extends EventEmitter<{
           this.broadcastSession(id)
           break
         case "cost":
-          // total_cost_usd y modelUsage cuentan desde que arrancó el proceso: al reanudar se suman a lo de antes.
+          // total_cost_usd y modelUsage siguen desde lo que Claude Code restauró al reanudar: se suma solo lo nuevo.
+          this.decideRestored(rt, action.totalUsd, action.tokens)
+          rt.lastTotals = { usd: action.totalUsd, tokens: action.tokens ?? rt.lastTotals.tokens }
           this.db.updateSession(id, {
-            ...(action.totalUsd > 0 ? { costUsd: rt.spentBefore.usd + action.totalUsd } : {}),
-            ...(action.tokens ? { tokens: addTokens(rt.spentBefore.tokens, action.tokens) } : {}),
+            ...(action.totalUsd > 0 ? { costUsd: rt.spentBefore.usd + this.processUsd(rt, action.totalUsd) } : {}),
+            ...(action.tokens ? { tokens: addTokens(rt.spentBefore.tokens, tokensSince(action.tokens, rt.restored)) } : {}),
           })
           break
         case "usage":
@@ -688,11 +731,17 @@ export class SessionManager extends EventEmitter<{
           }
           const local = !rt.turnHadAssistant
           rt.turnHadAssistant = false
+          const inputs = rt.turnInputs
+          const retried = rt.resending
+          rt.turnInputs = []
+          rt.resending = false
+          if (action.contextFull && inputs.length) rt.failedInputs = inputs
+          else if (action.ok && !local) rt.failedInputs = null
           this.endTurn(id, rt)
           const rec = this.db.getSession(id)
           if (rec) {
             this.broadcastSession(id)
-            this.emit("turnEnd", rec, { ok: action.ok, aborted: action.aborted, result: action.result, local })
+            this.emit("turnEnd", rec, { ok: action.ok, aborted: action.aborted, result: action.result, local, contextFull: action.contextFull, retried })
           }
           void this.refreshContext(id, rt)
           break
@@ -700,9 +749,16 @@ export class SessionManager extends EventEmitter<{
         case "command":
           if (action.state !== "queued" && rt.queued.delete(action.uuid)) this.broadcastSession(id)
           break
-        case "reset":
+        case "reset": {
+          // /clear: la conversación nueva arranca sus totales de cero (o, si algún día no, sigue desde los
+          // últimos). Lo gastado hasta acá queda como base; el resultado del /clear dice cuál de las dos.
+          const cur = this.db.getSession(id)
+          rt.spentBefore = { usd: cur?.costUsd ?? 0, tokens: cur?.tokens ?? null }
+          rt.restored = { ...rt.lastTotals, applies: null }
+          rt.resetPending = true
           this.db.updateSession(id, { claudeSessionId: action.newSessionId, startedOnce: true })
           break
+        }
       }
     }
   }
@@ -836,6 +892,7 @@ export class SessionManager extends EventEmitter<{
       ...(opts.subagents?.length ? { subagents: opts.subagents } : {}),
     }
     const stored = this.addEvent(id, event)
+    rt.turnInputs.push({ text, opts })
     if (!rt.proc.sendUser(files.length ? contentWithFiles(text, files) : text, u, rec.claudeSessionId)) {
       rt.queued.delete(u)
       throw new Error("No se pudo escribir en la sesión")
@@ -934,6 +991,119 @@ export class SessionManager extends EventEmitter<{
     await rt.proc.request("interrupt", {}, 15_000)
   }
 
+  /** Con el primer total que informa el proceso se sabe si restauró lo anterior: si es menor, no lo hizo. */
+  private decideRestored(rt: Runtime, usd: number, tokens: TokenUsage | null) {
+    if (rt.restored.applies !== null) return
+    const r = rt.restored
+    rt.restored.applies = usd >= r.usd && (!r.tokens || !tokens || tokens.total >= r.tokens.total)
+  }
+
+  /** Lo que sumó este proceso: el total que informa Claude Code menos lo que restauró al arrancar. */
+  private processUsd(rt: Runtime, total: number): number {
+    this.decideRestored(rt, total, null)
+    return rt.restored.applies ? total - rt.restored.usd : total
+  }
+
+  /**
+   * Empieza la conversación de cero (/clear): Claude Code descarta el contexto y sigue con un id nuevo,
+   * en el mismo proceso y con el mismo protocolo. Vuelve cuando terminó, para que lo que se mande
+   * después vaya a la conversación nueva.
+   */
+  async clearConversation(id: string): Promise<void> {
+    const before = this.runtimes.get(id)
+    if (before && (before.status === "working" || before.pendingControl.size)) {
+      throw new Error("La sesión está trabajando: esperá a que termine para que empiece de cero")
+    }
+    const prevId = this.db.getSession(id)?.claudeSessionId
+    let onEnd: ((rec: SessionRecord) => void) | null = null
+    const done = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (onEnd) this.off("turnEnd", onEnd)
+        reject(new Error("Claude Code no confirmó que empezó de cero"))
+      }, 60_000)
+      onEnd = (rec) => {
+        if (rec.id !== id) return
+        clearTimeout(timer)
+        this.off("turnEnd", onEnd!)
+        resolve()
+      }
+      this.on("turnEnd", onEnd)
+    })
+    try {
+      await this.send(id, "/clear", { origin: "control", event: { kind: "notice", level: "info", text: "Empieza de cero para la tarea nueva (/clear)." } })
+    } catch (err) {
+      if (onEnd) this.off("turnEnd", onEnd)
+      throw err
+    }
+    await done
+    const rt = this.runtimes.get(id)
+    if (rt) {
+      rt.failedInputs = null
+      if (rt.hold) this.setHold(id, null)
+    }
+    if (this.db.getSession(id)?.claudeSessionId === prevId) throw new Error("La conversación no se reinició")
+  }
+
+  /** Si el último turno no salió porque el contexto estaba lleno, qué hay para reenviar. */
+  hasUnsent(id: string): boolean {
+    return this.unsent(id).length > 0
+  }
+
+  /**
+   * Lo que no entró en el último turno. Si el proceso es otro (se reinició el server), se arma desde el
+   * historial: los mensajes entre el fin de turno anterior y el que falló.
+   */
+  private unsent(id: string): TurnInput[] {
+    return this.runtimes.get(id)?.failedInputs ?? this.unsentFromHistory(id)
+  }
+
+  /**
+   * Deja fijado lo que hay que reenviar antes de compactar: después el último fin de turno es el
+   * de /compact y el historial ya no dice qué había fallado.
+   */
+  async holdUnsent(id: string): Promise<number> {
+    const inputs = this.unsent(id)
+    if (!inputs.length) return 0
+    await this.start(id)
+    const rt = this.runtimes.get(id)
+    if (rt) rt.failedInputs = inputs
+    return inputs.length
+  }
+
+  /** Reenvía lo que no entró en el último turno (después de compactar). */
+  async resendUnsent(id: string): Promise<number> {
+    const inputs = this.unsent(id)
+    if (!inputs.length) throw new Error("No encontré un mensaje que no haya salido")
+    await this.start(id)
+    const rt = this.runtimes.get(id)
+    if (!rt) throw new Error("La sesión no está corriendo")
+    rt.failedInputs = null
+    for (const input of inputs) {
+      await this.send(id, input.text, { ...input.opts, event: { kind: "notice", level: "info", text: RESENT_NOTICE } })
+      rt.resending = true
+    }
+    return inputs.length
+  }
+
+  private unsentFromHistory(id: string): TurnInput[] {
+    const events = this.db.listEvents(id, { limit: 200 })
+    const ends = events.map((e, i) => (e.event.kind === "turn_end" ? i : -1)).filter((i) => i >= 0)
+    const last = ends.at(-1)
+    if (last === undefined) return []
+    const end = events[last]!.event
+    if (end.kind !== "turn_end" || end.ok || !isContextFull(end.terminalReason, end.error)) return []
+    const from = (ends.at(-2) ?? -1) + 1
+    const out: TurnInput[] = []
+    for (const e of events.slice(from, last)) {
+      const ev = e.event
+      if (ev.kind !== "user" || ev.text.startsWith("/")) continue
+      const files = (ev.attachments ?? []).map((a) => this.db.getAttachment(a.id)).filter((a): a is AttachmentRecord => a !== null)
+      const text = ev.subagents?.length ? withSubagents(ev.text, ev.subagents) : ev.text
+      out.push({ text, opts: { origin: ev.origin, attachments: files, ...(ev.draftId ? { draftId: ev.draftId } : {}) } })
+    }
+    return out
+  }
+
   async stop(id: string) {
     const rt = this.runtimes.get(id)
     if (!rt) return
@@ -1002,6 +1172,20 @@ export class SessionManager extends EventEmitter<{
  * Mensaje con adjuntos: las imágenes van como bloques (Claude las ve directo) y todos los
  * archivos quedan listados con su ruta, para que pueda abrirlos con sus herramientas.
  */
+/** Los tokens que sumó este proceso (los totales de Claude Code siguen desde lo restaurado). */
+function tokensSince(total: TokenUsage, restored: Runtime["restored"]): TokenUsage {
+  const r = restored.tokens
+  if (!r || !restored.applies || total.total < r.total) return total
+  const d = (a: number, b: number) => Math.max(0, a - b)
+  return {
+    input: d(total.input, r.input),
+    output: d(total.output, r.output),
+    cacheRead: d(total.cacheRead, r.cacheRead),
+    cacheWrite: d(total.cacheWrite, r.cacheWrite),
+    total: d(total.total, r.total),
+  }
+}
+
 function addTokens(a: TokenUsage | null, b: TokenUsage): TokenUsage {
   if (!a) return b
   return {

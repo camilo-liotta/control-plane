@@ -5,9 +5,9 @@ import path from "node:path"
 import { promisify } from "node:util"
 
 import { config } from "../config.ts"
-import type { TimelineEvent } from "../shared/types.ts"
+import type { TimelineEvent, TokenUsage } from "../shared/types.ts"
 import { oneLine } from "../util.ts"
-import { StreamNormalizer } from "./normalize.ts"
+import { sessionTokens, StreamNormalizer } from "./normalize.ts"
 
 const run = promisify(execFile)
 
@@ -105,6 +105,55 @@ export function listTranscripts(cwd: string, configDir?: string, limit = 40): Tr
       sizeKb: Math.round(stat.size / 1024),
       ...scanHead(file),
     }))
+}
+
+export interface RestoredSpend {
+  usd: number
+  tokens: TokenUsage | null
+}
+
+/**
+ * Lo que Claude Code va a restaurar al reanudar esta conversación: guarda el costo acumulado en el
+ * transcript (entradas "cost-state") y sigue sumando desde ahí. Se busca la última, leyendo desde
+ * el final de a pedazos para no cargar transcripts enormes.
+ */
+export function lastCostState(cwd: string, sessionId: string, configDir?: string): RestoredSpend | null {
+  const file = path.join(transcriptDir(cwd, configDir), `${sessionId}.jsonl`)
+  let fd: number
+  try {
+    fd = fs.openSync(file, "r")
+  } catch {
+    return null
+  }
+  try {
+    const CHUNK = 1024 * 1024
+    let end = fs.fstatSync(fd).size
+    let carry = ""
+    while (end > 0) {
+      const start = Math.max(0, end - CHUNK)
+      const buf = Buffer.alloc(end - start)
+      fs.readSync(fd, buf, 0, buf.length, start)
+      const lines = (buf.toString("utf8") + carry).split("\n")
+      // La primera línea puede estar cortada: se completa con el pedazo anterior.
+      carry = start > 0 ? (lines.shift() ?? "") : ""
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i]!
+        if (!line.includes('"cost-state"')) continue
+        try {
+          const obj = JSON.parse(line) as { type?: string; sessionId?: string; totalCostUSD?: unknown; modelUsage?: unknown }
+          if (obj.type !== "cost-state" || (obj.sessionId && obj.sessionId !== sessionId)) continue
+          const usd = Number(obj.totalCostUSD)
+          return { usd: Number.isFinite(usd) && usd > 0 ? usd : 0, tokens: sessionTokens(obj.modelUsage) }
+        } catch {
+          // línea incompleta
+        }
+      }
+      end = start
+    }
+    return null
+  } finally {
+    fs.closeSync(fd)
+  }
 }
 
 const PEER = /<cross-session-message[^>]*from-name="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/

@@ -62,8 +62,8 @@ ${workerList}
 ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario te lo pide, pero tu trabajo principal es coordinar.\n" : "- No escribís código ni editás archivos del repo. Sí podés leer código, archivos y git (log, diff, status) para entender el estado y revisar resultados.\n"}- No sos niñera: los workers deciden solos y te traen el resultado al final. No les pidas reportes intermedios ni les mandes mensajes para controlar.
 
 ## Herramientas de control-plane
-- list_sessions: sesiones del proyecto con su rol, estado y tarea actual.
-- propose_prompt(session, title, prompt): propone un prompt para una sesión existente. Queda como borrador hasta que el usuario lo apruebe (o se envía solo si el proyecto tiene activado el auto-envío).
+- list_sessions: sesiones del proyecto con su rol, estado, tarea actual y cuánto contexto usa cada una.
+- propose_prompt(session, title, prompt, fresh?): propone un prompt para una sesión existente. Queda como borrador hasta que el usuario lo apruebe (o se envía solo si el proyecto tiene activado el auto-envío). Con fresh: true, la sesión empieza de cero (/clear) antes de recibirlo.
 - propose_session(name, role, title, prompt): propone crear una sesión nueva con su primer prompt. Siempre la aprueba el usuario.
 - list_proposals, update_proposal y discard_proposal: para revisar y ajustar tus propuestas.
 - read_results: trae los resultados nuevos que haya en la cola.
@@ -72,6 +72,13 @@ No uses SendMessage para darles tareas a los workers: todo prompt pasa por propo
 ## Subagentes
 - En propose_prompt y propose_session podés pedirle al worker subagentes específicos con el parámetro subagents: cada uno con name, role (quién es), task (qué hace), rules (cláusulas o restricciones), model (haiku, sonnet, opus o fable, opcional), background (si corre en paralelo mientras el worker sigue) y readOnly (si solo lee). Usalo cuando una tarea tenga partes independientes o necesite una mirada especializada (por ejemplo, un revisor o alguien que escriba tests). El worker los lanza y el usuario ve su trabajo en el dashboard.
 - Vos también podés usar subagentes (Agent, por ejemplo de tipo Explore) para investigar el repo antes de proponer.
+
+## Cuándo una sesión empieza de cero
+- Una sesión con el contexto muy lleno trabaja peor y cada turno cuesta más; cuando se llena, compacta y pierde detalle.
+- Si la próxima tarea no necesita lo que la sesión trae en contexto y lo anterior quedó cerrado (reportado, mergeado, sin decisiones pendientes), proponé el prompt con fresh: true. Arranca limpia: conserva su rol, el protocolo y la memoria del repo (CLAUDE.md), pero no la conversación.
+- Si la tarea sigue lo que venía haciendo, que siga con su contexto.
+- Con fresh, el prompt tiene que ser autocontenido: lo que necesite saber de lo anterior va en el prompt, porque no lo va a recordar.
+- Nunca a una sesión que está trabajando o tiene algo a medias. El usuario ve la marca en la propuesta y la puede sacar.
 
 ## Cómo escribir un prompt
 Que sea autocontenido: contexto, objetivo, alcance (qué sí y qué no), archivos o áreas involucradas, con qué sesiones tiene que coordinarse, criterio de terminado y qué tiene que incluir en su report_result. Escribilo en español.
@@ -122,5 +129,5 @@ ${blocks.join("\n\n")}`
 export function formatDraftLine(d: Draft, targetName: string | null): string {
   const target = d.kind === "session" ? `nueva sesión ${d.newSession?.name ?? "?"}` : (targetName ?? "?")
   const state = d.state === "staged" ? "en preparación" : d.state === "ready" ? "lista, esperando al usuario" : d.state
-  return `- [${d.id}] → ${target}: "${d.title}" (${state})`
+  return `- [${d.id}] → ${target}: "${d.title}"${d.fresh ? " · empieza de cero" : ""} (${state})`
 }

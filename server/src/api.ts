@@ -622,6 +622,11 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => compaction.direct(requireSession(req.params.id).id))
   )
 
+  // El mensaje no entró por el contexto lleno: compacta y lo reenvía.
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/compaction/resend", (req, reply) =>
+    guard(reply, () => compaction.compactAndResend(requireSession(req.params.id).id))
+  )
+
   app.delete<{ Params: { id: string } }>("/api/sessions/:id/compaction", (req, reply) =>
     guard(reply, () => compaction.discard(requireSession(req.params.id).id))
   )
@@ -698,7 +703,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ------------------------------------------------------------------ drafts
 
-  app.post<{ Params: { id: string }; Body: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown } }>(
+  app.post<{ Params: { id: string }; Body: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown; fresh?: boolean } }>(
     "/api/drafts/:id/send",
     (req, reply) => guard(reply, () => orchestration.sendDraft(req.params.id, req.body ?? {}))
   )
@@ -707,7 +712,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => orchestration.discardDraft(req.params.id))
   )
 
-  app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string; subagents?: unknown } }>("/api/drafts/:id", (req, reply) =>
+  app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string; subagents?: unknown; fresh?: boolean } }>("/api/drafts/:id", (req, reply) =>
     guard(reply, () => orchestration.editDraft(req.params.id, req.body ?? {}))
   )
 

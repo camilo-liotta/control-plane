@@ -47,6 +47,13 @@ describe("borrador de compactación", () => {
   })
 })
 
+describe("instrucciones sin borrador", () => {
+  it("van tal cual, como las de /compact, sin reemplazar el resumen de Claude Code", () => {
+    const r = compactInstructions({ sections: [], extra: "Conservá la lista de pendientes y los nombres de las tablas" })
+    assert.deepEqual(r, { text: "Conservá la lista de pendientes y los nombres de las tablas", kept: 0, dropped: 0 })
+  })
+})
+
 describe("stream de una compactación", () => {
   it("guarda métricas, toma el resumen y oculta el 'Compacted' de los hooks", () => {
     const n = new StreamNormalizer(() => false)
@@ -91,6 +98,9 @@ class FakeSessions extends EventEmitter {
   addEvent() {}
   async send(id: string, text: string, opts: SendOptions) {
     this.sent.push({ id, text, opts })
+  }
+  async holdUnsent() {
+    return 0
   }
   async control() {
     return { response: '{"sections":[{"title":"Tareas pendientes","points":["Tests de la cola"]}]}' }

@@ -40,6 +40,11 @@ class FakeSessions extends EventEmitter {
   update(id: string, patch: Partial<SessionRecord>) {
     this.db.updateSession(id, patch)
   }
+  cleared: string[] = []
+  async clearConversation(id: string) {
+    this.cleared.push(id)
+    this.sent.push({ id, text: "/clear", opts: { origin: "control" } })
+  }
   async start() {}
   create(input: Partial<SessionRecord> & { projectId: string; kind: "worker"; name: string; role: string; cwd: string }) {
     const rec = session(input.projectId, input.name, "worker")
@@ -181,6 +186,23 @@ describe("cola de resultados", () => {
     assert.equal(last.text, "Migrá la tabla de usuarios con índices")
     assert.equal(last.opts.origin, "draft")
     assert.equal(db.getSession(a.id)!.taskTitle, "Migrar usuarios")
+  })
+
+  it("una propuesta que empieza de cero limpia la sesión antes del prompt, y se puede sacar al aprobar", async () => {
+    const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "Otra cosa", prompt: "Hacé X desde cero", fresh: true })
+    assert.match(reply, /empieza de cero/)
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Sigue", prompt: "Seguí con Y", fresh: true })
+    sessions.endTurn(orq)
+    const [first, second] = db.listDrafts({ projectId, states: ["ready"] })
+    assert.equal(first!.fresh, true)
+    await orch.sendDraft(first!.id, {})
+    assert.deepEqual(sessions.sent.slice(-2).map((m) => m.text), ["/clear", "Hacé X desde cero"])
+    // Al aprobar se lo podés sacar: va sin /clear y cuenta como editada.
+    const before = sessions.cleared.length
+    const sent = await orch.sendDraft(second!.id, { fresh: false })
+    assert.equal(sessions.cleared.length, before)
+    assert.equal(sent.fresh, false)
+    assert.equal(sent.edited, true)
   })
 
   it("si interrumpís a la orquestadora, la revisión queda en pausa", async () => {

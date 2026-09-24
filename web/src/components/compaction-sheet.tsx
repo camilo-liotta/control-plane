@@ -1,4 +1,4 @@
-import { Hourglass, Plus, RotateCcw } from "lucide-react"
+import { Hourglass, Plus, RotateCcw, Send } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -215,6 +215,13 @@ export function CompactionSheet() {
             <span>
               {session?.name} está esperando para compactar. Si no elegís, compacta como siempre en <Countdown deadline={state.waiting.deadline} />.
             </span>
+          </div>
+        )}
+
+        {state?.resendPending && !state.waiting && (
+          <div className="flex items-center gap-2.5 border-b bg-status-attention/10 px-4 py-2.5 text-sm">
+            <Send className="size-4 shrink-0 text-status-attention" />
+            <span>El último mensaje no entró por el contexto lleno: sale solo apenas termine de compactar.</span>
           </div>
         )}
 

@@ -31,7 +31,8 @@ export type Action =
       model: string
       mcpServers: { name: string; status: string }[]
     }
-  | { type: "turn_end"; ok: boolean; aborted: boolean; result: string }
+  /** contextFull: Claude Code no mandó el mensaje porque el contexto no da más ("Prompt is too long"). */
+  | { type: "turn_end"; ok: boolean; aborted: boolean; result: string; contextFull: boolean }
   | { type: "command"; uuid: string; state: string }
   | { type: "reset"; newSessionId: string }
   | { type: "commands"; commands: SlashCommand[] }
@@ -114,6 +115,11 @@ export function sessionTokens(modelUsage: unknown): TokenUsage | null {
   if (!any) return null
   t.total = t.input + t.output + t.cacheRead + t.cacheWrite
   return t
+}
+
+/** El turno no salió porque la conversación ya no entra en el contexto (Claude Code lo corta antes de llamar a la API). */
+export function isContextFull(terminalReason: string | undefined, error: string | undefined): boolean {
+  return terminalReason === "blocking_limit" || terminalReason === "prompt_too_long" || /^Prompt is too long/i.test(error ?? "")
 }
 
 function turnTokens(usage: unknown): number | undefined {
@@ -435,7 +441,7 @@ export class StreamNormalizer {
           ...(errorText ? { error: errorText } : {}),
         },
       },
-      { type: "turn_end", ok: !isError, aborted, result: String(msg.result ?? "") },
+      { type: "turn_end", ok: !isError, aborted, result: String(msg.result ?? ""), contextFull: isError && isContextFull(terminal, errorText) },
     ]
     const total = sessionTokens(msg.modelUsage)
     if (cost > 0 || total) actions.push({ type: "cost", totalUsd: cost, tokens: total })

@@ -1,5 +1,6 @@
-import { Brain, ChevronRight, Info, Inbox, Layers, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
+import { Brain, ChevronRight, Info, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
+import { toast } from "sonner"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
@@ -12,9 +13,13 @@ import { Markdown } from "@/components/timeline/markdown"
 import { SubagentCard, SubagentContext, subagentMap } from "@/components/timeline/subagents"
 import { OutgoingMessage, TodoCard, ToolRow, type ToolCall } from "@/components/timeline/tool-card"
 import { WorkingIndicator } from "@/components/timeline/working-indicator"
+import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
+import { api } from "@/lib/api"
 import { clock, duration, tokens as tokensShort, usd } from "@/lib/format"
 import { reportStatusView } from "@/lib/status"
 import { useStore, type PartialBlock } from "@/lib/store"
+import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
 type Ev<K extends TimelineEvent["kind"]> = StoredEvent & { event: Extract<TimelineEvent, { kind: K }> }
@@ -322,6 +327,46 @@ const EventItem = memo(function EventItem({ ev, sessionId }: { ev: StoredEvent; 
   }
 })
 
+/** El turno no salió porque la conversación ya no entra (la misma regla que usa el server). */
+function contextFull(e: TimelineEvent): boolean {
+  if (e.kind !== "turn_end" || e.ok) return false
+  return e.terminalReason === "blocking_limit" || e.terminalReason === "prompt_too_long" || /^Prompt is too long/i.test(e.error ?? "")
+}
+
+/** Si el último turno no salió por el contexto lleno: compactar y reenviar, o elegir qué conservar. */
+function ContextFullBar({ session, events }: { session: Session; events: StoredEvent[] }) {
+  const [busy, setBusy] = useState(false)
+  const setUi = useUi((s) => s.set)
+  const last = useMemo(() => events.findLast((e) => e.event.kind === "turn_end"), [events])
+  const pending = useStore((s) => s.compactions[session.id]?.resendPending ?? false)
+  const stuck = pending || (last !== undefined && contextFull(last.event))
+  if (!stuck || session.status === "working" || session.status === "starting") return null
+  const resend = async () => {
+    setBusy(true)
+    try {
+      await api.compactionResend(session.id)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 text-sm">
+      <TriangleAlert className="size-4 shrink-0 text-status-attention" />
+      <span className="min-w-0 flex-1">El contexto está lleno y el último mensaje no salió. Compactá la conversación y se reenvía.</span>
+      <Button size="sm" onClick={() => void resend()} disabled={busy}>
+        {busy ? <Spinner /> : <Layers />}
+        Compactar y reenviar
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => setUi({ compactFor: session.id })}>
+        <ListChecks />
+        Elegir qué conservar
+      </Button>
+    </div>
+  )
+}
+
 function LiveTail({ session, partial }: { session: Session; partial?: PartialBlock }) {
   const turn = useStore((s) => s.turns[session.id])
   const working = session.status === "working" || session.status === "starting"
@@ -382,6 +427,7 @@ export function Timeline({ session, events }: { session: Session; events: Stored
     <SubagentContext.Provider value={subagents}>
       <div className="flex flex-col gap-3">
         <TimelineItems items={items} sessionId={session.id} root={session.cwd} live={live} />
+        <ContextFullBar session={session} events={events} />
         <LiveTail session={session} partial={partial} />
       </div>
     </SubagentContext.Provider>
