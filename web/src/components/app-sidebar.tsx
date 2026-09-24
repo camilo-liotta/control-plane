@@ -1,5 +1,6 @@
-import { Bell, BellOff, BellRing, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Sun } from "lucide-react"
+import { Bell, BellOff, BellRing, Blocks, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Sun } from "lucide-react"
 import { useState } from "react"
+import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
 import type { Project, Session } from "@shared/types"
@@ -7,7 +8,9 @@ import type { Project, Session } from "@shared/types"
 import { AccountSwitcher } from "@/components/accounts"
 import { SessionLamp } from "@/components/status"
 import { useTheme } from "@/components/theme-provider"
+import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Sidebar,
   SidebarContent,
@@ -25,9 +28,10 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
+import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { UsageMeter } from "@/components/usage-meter"
-import { enableNotifications, notificationsSupported } from "@/lib/notify"
+import { requestNotifications, setOsNotificationsEnabled, systemNotification, useNotifications } from "@/lib/notify"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
@@ -147,30 +151,94 @@ function ThemeToggle() {
   )
 }
 
-function NotificationsToggle() {
-  const [perm, setPerm] = useState(() => (notificationsSupported() ? Notification.permission : "denied"))
-  if (!notificationsSupported()) return null
-  const Icon = perm === "granted" ? BellRing : perm === "denied" ? BellOff : Bell
-  const label =
-    perm === "granted"
-      ? "Avisos del sistema activados"
-      : perm === "denied"
-        ? "El navegador bloqueó los avisos"
-        : "Activar avisos del sistema"
+function NotificationsMenu() {
+  const { permission, enabled } = useNotifications()
+  if (permission === "unsupported") return null
+  const on = permission === "granted" && enabled
+  const Icon = on ? BellRing : permission === "denied" || !enabled ? BellOff : Bell
+  const label = on
+    ? "Avisos del sistema: activados"
+    : permission === "denied"
+      ? "Avisos del sistema: bloqueados por el navegador"
+      : permission === "default"
+        ? "Avisos del sistema: sin activar"
+        : "Avisos del sistema: apagados"
+
+  const allow = async () => {
+    const result = await requestNotifications()
+    if (result === "granted") {
+      setOsNotificationsEnabled(true)
+      test()
+    } else if (result === "denied") toast.error("El navegador bloqueó los avisos", { description: "Mirá abajo cómo permitirlos." })
+  }
+  const test = () => {
+    const ok = systemNotification("Aviso de prueba de control-plane", "Así te vamos a avisar cuando una sesión te necesite.")
+    toast.success(ok ? "Mandé un aviso de prueba" : "El navegador no dejó mostrar el aviso", {
+      description: ok
+        ? "Si no lo ves, revisá los ajustes de notificaciones del sistema para tu navegador."
+        : "Revisá el permiso de notificaciones del sitio.",
+    })
+  }
+
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={() => void enableNotifications().then(() => setPerm(Notification.permission))}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-          aria-label={label}
-        >
-          <Icon className="size-4" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "relative rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
+                on && "text-foreground"
+              )}
+              aria-label={label}
+            >
+              <Icon className="size-4" />
+              {permission === "denied" && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-status-error" />}
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="top" align="start" className="w-80 gap-3 p-3.5">
+        <div>
+          <p className="text-sm font-medium">Avisos del sistema</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+            Una notificación del sistema cuando una sesión te necesita, hay propuestas listas o algo va a compactarse, si no
+            estás mirando el dashboard.
+          </p>
+        </div>
+        {permission === "granted" && (
+          <>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>{enabled ? "Activados" : "Apagados"}</span>
+              <Switch checked={enabled} onCheckedChange={setOsNotificationsEnabled} aria-label="Avisos del sistema" />
+            </label>
+            <Button size="sm" variant="outline" onClick={test} disabled={!enabled}>
+              Probar un aviso
+            </Button>
+          </>
+        )}
+        {permission === "default" && (
+          <Button size="sm" onClick={() => void allow()}>
+            Permitir avisos
+          </Button>
+        )}
+        {permission === "denied" && (
+          <div className="space-y-1.5 rounded-md border border-status-error/30 bg-status-error/5 p-2.5 text-xs leading-snug">
+            <p className="font-medium text-foreground">El navegador los tiene bloqueados para este sitio.</p>
+            <ol className="list-decimal space-y-0.5 pl-4 text-muted-foreground">
+              <li>Tocá el ícono a la izquierda de la dirección ({location.host}).</li>
+              <li>En Notificaciones, elegí Permitir.</li>
+              <li>Recargá la página.</li>
+            </ol>
+            <p className="text-muted-foreground">
+              Si igual no aparecen, revisá que tu navegador tenga permiso en los ajustes de notificaciones del sistema.
+            </p>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -188,6 +256,7 @@ export function AppSidebar() {
   const claudeVersion = useStore((s) => s.meta?.claudeVersion)
   const setUi = useUi((s) => s.set)
   const inbox = useInboxCount()
+  const [location] = useLocation()
 
   return (
     <Sidebar>
@@ -219,6 +288,16 @@ export function AppSidebar() {
             <span className="ml-auto rounded-full bg-status-attention px-1.5 font-mono text-[0.7rem] text-background">{inbox}</span>
           )}
         </button>
+        <Link
+          href="/tools"
+          className={cn(
+            "-mt-1.5 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
+            location.endsWith("/tools") && "bg-sidebar-accent text-foreground"
+          )}
+        >
+          <Blocks className="size-4" />
+          Herramientas
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -245,7 +324,7 @@ export function AppSidebar() {
         <UsageMeter />
         <div className="flex items-center gap-1 px-1">
           <ThemeToggle />
-          <NotificationsToggle />
+          <NotificationsMenu />
           {claudeVersion && (
             <span className="ml-auto truncate font-mono text-[0.68rem] text-muted-foreground" title="Versión de Claude Code">
               claude {claudeVersion}

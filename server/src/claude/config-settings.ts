@@ -145,6 +145,21 @@ function writeJson(file: string, data: Record<string, unknown>) {
   fs.renameSync(tmp, target)
 }
 
+/** Lee un settings.json (vacío si no existe) sin fallar: para mostrar. */
+export function readSettingsFile(file: string): Record<string, unknown> {
+  return readJson(file)
+}
+
+/**
+ * Cambia un archivo de settings con las mismas garantías que /config: si no es JSON válido no se
+ * toca, se escribe de forma atómica, conserva permisos y symlinks.
+ */
+export function updateSettingsFile(file: string, mutate: (data: Record<string, unknown>) => void) {
+  const data = readJsonForWrite(file)
+  mutate(data)
+  writeJson(file, data)
+}
+
 function getPath(obj: Record<string, unknown>, key: string): unknown {
   return key.split(".").reduce<unknown>((acc, k) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[k] : undefined), obj)
 }

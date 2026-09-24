@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import type {
   Attachment,
+  ContextUsage,
   Draft,
   DraftKind,
   DraftState,
@@ -28,6 +29,8 @@ export const defaultSettings: ProjectSettings = {
   orchestratorInstructions: "",
   defaultModel: null,
   defaultEffort: null,
+  compactMode: "notify",
+  compactWaitMin: 10,
 }
 
 export interface ProjectRecord {
@@ -71,6 +74,7 @@ export interface SessionRecord {
   lastActivityAt: number | null
   costUsd: number
   tokens: TokenUsage | null
+  context: ContextUsage | null
   createdAt: number
   archivedAt: number | null
 }
@@ -177,6 +181,9 @@ const MIGRATIONS: string[] = [
   );
   ALTER TABLE projects ADD COLUMN account_id TEXT;
   `,
+  `
+  ALTER TABLE sessions ADD COLUMN context TEXT;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -232,6 +239,7 @@ function toSession(r: Row): SessionRecord {
     lastActivityAt: num(r.last_activity_at),
     costUsd: Number(r.cost_usd ?? 0),
     tokens: parseTokens(r.tokens),
+    context: parseContext(r.context),
     createdAt: Number(r.created_at),
     archivedAt: num(r.archived_at),
   }
@@ -242,6 +250,16 @@ function parseTokens(raw: unknown): TokenUsage | null {
   try {
     const t = JSON.parse(String(raw)) as TokenUsage
     return typeof t.total === "number" ? t : null
+  } catch {
+    return null
+  }
+}
+
+function parseContext(raw: unknown): ContextUsage | null {
+  if (!raw) return null
+  try {
+    const c = JSON.parse(String(raw)) as ContextUsage
+    return typeof c.tokens === "number" && typeof c.max === "number" ? c : null
   } catch {
     return null
   }
@@ -340,6 +358,7 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   lastActivityAt: "last_activity_at",
   costUsd: "cost_usd",
   tokens: "tokens",
+  context: "context",
   createdAt: "created_at",
   archivedAt: "archived_at",
 }

@@ -1,9 +1,10 @@
-import { ArrowDown, Archive, Compass, EllipsisVertical, PanelRight, Pencil, Play, Square } from "lucide-react"
+import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, Square } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
 import { Composer } from "@/components/composer"
+import { ContextMeter } from "@/components/context-meter"
 import { ModelPicker, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
@@ -36,6 +37,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { tokens, usd } from "@/lib/format"
 import { useStore } from "@/lib/store"
+import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
 function RenameDialog({ sessionId, name, open, onOpenChange }: { sessionId: string; name: string; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -100,6 +102,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const [archiving, setArchiving] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const setUi = useUi((s) => s.set)
 
   useEffect(() => {
     stick.current = true
@@ -191,6 +194,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
         actions={
           <>
             {events && <SubagentsChip session={session} events={events} />}
+            <ContextMeter session={session} />
             <ModelPicker session={session} />
             {running ? (
               <Button size="sm" variant="ghost" onClick={() => act(() => api.stop(session.id), "Sesión detenida")}>
@@ -216,6 +220,14 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 <DropdownMenuItem onClick={() => setRenaming(true)}>
                   <Pencil />
                   Renombrar
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setUi({ compactFor: session.id })}>
+                  <Layers />
+                  Compactar eligiendo qué queda…
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setUi({ toolsFor: session.id })}>
+                  <Blocks />
+                  Herramientas de la sesión
                 </DropdownMenuItem>
                 {!isOrch && (
                   <>

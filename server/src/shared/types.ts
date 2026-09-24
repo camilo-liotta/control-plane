@@ -30,6 +30,57 @@ export interface ProjectSettings {
   orchestratorInstructions: string
   defaultModel: string | null
   defaultEffort: string | null
+  /** Qué pasa cuando Claude Code va a compactar solo. */
+  compactMode: CompactMode
+  /** Modo "esperarme": cuántos minutos espera tu elección antes de compactar solo. */
+  compactWaitMin: number
+}
+
+/**
+ * auto: Claude Code compacta como siempre, sin avisar.
+ * notify: te avisa cuando el contexto se está llenando, para que elijas qué conservar.
+ * ask: además, cuando llega el momento, la sesión espera tu elección (hasta compactWaitMin).
+ */
+export type CompactMode = "auto" | "notify" | "ask"
+
+/** Cuánto contexto usa la sesión (lo informa Claude Code después de cada turno). */
+export interface ContextUsage {
+  tokens: number
+  max: number
+  /** Dónde compacta solo Claude Code (null si no compacta por umbral). */
+  threshold: number | null
+  autoCompact: boolean
+  categories: { name: string; tokens: number }[]
+  updatedAt: number
+}
+
+export interface CompactionPoint {
+  id: string
+  text: string
+}
+
+export interface CompactionSection {
+  title: string
+  points: CompactionPoint[]
+}
+
+/** Borrador del resumen, punto por punto, para elegir qué sobrevive a la compactación. */
+export interface CompactionDraft {
+  sections: CompactionSection[]
+  createdAt: number
+  /** Tokens de contexto cuando se armó (para saber si quedó viejo). */
+  contextTokens: number | null
+}
+
+export interface CompactionState {
+  sessionId: string
+  draft: CompactionDraft | null
+  drafting: boolean
+  error: string | null
+  /** La sesión está por compactar y espera tu elección (modo "esperarme"). */
+  waiting: { since: number; deadline: number } | null
+  /** Se mandó la compactación con tu selección y todavía no terminó. */
+  applying: boolean
 }
 
 export interface ReviewState {
@@ -106,6 +157,8 @@ export interface Session {
   tokens: TokenUsage | null
   /** Subagentes activos y recientes de este proceso (para el mapa del proyecto). */
   subagents: SubagentBrief[]
+  /** Uso de contexto al terminar el último turno. */
+  context: ContextUsage | null
 }
 
 export interface SubagentBrief {
@@ -197,6 +250,103 @@ export interface SlashCommand {
   description: string
   argumentHint: string
   builtin?: boolean
+}
+
+// ------------------------------------------------------------ herramientas
+
+export type McpStatus = "connected" | "failed" | "needs-auth" | "pending" | "disabled" | (string & {})
+
+export interface McpTool {
+  name: string
+  readOnly?: boolean
+  destructive?: boolean
+}
+
+/** Un servidor MCP como lo ve Claude Code en esa cuenta y carpeta. */
+export interface McpServerInfo {
+  name: string
+  status: McpStatus
+  /** user (tu cuenta) · local (solo vos en este proyecto) · project (.mcp.json) · claudeai (conector) · dynamic (plugin o dashboard) · managed */
+  scope: string | null
+  source: string | null
+  transport: string | null
+  /** URL o comando. */
+  target: string | null
+  error: string | null
+  tools: McpTool[]
+  /** El MCP propio del dashboard: no se puede tocar desde acá. */
+  internal?: boolean
+}
+
+export interface PluginComponents {
+  skills: string[]
+  agents: string[]
+  commands: string[]
+  hooks: number
+  mcpServers: string[]
+}
+
+export interface PluginInfo {
+  /** nombre@marketplace */
+  id: string
+  name: string
+  marketplace: string
+  version: string | null
+  /** user · project · local · synced (de tu organización) · managed */
+  scope: string | null
+  enabled: boolean
+  description: string | null
+  components: PluginComponents | null
+  /** Tokens que suma a cada sesión aunque no se use. */
+  alwaysOnTokens: number | null
+}
+
+export interface CatalogPlugin {
+  id: string
+  name: string
+  description: string
+  marketplace: string
+  installs: number | null
+  installed: boolean
+}
+
+export interface Marketplace {
+  name: string
+  source: string
+  repo?: string
+  url?: string
+  path?: string
+}
+
+export type SkillState = "on" | "name-only" | "user-invocable-only" | "off"
+
+export interface SkillInfo {
+  name: string
+  description: string
+  /** user · project · plugin · bundled · managed */
+  source: string
+  plugin: string | null
+  /** SKILL.md (o el .md del comando), si se puede abrir. */
+  path: string | null
+  /** Tokens que ocupa en el contexto de cada sesión (su nombre y descripción). */
+  tokens: number | null
+  state: SkillState
+  /** Dónde está definido el estado (si no es el de siempre). */
+  stateScope: "user" | "project" | "local" | null
+  /** Se puede editar el archivo desde el dashboard. */
+  editable: boolean
+}
+
+export interface ToolsView {
+  accountId: string
+  projectId: string | null
+  cwd: string
+  mcp: McpServerInfo[]
+  plugins: PluginInfo[]
+  skills: SkillInfo[]
+  /** De dónde salió lo que ves: una sesión abierta, o una consulta a Claude Code sin sesión. */
+  via: { kind: "session"; sessionId: string; name: string } | { kind: "inspector" }
+  at: number
 }
 
 export type SubagentStatus = "running" | "completed" | "failed" | "killed"
@@ -320,7 +470,18 @@ export type TimelineEvent =
     }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
   | { kind: "batch"; reportIds: string[]; text: string; followUp: boolean }
-  | { kind: "compact"; trigger: string; preTokens: number }
+  | {
+      kind: "compact"
+      trigger: string
+      preTokens: number
+      postTokens?: number
+      durationMs?: number
+      /** El resumen con el que siguió la conversación. */
+      summary?: string
+      /** Si la compactación usó tu selección: cuántos puntos quedaron y cuántos descartaste. */
+      kept?: number
+      dropped?: number
+    }
   | {
       kind: "subagent"
       toolUseId: string
@@ -383,6 +544,7 @@ export interface Snapshot {
   drafts: Draft[]
   reports: Report[]
   accounts: Account[]
+  compactions: CompactionState[]
   meta: Meta
 }
 
@@ -409,6 +571,7 @@ export type ServerMessage =
   | { type: "account"; account: Account }
   | { type: "account_removed"; id: string }
   | { type: "meta"; meta: Meta }
+  | { type: "compaction"; state: CompactionState }
   | {
       type: "toast"
       level: ToastLevel
@@ -416,4 +579,6 @@ export type ServerMessage =
       body?: string
       projectId?: string
       sessionId?: string
+      /** Qué abrir al tocar "Ver" (por defecto, la sesión). */
+      open?: "compaction"
     }

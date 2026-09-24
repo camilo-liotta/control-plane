@@ -11,7 +11,9 @@ import { InboxSheet } from "@/components/inbox-sheet"
 import { NewProjectDialog } from "@/components/new-project-dialog"
 import { NewSessionDialog } from "@/components/new-session-dialog"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
+import { CompactionSheet } from "@/components/compaction-sheet"
 import { SubagentSheet } from "@/components/subagent-sheet"
+import { SessionToolsSheet } from "@/components/tools/session-tools-sheet"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { useStore } from "@/lib/store"
@@ -20,6 +22,7 @@ import { connect } from "@/lib/ws"
 import { Home } from "@/pages/home"
 import { ProjectBoard } from "@/pages/project-board"
 import { SessionPage } from "@/pages/session-page"
+import { ToolsPage } from "@/pages/tools-page"
 
 function Dialogs() {
   const ui = useUi()
@@ -50,6 +53,8 @@ function Dialogs() {
       <InboxSheet />
       <CommandPalette />
       <SubagentSheet />
+      <CompactionSheet />
+      <SessionToolsSheet />
       <Lightbox />
       <AccountsDialog />
       <ClaudeSettingsDialog />
@@ -93,6 +98,10 @@ export default function App() {
             <Route path="/">
               <Home />
             </Route>
+            <Route path="/tools">
+              <ToolsPage />
+            </Route>
+            <Route path="/p/:projectId/tools">{(params) => <ToolsPage key={params.projectId} projectId={params.projectId} />}</Route>
             <Route path="/p/:projectId">{(params) => <ProjectBoard projectId={params.projectId} />}</Route>
             <Route path="/p/:projectId/s/:sessionId">
               {(params) => <SessionPage key={params.sessionId} projectId={params.projectId} sessionId={params.sessionId} />}

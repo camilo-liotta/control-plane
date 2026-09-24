@@ -7,12 +7,14 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import type { Accounts } from "./accounts.ts"
 import { toRef, type AttachmentStore } from "./attachments.ts"
 import { readSettings, writeSetting } from "./claude/config-settings.ts"
+import type { Compaction, CompactionSelection } from "./compaction.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { ClaudeSettingValue, ProjectSettings, Snapshot } from "./shared/types.ts"
+import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
+import type { ClaudeSettingValue, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
 interface Deps {
@@ -22,6 +24,8 @@ interface Deps {
   orchestration: Orchestration
   attachments: AttachmentStore
   accounts: Accounts
+  compaction: Compaction
+  tools: Tools
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -30,13 +34,14 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
-export function snapshot({ db, sessions, orchestration, accounts }: Deps): Snapshot {
+export function snapshot({ db, sessions, orchestration, accounts, compaction }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
     drafts: db.listRecentDrafts(now() - DAY),
     reports: db.listRecentReports(now() - 2 * DAY).map((r) => orchestration.reportView(r)),
     accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
+    compactions: compaction.list(),
     meta: sessions.meta,
   }
 }
@@ -59,7 +64,7 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools } = deps
 
   const broadcastAccount = (id: string) => {
     const a = accounts.get(id)
@@ -227,7 +232,11 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       guard(reply, () => {
         const p = requireProject(req.params.id)
         const settings = req.body.settings ? { ...p.settings, ...req.body.settings } : undefined
-        if (settings) settings.batchWindowSec = Math.min(600, Math.max(0, Number(settings.batchWindowSec) || 0))
+        if (settings) {
+          settings.batchWindowSec = Math.min(600, Math.max(0, Number(settings.batchWindowSec) || 0))
+          if (!["auto", "notify", "ask"].includes(settings.compactMode)) settings.compactMode = defaultSettings.compactMode
+          settings.compactWaitMin = Math.min(45, Math.max(1, Math.round(Number(settings.compactWaitMin) || defaultSettings.compactWaitMin)))
+        }
         db.updateProject(p.id, { name: req.body.name?.trim() || undefined, settings })
         const view = orchestration.projectView(db.getProject(p.id)!)
         deps.hub.broadcast({ type: "project", project: view })
@@ -418,6 +427,152 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   app.post<{ Params: { id: string } }>("/api/sessions/:id/interrupt", (req, reply) =>
     guard(reply, () => sessions.interrupt(requireSession(req.params.id).id))
+  )
+
+  // ------------------------------------------------------------ herramientas
+
+  type AccountParams = { Params: { id: string } }
+  const pid = (v: unknown) => (typeof v === "string" && v ? v : null)
+
+  app.get<AccountParams & { Querystring: { projectId?: string; refresh?: string } }>("/api/accounts/:id/tools", (req, reply) =>
+    guard(reply, () => tools.view(requireAccount(req.params.id).id, pid(req.query.projectId), req.query.refresh === "1"))
+  )
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/tools", (req, reply) =>
+    guard(reply, () => tools.sessionView(requireSession(req.params.id).id))
+  )
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/tools/reload", (req, reply) =>
+    guard(reply, async () => {
+      const id = requireSession(req.params.id).id
+      await sessions.control(id, "reload_plugins", {}, 60_000)
+      await sessions.control(id, "reload_skills", {}, 60_000).catch(() => null)
+      return tools.sessionView(id)
+    })
+  )
+
+  app.get<AccountParams & { Querystring: { refresh?: string } }>("/api/accounts/:id/plugins/catalog", (req, reply) =>
+    guard(reply, () => tools.catalog(requireAccount(req.params.id).id, req.query.refresh === "1"))
+  )
+
+  app.post<AccountParams & { Body: { id: string; action: PluginAction; projectId?: string; scope?: string; acceptCommand?: string } }>(
+    "/api/accounts/:id/plugins/action",
+    (req, reply) =>
+      guard(reply, () => {
+        const b = req.body
+        if (!["enable", "disable", "install", "uninstall", "update"].includes(b.action)) throw new Error("Acción inválida")
+        return tools.pluginAction(requireAccount(req.params.id).id, pid(b.projectId), String(b.id ?? ""), b.action, {
+          scope: b.scope,
+          acceptCommand: b.acceptCommand,
+        })
+      })
+  )
+
+  app.get<AccountParams>("/api/accounts/:id/marketplaces", (req, reply) =>
+    guard(reply, () => tools.marketplaces(requireAccount(req.params.id).id))
+  )
+
+  app.post<AccountParams & { Body: { action: "add" | "remove" | "update"; target?: string } }>("/api/accounts/:id/marketplaces", (req, reply) =>
+    guard(reply, () => {
+      if (!["add", "remove", "update"].includes(req.body.action)) throw new Error("Acción inválida")
+      return tools.marketplaceAction(requireAccount(req.params.id).id, req.body.action, req.body.target)
+    })
+  )
+
+  app.post<AccountParams & { Body: McpInput & { projectId?: string } }>("/api/accounts/:id/mcp", (req, reply) =>
+    guard(reply, () => tools.mcpAdd(requireAccount(req.params.id).id, pid(req.body.projectId), req.body))
+  )
+
+  app.delete<{ Params: { id: string; name: string }; Querystring: { scope?: McpScope; projectId?: string } }>(
+    "/api/accounts/:id/mcp/:name",
+    (req, reply) =>
+      guard(reply, () => tools.mcpRemove(requireAccount(req.params.id).id, pid(req.query.projectId), req.params.name, req.query.scope ?? "user"))
+  )
+
+  app.post<{ Params: { id: string; name: string } }>("/api/accounts/:id/mcp/:name/login", (req, reply) =>
+    guard(reply, () => tools.mcpLogin(requireAccount(req.params.id).id, req.params.name))
+  )
+
+  app.post<{ Params: { id: string; name: string }; Body: { enabled: boolean } }>("/api/projects/:id/mcp/:name/toggle", (req, reply) =>
+    guard(reply, () => {
+      const p = requireProject(req.params.id)
+      return tools.mcpToggle(accounts.forProject(p.id).id, p.id, req.params.name, Boolean(req.body.enabled))
+    })
+  )
+
+  app.post<{ Params: { id: string; name: string } }>("/api/sessions/:id/mcp/:name/reconnect", (req, reply) =>
+    guard(reply, () => tools.mcpReconnect(requireSession(req.params.id).id, req.params.name))
+  )
+
+  app.get<{ Params: { id: string; name: string }; Querystring: { projectId?: string } }>("/api/accounts/:id/skills/:name", (req, reply) =>
+    guard(reply, () => tools.readSkill(requireAccount(req.params.id).id, pid(req.query.projectId), req.params.name))
+  )
+
+  app.put<{ Params: { id: string; name: string }; Body: { projectId?: string; content: string } }>("/api/accounts/:id/skills/:name", (req, reply) =>
+    guard(reply, () => tools.saveSkill(requireAccount(req.params.id).id, pid(req.body.projectId), req.params.name, String(req.body.content ?? "")))
+  )
+
+  app.post<AccountParams & { Body: { projectId?: string; scope: "user" | "project"; name: string; description: string; body?: string } }>(
+    "/api/accounts/:id/skills",
+    (req, reply) =>
+      guard(reply, () =>
+        tools.createSkill(requireAccount(req.params.id).id, pid(req.body.projectId), {
+          scope: req.body.scope === "project" ? "project" : "user",
+          name: String(req.body.name ?? ""),
+          description: String(req.body.description ?? ""),
+          body: String(req.body.body ?? ""),
+        })
+      )
+  )
+
+  app.delete<{ Params: { id: string; name: string }; Querystring: { projectId?: string } }>("/api/accounts/:id/skills/:name", (req, reply) =>
+    guard(reply, () => tools.deleteSkill(requireAccount(req.params.id).id, pid(req.query.projectId), req.params.name))
+  )
+
+  app.post<{ Params: { id: string; name: string }; Body: { projectId?: string; state: SkillState; scope: "user" | "local" } }>(
+    "/api/accounts/:id/skills/:name/state",
+    (req, reply) =>
+      guard(reply, () =>
+        tools.setSkillState(requireAccount(req.params.id).id, pid(req.body.projectId), req.params.name, req.body.state, req.body.scope === "local" ? "local" : "user")
+      )
+  )
+
+  // ------------------------------------------------------------ compactación
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/compaction/draft", (req, reply) =>
+    guard(reply, () => {
+      // Tarda (Claude lee toda la conversación): el resultado llega por WebSocket.
+      void compaction.draft(requireSession(req.params.id).id)
+      return compaction.view(req.params.id)
+    })
+  )
+
+  app.post<{ Params: { id: string }; Body: CompactionSelection }>("/api/sessions/:id/compaction/apply", (req, reply) =>
+    guard(reply, () => {
+      const body = req.body
+      if (!body || !Array.isArray(body.sections)) throw new Error("Falta la selección")
+      const sections = body.sections.map((s) => ({
+        title: String(s?.title ?? ""),
+        points: (Array.isArray(s?.points) ? s.points : []).map((p) => ({ text: String(p?.text ?? ""), keep: Boolean(p?.keep) })),
+      }))
+      return compaction.apply(requireSession(req.params.id).id, { sections, extra: typeof body.extra === "string" ? body.extra : undefined })
+    })
+  )
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/compaction/direct", (req, reply) =>
+    guard(reply, () => compaction.direct(requireSession(req.params.id).id))
+  )
+
+  app.delete<{ Params: { id: string } }>("/api/sessions/:id/compaction", (req, reply) =>
+    guard(reply, () => compaction.discard(requireSession(req.params.id).id))
+  )
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/context", (req, reply) =>
+    guard(reply, async () => {
+      const id = requireSession(req.params.id).id
+      await sessions.refreshContext(id)
+      return sessions.contextOf(id)
+    })
   )
 
   app.post<{ Params: { id: string }; Body: { requestId: string; answers: Record<string, string> } }>(

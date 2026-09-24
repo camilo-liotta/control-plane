@@ -11,6 +11,7 @@ import Fastify from "fastify"
 import { Accounts } from "./accounts.ts"
 import { registerApi, snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
+import { Compaction } from "./compaction.ts"
 import { config, version } from "./config.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import type { Meta } from "./shared/types.ts"
@@ -19,6 +20,7 @@ import { registerMcp } from "./mcp.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
 import { SessionManager } from "./sessions.ts"
+import { Tools } from "./tools.ts"
 
 async function claudeVersion(): Promise<string | null> {
   try {
@@ -78,6 +80,7 @@ async function main() {
     hub,
     attachments,
     mcpUrlFor: (token) => `${baseUrl}/mcp/${token}`,
+    hookUrlFor: (token) => `${baseUrl}/hooks/${token}/compact`,
     launchFor,
     accountIdFor: (s) => accounts.forProject(s.projectId).id,
     meta: {
@@ -126,7 +129,17 @@ async function main() {
   }
 
   const orchestration = new Orchestration(db, hub, sessions, accounts)
-  const deps = { db, hub, sessions, orchestration, attachments, accounts }
+  const compaction = new Compaction({
+    db,
+    hub,
+    sessions,
+    launchFor: (s) => {
+      const l = launchFor(s)
+      return { bin: l.bin, env: l.env, model: sessions.view(s).currentModel ?? l.model }
+    },
+  })
+  const tools = new Tools({ db, sessions, accounts, home: config.home })
+  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools }
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
   const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })
@@ -156,6 +169,15 @@ async function main() {
   registerApi(app, deps)
   registerMcp(app, deps)
 
+  // Hooks de compactación de las sesiones (los llama compact-hook.mjs, desde esta máquina).
+  app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/compact", async (req, reply) => {
+    const onClose = (cb: () => void) => reply.raw.on("close", () => !reply.raw.writableFinished && cb())
+    const text = await compaction
+      .hook(req.params.token, req.body && typeof req.body === "object" ? req.body : {}, onClose)
+      .catch(() => "")
+    return reply.type("text/plain; charset=utf-8").send(text)
+  })
+
   if (fs.existsSync(config.webDist)) {
     await app.register(fastifyStatic, { root: config.webDist })
     app.setNotFoundHandler((req, reply) => {
@@ -180,6 +202,7 @@ async function main() {
     closing = true
     console.log(`\n${signal}: cerrando sesiones…`)
     orchestration.dispose()
+    compaction.dispose()
     await sessions.shutdown().catch(() => {})
     await app.close().catch(() => {})
     db.close()

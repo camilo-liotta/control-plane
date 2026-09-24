@@ -1,4 +1,4 @@
-import { Brain, ChevronRight, Info, Inbox, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
+import { Brain, ChevronRight, Info, Inbox, Layers, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
@@ -255,6 +255,40 @@ function ToolItem({ call, root, live }: { call: ToolCall; root?: string; live: b
   }
 }
 
+/** Separador de compactación: cuánto se achicó el contexto y el resumen con el que siguió. */
+function CompactCard({ ev }: { ev: Ev<"compact"> }) {
+  const e = ev.event
+  const [open, setOpen] = useState(false)
+  const size = e.postTokens ? `${tokensShort(e.preTokens)} → ${tokensShort(e.postTokens)}` : e.preTokens ? tokensShort(e.preTokens) : null
+  const curated = e.kept !== undefined
+  return (
+    <div className="py-1">
+      <div className="flex items-center gap-3 text-[0.7rem] text-muted-foreground">
+        <div className="h-px flex-1 bg-border" />
+        <button
+          type="button"
+          onClick={() => e.summary && setOpen((v) => !v)}
+          className={cn("flex items-center gap-1.5 font-mono", e.summary && "hover:text-foreground")}
+          disabled={!e.summary}
+        >
+          <Layers className="size-3" />
+          contexto compactado {e.trigger === "auto" ? "solo" : "a mano"}
+          {size ? ` · ${size} tokens` : ""}
+          {curated ? ` · ${e.kept} conservados${e.dropped ? `, ${e.dropped} descartados` : ""}` : ""}
+          {e.summary && <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />}
+        </button>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      {open && e.summary && (
+        <div className="mt-2 rounded-lg border bg-muted/40 px-4 py-3">
+          <p className="eyebrow mb-2">Con esto siguió la conversación</p>
+          <Markdown text={e.summary} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 const EventItem = memo(function EventItem({ ev, sessionId }: { ev: StoredEvent; sessionId: string }) {
   const e = ev.event
   switch (e.kind) {
@@ -282,13 +316,7 @@ const EventItem = memo(function EventItem({ ev, sessionId }: { ev: StoredEvent; 
     case "batch":
       return <BatchCard ev={ev as Ev<"batch">} />
     case "compact":
-      return (
-        <div className="flex items-center gap-3 py-1 text-[0.7rem] text-muted-foreground">
-          <div className="h-px flex-1 bg-border" />
-          <span className="font-mono">contexto compactado{e.preTokens ? ` (${Math.round(e.preTokens / 1000)}k tokens)` : ""}</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
-      )
+      return <CompactCard ev={ev as Ev<"compact">} />
     default:
       return null
   }

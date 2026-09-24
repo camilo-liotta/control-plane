@@ -12,6 +12,7 @@ export interface StatusView {
 export function sessionStatus(s: Session): StatusView {
   switch (s.status) {
     case "needs_input":
+      if (!s.pending && s.statusDetail?.startsWith("Por compactar")) return { label: "Por compactar", tone: "attention", pulse: true }
       return { label: "Te necesita", tone: "attention", pulse: false }
     case "error":
       return { label: "Error", tone: "error", pulse: false }

@@ -3,6 +3,7 @@ import { create } from "zustand"
 
 import type {
   Account,
+  CompactionState,
   Draft,
   Meta,
   ModelOption,
@@ -36,6 +37,8 @@ interface State {
   partials: Record<string, PartialBlock | undefined>
   unread: Record<string, number>
   accounts: Record<string, Account>
+  /** Compactaciones en curso por sesión (borrador, espera, aplicando). */
+  compactions: Record<string, CompactionState>
   meta: Meta | null
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
@@ -68,6 +71,7 @@ export const useStore = create<State>((set, get) => ({
   partials: {},
   unread: {},
   accounts: {},
+  compactions: {},
   meta: null,
   focused: null,
 
@@ -87,6 +91,7 @@ export const useStore = create<State>((set, get) => ({
           drafts: byId(snapshot.drafts),
           reports: byId(snapshot.reports),
           accounts: byId(snapshot.accounts),
+          compactions: Object.fromEntries((snapshot.compactions ?? []).map((c) => [c.sessionId, c])),
           meta: snapshot.meta,
           partials: {},
         })
@@ -177,6 +182,9 @@ export const useStore = create<State>((set, get) => ({
         break
       case "meta":
         set({ meta: msg.meta })
+        break
+      case "compaction":
+        set((s) => ({ compactions: { ...s.compactions, [msg.state.sessionId]: msg.state } }))
         break
       case "toast":
         notify(msg)

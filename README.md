@@ -61,6 +61,24 @@ La conversación de Claude Code no se borra nunca: queda en disco y se retoma de
 - **Modelo y esfuerzo**: se cambian desde el encabezado, en vivo: aplican desde el próximo turno sin reiniciar la sesión.
 - **Costo y tokens**: el encabezado muestra lo acumulado de la sesión (costo equivalente API y tokens, incluidos sus subagentes), el panel el desglose (entrada, salida, caché) y cada separador de turno los tokens de ese turno. El tablero suma los totales del proyecto.
 
+### Compactación: elegí qué sobrevive
+
+El encabezado de cada sesión muestra **cuánto contexto usa** (el % y, al tocarlo, el desglose). Desde ahí, desde el menú de la sesión o escribiendo `/compact` solo, se abre **Compactar eligiendo qué queda**:
+
+1. Claude arma un **borrador del resumen, punto por punto**, agrupado como el resumen de Claude Code (pedido, archivos y código, errores, pendientes, trabajo en curso…). Se lo pregunta a la propia sesión aparte, como `/btw`: no se agrega nada a la conversación y aprovecha su caché.
+2. **Destildá** lo que no hace falta recordar, **editá** cualquier punto o **agregá** los tuyos. Podés sumar instrucciones.
+3. **Compactar**: el resumen queda con exactamente lo tildado; lo descartado no aparece en ningún lado. En el chat queda una tarjeta con cuánto se achicó el contexto y el resumen con el que siguió.
+
+Lo descartado sale del contexto de Claude, pero la conversación completa sigue guardada en disco y, si algún día lo necesita, la puede volver a leer. `/compact` con instrucciones (`/compact mantené los nombres de tablas`) va directo a Claude Code, como siempre.
+
+**Cuando Claude va a compactar solo** (configuración del proyecto → Compactación):
+
+- **Claude decide**: como siempre, sin avisar.
+- **Avisarme** (por defecto): te avisa cuando el contexto llega a ~85% de donde compacta, para que elijas antes si querés.
+- **Esperarme**: además, cuando llega el momento, la sesión **frena y espera tu elección** (hasta los minutos que configures; después compacta como siempre y sigue).
+
+En la compactación automática Claude Code deja textuales el último mensaje tuyo y lo que vino después; tu selección define el resumen de todo lo anterior. Si una compactación con tu selección no llega a hacerse (por ejemplo, porque había muy pocos mensajes), la selección queda guardada y se usa sola en el próximo intento.
+
 ### Subagentes
 
 Las sesiones usan subagentes como siempre (la herramienta Agent de Claude Code). En el chat cada uno aparece como una tarjeta con su tipo, modelo, si corre en segundo plano, lo que está haciendo en este momento, herramientas y tokens. **Un clic abre su trabajo en vivo**: la tarea que recibió, cada paso y su resultado. Si un subagente lanza otros, se navegan desde ahí. El panel de la sesión y el encabezado muestran cuántos están trabajando.
@@ -98,6 +116,16 @@ Cada cuenta es un directorio de configuración de Claude Code, el que se elige c
 - **Login**: el dashboard nunca toca credenciales. Si una cuenta figura **Sin login**, abrí una terminal con `CLAUDE_CONFIG_DIR=<directorio> claude`, usá `/login` y después **Volver a verificar los logins**.
 - Una cuenta con proyectos activos no se puede quitar: archivá sus proyectos antes. La de siempre no se quita.
 
+## Herramientas: skills, plugins y MCP
+
+**Herramientas** (barra lateral) muestra lo que tiene Claude Code en tu cuenta. Arriba elegís **toda la cuenta** o **un proyecto**; en un proyecto ves lo de la cuenta más lo propio del repo, y los cambios aplican solo ahí. Cada sesión tiene además **Herramientas de la sesión** (panel lateral o menú): lo que tiene cargado en ese momento, con el estado en vivo de cada MCP.
+
+- **MCP**: todos los servidores con su estado (conectado, requiere login, falló, desactivado), de dónde vienen (tu cuenta, el proyecto, un plugin, un conector de claude.ai) y sus herramientas. En un proyecto, el interruptor lo **activa o desactiva solo ahí** (lo guarda Claude Code, como en `/mcp`). **Iniciar sesión** corre `claude mcp login` y abre el navegador. **Agregar servidor** (comando local, HTTP o SSE) y **Quitar** usan `claude mcp`. Los conectores de claude.ai se administran en claude.ai.
+- **Plugins**: los instalados, con lo que traen (skills, agentes, hooks, MCP) y los tokens que suman a cada sesión. Se **habilitan, actualizan y desinstalan** con `claude plugin`. **Explorar** busca en tus marketplaces e instala; si el marketplace declara un comando para instalar, primero te lo muestra y lo tenés que aceptar. En un proyecto, habilitar o instalar aplica solo para vos (`.claude/settings.local.json`). Los de tu organización se pueden deshabilitar, no desinstalar.
+- **Skills**: las tuyas, las del proyecto, las de plugins y las incluidas en Claude Code, con los tokens que ocupa su listado. El estado es el del menú de skills de Claude Code: **Activa**, **Solo el nombre**, **Solo si la pedís** (`/nombre`) o **Desactivada**; se guarda en tu cuenta o solo en el proyecto. Podés ver y **editar** el SKILL.md de las tuyas y del proyecto, **crear** una nueva o **quitarla** (se mueve a la papelera del dashboard, `~/.control-plane/trash`, no se borra).
+
+Las sesiones abiertas recargan plugins y skills solas después de un cambio; un MCP nuevo lo toman al reanudarse.
+
 ## Configuración de Claude Code desde el dashboard
 
 Selector de cuenta → **Configuración de Claude Code** muestra las opciones del menú `/config` de esa cuenta: tema, modo del editor, modelo por defecto, compactación automática, checkpoints, notificaciones, mensajes entre sesiones, IDE, etc.
@@ -130,6 +158,8 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
 - **Protocolo**: al arrancar, cada sesión recibe su rol, quiénes son las otras y las reglas (coordinar con `SendMessage` antes de tocar algo compartido, no pisar el checkout, reportar al terminar). Se arma en `server/src/prompts.ts` y se puede ampliar por proyecto en su configuración.
 - **Herramientas MCP de control-plane**: `list_sessions` (todas); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora). Las propuestas aceptan `subagents` para pedir subagentes específicos.
 - **Adjuntos**: se guardan en `~/.control-plane/attachments/<sesión>/` y se sirven solo a esta máquina.
+- **Compactación**: cada sesión se lanza con hooks `PreCompact` y `PostCompact` (en `--settings`, se suman a los tuyos) que llaman al server. La salida de `PreCompact` es, para Claude Code, instrucciones extra del resumen: así viaja tu selección, y en modo "esperarme" el hook no responde hasta que elegís. El borrador se pide con `side_question` (lo mismo que `/btw`); si la sesión ya está compactando, se lee la conversación en una copia que no se guarda (`--resume --fork-session --no-session-persistence`).
+- **Herramientas**: se leen de una sesión abierta en esa carpeta (`mcp_status`, `get_context_usage`) o, si no hay, de un Claude Code sin conversación que carga la config, conecta los MCP y se cierra (no guarda nada ni corre tus hooks). Los cambios los hace Claude Code: `claude plugin`, `claude mcp`, `mcp_toggle` y `skillOverrides` en los settings.
 - **Cuentas**: cada proceso `claude` se lanza con el `CLAUDE_CONFIG_DIR` (y el comando, si tiene uno) de la cuenta del proyecto. La de siempre se lanza sin tocar el entorno. El uso del plan, los comandos y las sesiones vivas se leen por cuenta.
 - **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una.
 - **La orquestadora no edita archivos** por defecto (se lanza sin `Edit`/`Write`); lo podés habilitar por proyecto.
@@ -149,7 +179,7 @@ Variables de entorno (opcionales):
 | `CLAUDE_BIN` | `claude` | Binario de Claude Code (para las cuentas sin comando propio) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |
 
-Por proyecto (menú del tablero → Configuración): auto-envío, ventana de agrupación, si la orquestadora puede editar, modelo y esfuerzo por defecto, e instrucciones extra para los workers y para la orquestadora. Las instrucciones aplican al iniciar o reanudar cada sesión.
+Por proyecto (menú del tablero → Configuración): auto-envío, ventana de agrupación, si la orquestadora puede editar, qué hacer cuando Claude va a compactar solo, modelo y esfuerzo por defecto, e instrucciones extra para los workers y para la orquestadora. Las instrucciones aplican al iniciar o reanudar cada sesión.
 
 El estado del dashboard es local de cada máquina: el repo solo tiene el código. En la PC y en la Mac cada uno tiene su propia base en `~/.control-plane`.
 
@@ -160,6 +190,7 @@ El estado del dashboard es local de cada máquina: el repo solo tiene el código
 - **Un nombre de sesión "ya existe fuera del dashboard"**: hay una sesión viva con ese nombre en una terminal. Los mensajes entre sesiones se dirigen por nombre, así que no se permite repetirlo: elegí otro o cerrala e importala.
 - **La sesión terminó inesperadamente**: el aviso en el chat muestra el final del error de `claude`. Reanudala desde el encabezado.
 - **Puerto ocupado**: `CONTROL_PLANE_PORT=4800 npm start`.
+- **Los avisos del sistema no aparecen**: tocá la campana (abajo en la barra lateral). Ahí ves si el navegador los permite, los prendés o apagás y mandás uno de prueba. Si están bloqueados, se habilitan desde el ícono a la izquierda de la dirección → Notificaciones → Permitir. Si igual no llegan, revisá que tu navegador tenga permiso en los ajustes de notificaciones del sistema. Solo aparecen cuando no estás mirando el dashboard (si no, ves el aviso adentro).
 - **Una cuenta figura "Sin login" pero en la terminal anda**: el directorio tiene que ser exactamente el que usa tu comando. `alias claude-personal` (o `type claude-personal`) te muestra cuál es.
 
 ## Estructura
@@ -170,6 +201,8 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/claude/           proceso, normalización del stream, transcripts
   src/orchestration.ts  cola de resultados y propuestas
   src/accounts.ts       cuentas (directorios de configuración de Claude Code)
+  src/compaction.ts     compactación moldeable (borrador, selección, hooks)
+  src/tools.ts          skills, plugins y MCP
   src/claude/config-settings.ts  opciones de /config
   src/prompts.ts        protocolo de orquestadora y workers
 web/      Vite + React + Tailwind + shadcn/ui

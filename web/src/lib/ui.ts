@@ -16,6 +16,10 @@ interface UiState {
   account: string | null
   accountsDialog: boolean
   settingsForAccount: string | null
+  /** Sesión cuyo panel de compactación está abierto. */
+  compactFor: string | null
+  /** Sesión cuyo panel de herramientas (MCP, skills, plugins) está abierto. */
+  toolsFor: string | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
   selectAccount: (id: string) => void
 }
@@ -42,6 +46,8 @@ export const useUi = create<UiState>((set) => ({
   account: storedAccount(),
   accountsDialog: false,
   settingsForAccount: null,
+  compactFor: null,
+  toolsFor: null,
   set: (patch) => set(patch),
   selectAccount: (id) => {
     try {

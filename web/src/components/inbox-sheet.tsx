@@ -30,6 +30,7 @@ export function InboxSheet() {
   const drafts = useStore((s) => s.drafts)
   const reports = useStore((s) => s.reports)
   const projects = useStore((s) => s.projects)
+  const compactions = useStore((s) => s.compactions)
 
   const needs = Object.values(sessions).filter((s) => s.status === "needs_input")
   const ready = Object.values(drafts).filter((d) => d.state === "ready").sort((a, b) => a.createdAt - b.createdAt)
@@ -67,13 +68,23 @@ export function InboxSheet() {
                 <Link
                   key={s.id}
                   href={`/p/${s.projectId}/s/${s.id}`}
-                  onClick={close}
+                  onClick={() => {
+                    close()
+                    if (compactions[s.id]?.waiting) setUi({ compactFor: s.id })
+                  }}
                   className="flex items-center gap-2.5 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 hover:bg-status-attention/10"
                 >
                   <SessionLamp session={s} />
                   <span className="font-mono text-sm font-medium">{s.name}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {projects[s.projectId]?.name} · {s.pending?.kind === "permission" ? "pide una aprobación" : "tiene una pregunta"}
+                    {projects[s.projectId]?.name} ·{" "}
+                    {s.pending?.kind === "permission"
+                      ? "pide una aprobación"
+                      : s.pending
+                        ? "tiene una pregunta"
+                        : compactions[s.id]?.waiting
+                          ? "espera que elijas qué conservar al compactar"
+                          : (s.statusDetail ?? "te necesita")}
                   </span>
                 </Link>
               ))}

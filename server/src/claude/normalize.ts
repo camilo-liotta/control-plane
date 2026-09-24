@@ -46,6 +46,9 @@ export type Action =
     }
   | { type: "subagent_progress"; taskId: string; toolUseId: string | null; activity: string | null; usage: SubagentUsage | null }
   | { type: "subagent_end"; taskId: string; toolUseId: string | null; status: "completed" | "failed" | "killed"; summary: string | null; usage: SubagentUsage | null }
+  /** El resumen con el que sigue la conversación después de compactar. */
+  | { type: "compact_summary"; text: string }
+  | { type: "compact_failed"; reason: string }
 
 const TOOL_RESULT_MAX = 12_000
 const TOOL_INPUT_MAX = 24_000
@@ -127,6 +130,24 @@ function usageOf(raw: unknown): SubagentUsage | null {
 }
 
 const LOCAL_OUTPUT = /^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>$/
+
+const SUMMARY_HEAD = /^This session is being continued from a previous conversation[^\n]*\n+/
+const SUMMARY_TAIL = /\n+If you need specific details from before compaction[\s\S]*$/
+
+const COMPACT_ERRORS: Record<string, string> = {
+  too_few_groups: "había muy pocos mensajes para resumir",
+  exhausted: "la conversación no entró ni achicándola",
+  aborted: "se interrumpió",
+}
+
+export function compactError(reason: string): string {
+  return COMPACT_ERRORS[reason] ?? reason
+}
+
+/** El resumen de compactación sin el encabezado y las instrucciones que agrega Claude Code. */
+export function cleanCompactSummary(text: string): string {
+  return text.replace(SUMMARY_HEAD, "").replace(SUMMARY_TAIL, "").replace(/^Summary:\s*\n/, "").trim()
+}
 
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content
@@ -315,6 +336,11 @@ export class StreamNormalizer {
       | { kind?: string; name?: string; from?: string; body?: string }
       | undefined
 
+    if (msg.isSynthetic && parent === null) {
+      const text = textOf(content)
+      if (SUMMARY_HEAD.test(text)) return [{ type: "compact_summary", text: cleanCompactSummary(text) }]
+    }
+
     if (msg.isReplay) {
       if (origin?.kind === "peer") {
         return [
@@ -335,6 +361,8 @@ export class StreamNormalizer {
       const local = LOCAL_OUTPUT.exec(text.trim())
       if (local) {
         const body = (local[2] ?? "").trim()
+        // "Compacted …" (con la salida de los hooks): lo muestra la tarjeta de compactación.
+        if (/^Compacted\b/.test(body)) return []
         return body
           ? [{ type: "event", event: { kind: "notice", level: local[1] === "stderr" ? "warn" : "info", text: body } }]
           : []
@@ -429,14 +457,33 @@ export class StreamNormalizer {
           ? [{ type: "status", state }]
           : []
       }
-      case "status":
-        return msg.status === "compacting" ? [{ type: "activity", text: "Compactando el contexto…" }] : []
+      case "status": {
+        if (msg.status === "compacting") return [{ type: "activity", text: "Compactando el contexto…" }]
+        const result = typeof msg.compact_result === "string" ? msg.compact_result : null
+        if (!result || result === "success") return []
+        const reason = typeof msg.compact_error === "string" ? msg.compact_error : result
+        return [
+          { type: "event", event: { kind: "notice", level: "warn", text: `La compactación no se completó: ${compactError(reason)}.` } },
+          { type: "compact_failed", reason },
+        ]
+      }
       case "compact_boundary": {
-        const meta = (msg.compact_metadata ?? {}) as { trigger?: string; pre_tokens?: number }
+        const meta = (msg.compact_metadata ?? {}) as {
+          trigger?: string
+          pre_tokens?: number
+          post_tokens?: number
+          duration_ms?: number
+        }
         return [
           {
             type: "event",
-            event: { kind: "compact", trigger: String(meta.trigger ?? "auto"), preTokens: Number(meta.pre_tokens ?? 0) },
+            event: {
+              kind: "compact",
+              trigger: String(meta.trigger ?? "auto"),
+              preTokens: Number(meta.pre_tokens ?? 0),
+              ...(typeof meta.post_tokens === "number" ? { postTokens: meta.post_tokens } : {}),
+              ...(typeof meta.duration_ms === "number" ? { durationMs: meta.duration_ms } : {}),
+            },
           },
         ]
       }

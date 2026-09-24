@@ -9,6 +9,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
+import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
 const drafts = new Map<string, string>()
@@ -170,6 +171,12 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
 
   const send = async () => {
     if (!canSend) return
+    // /compact solo abre el panel para elegir qué queda; con instrucciones, va directo a Claude Code.
+    if (text.trim() === "/compact" && !pending.length) {
+      update("")
+      useUi.getState().set({ compactFor: session.id })
+      return
+    }
     setSending(true)
     try {
       await api.send(

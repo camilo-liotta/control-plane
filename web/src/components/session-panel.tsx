@@ -1,4 +1,4 @@
-import { Check, Copy, TerminalSquare } from "lucide-react"
+import { Blocks, Check, Copy, TerminalSquare } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
 import type { Attachment, Project, Report, Session } from "@shared/types"
@@ -11,6 +11,7 @@ import { ReviewGate } from "@/components/review-gate"
 import { api } from "@/lib/api"
 import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { openDrafts, projectReports, useModels, useStore } from "@/lib/store"
+import { useUi } from "@/lib/ui"
 
 function Section({ title, children, count }: { title: string; children: React.ReactNode; count?: number }) {
   return (
@@ -200,6 +201,17 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           </div>
         </Section>
       )}
+      <Section title="Herramientas">
+        <button
+          type="button"
+          onClick={() => useUi.getState().set({ toolsFor: session.id })}
+          className="flex w-full items-center gap-2 rounded-md border bg-background px-2.5 py-1.5 text-left text-xs hover:bg-muted"
+        >
+          <Blocks className="size-3.5 text-muted-foreground" />
+          <span className="flex-1">MCP, skills y plugins que tiene cargados</span>
+          <span className="text-muted-foreground">Ver</span>
+        </button>
+      </Section>
       <Section title="Detalles">
         <dl>
           {session.role && <Detail label="Rol">{session.role}</Detail>}

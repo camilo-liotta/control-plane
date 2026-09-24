@@ -2,8 +2,9 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { useLocation } from "wouter"
 
-import type { Project, ProjectSettings } from "@shared/types"
+import type { CompactMode, Project, ProjectSettings } from "@shared/types"
 
+import { COMPACT_MODES } from "@/components/context-meter"
 import { EffortSelect, ModelSelect } from "@/components/new-session-dialog"
 import {
   AlertDialog,
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldSeparator } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
@@ -133,6 +135,48 @@ export function ProjectSettingsDialog({
               onCheckedChange={(v) => set("orchestratorCanEdit", v)}
             />
           </Field>
+
+          <FieldSeparator>Compactación</FieldSeparator>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel>Cuando Claude va a compactar solo</FieldLabel>
+              <FieldDescription>
+                {COMPACT_MODES[settings.compactMode].description} En cualquier modo podés compactar cuando quieras eligiendo qué
+                queda, desde el indicador de contexto de cada sesión o con /compact.
+              </FieldDescription>
+            </FieldContent>
+            <Select value={settings.compactMode} onValueChange={(v) => set("compactMode", v as CompactMode)}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(COMPACT_MODES) as CompactMode[]).map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {COMPACT_MODES[m].label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          {settings.compactMode === "ask" && (
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="p-wait">Minutos que te espera</FieldLabel>
+                <FieldDescription>
+                  Mientras tanto la sesión queda frenada. Si no elegís a tiempo, compacta como siempre y sigue trabajando.
+                </FieldDescription>
+              </FieldContent>
+              <Input
+                id="p-wait"
+                type="number"
+                min={1}
+                max={45}
+                className="w-24 font-mono"
+                value={settings.compactWaitMin}
+                onChange={(e) => set("compactWaitMin", Number(e.target.value))}
+              />
+            </Field>
+          )}
 
           <FieldSeparator>Sesiones nuevas</FieldSeparator>
           <div className="grid gap-4 sm:grid-cols-2">

@@ -1,4 +1,10 @@
+import { fileURLToPath } from "node:url"
+
 import type { SessionRecord } from "../db.ts"
+
+const COMPACT_HOOK = fileURLToPath(new URL("./compact-hook.mjs", import.meta.url))
+/** Tiempo máximo del hook (segundos): el modo "esperarme" responde antes (compactWaitMin ≤ 45). */
+const HOOK_TIMEOUT_SEC = 3600
 
 export interface LaunchSpec {
   args: string[]
@@ -13,6 +19,8 @@ export function buildLaunch(
   session: SessionRecord,
   opts: {
     mcpUrl: string
+    /** Adonde avisa el hook de compactación (PreCompact/PostCompact). */
+    hookUrl: string
     protocol: string
     orchestratorCanEdit: boolean
     model: string | null
@@ -44,7 +52,7 @@ export function buildLaunch(
     "--mcp-config",
     JSON.stringify({ mcpServers: { "control-plane": { type: "http", url: opts.mcpUrl } } }),
     "--settings",
-    JSON.stringify({ crossSessionInbound: "accept" }),
+    JSON.stringify({ crossSessionInbound: "accept", hooks: compactHooks(opts.hookUrl) }),
   ]
   if (opts.model) args.push("--model", opts.model)
   if (opts.effort) args.push("--effort", opts.effort)
@@ -65,3 +73,15 @@ export function buildLaunch(
   delete env.CLAUDECODE
   return { args, env }
 }
+
+/** Hooks con los que el dashboard participa de la compactación (se suman a los del usuario). */
+function compactHooks(url: string) {
+  const command = `${quote(process.execPath)} ${quote(COMPACT_HOOK)} ${quote(url)}`
+  const hook = { type: "command", command, timeout: HOOK_TIMEOUT_SEC }
+  return {
+    PreCompact: [{ hooks: [hook] }],
+    PostCompact: [{ hooks: [{ ...hook, timeout: 30 }] }],
+  }
+}
+
+const quote = (s: string) => `"${s.replace(/(["\\$`])/g, "\\$1")}"`

@@ -1,6 +1,7 @@
-import { EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Users } from "lucide-react"
+import { Blocks, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Users } from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import { useLocation } from "wouter"
 
 import { ArchivedSessions } from "@/components/archived-sessions"
 import { DraftCard } from "@/components/draft-card"
@@ -34,6 +35,7 @@ function SectionTitle({ children, count, action }: { children: React.ReactNode; 
 }
 
 export function ProjectBoard({ projectId }: { projectId: string }) {
+  const [, navigate] = useLocation()
   const project = useStore((s) => s.projects[projectId])
   const sessions = useStore((s) => s.sessions)
   const allDrafts = useStore((s) => s.drafts)
@@ -130,6 +132,10 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                   Importar una sesión existente
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate(`/p/${project.id}/tools`)}>
+                  <Blocks />
+                  Herramientas del proyecto
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
                   <Settings2 />
                   Configuración del proyecto

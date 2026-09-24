@@ -338,6 +338,8 @@ export class Orchestration {
       this.broadcastProject(projectId)
       return
     }
+    // Un comando local (/compact, /context…) no es una revisión: no cierra ni reanuda nada.
+    if (info.local) return
     this.paused.delete(projectId)
     const queued = this.db.listReports({ projectId, states: ["queued"] })
     if (queued.length) {

@@ -8,6 +8,7 @@ import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import type {
+  ContextUsage,
   Meta,
   ModelOption,
   PendingRequest,
@@ -52,6 +53,12 @@ interface Runtime {
   taskToTool: Map<string, string>
   /** Llamadas Agent/Task vistas (para saber nombre, modelo y de quién dependen). */
   agentCalls: Map<string, { input: Record<string, unknown>; parent: string | null }>
+  context: ContextUsage | null
+  /** Si el turno en curso tuvo respuesta del modelo (los comandos locales, como /compact, no). */
+  turnHadAssistant: boolean
+  lastCompactEventId: number | null
+  /** La sesión espera algo tuyo que no es una pregunta de Claude (ej. elegir qué conservar al compactar). */
+  hold: string | null
 }
 
 const AGENT_TOOLS = new Set(["Agent", "Task"])
@@ -60,6 +67,8 @@ export interface TurnEndInfo {
   ok: boolean
   aborted: boolean
   result: string
+  /** Turno de un comando local (/compact, /context…): el modelo no respondió nada. */
+  local: boolean
 }
 
 export interface CreateSessionInput {
@@ -103,6 +112,7 @@ export interface SessionManagerOptions {
   hub: Hub
   attachments: AttachmentStore
   mcpUrlFor: (token: string) => string
+  hookUrlFor: (token: string) => string
   launchFor: (session: SessionRecord) => LaunchContext
   accountIdFor: (session: SessionRecord) => string
   meta: Meta
@@ -118,6 +128,9 @@ export class SessionManager extends EventEmitter<{
   meta: [Meta]
   commands: [string, SlashCommand[]]
   account_info: [string, { email?: string; organization?: string; subscription?: string }]
+  context: [string, ContextUsage]
+  compacted: [string, number]
+  compactFailed: [string, string]
 }> {
   private runtimes = new Map<string, Runtime>()
   private stoppedDetail = new Map<string, string>()
@@ -132,6 +145,7 @@ export class SessionManager extends EventEmitter<{
   private hub: Hub
   private attachments: AttachmentStore
   private mcpUrlFor: (token: string) => string
+  private hookUrlFor: (token: string) => string
   private launchFor: (session: SessionRecord) => LaunchContext
   private accountIdFor: (session: SessionRecord) => string
 
@@ -141,6 +155,7 @@ export class SessionManager extends EventEmitter<{
     this.hub = opts.hub
     this.attachments = opts.attachments
     this.mcpUrlFor = opts.mcpUrlFor
+    this.hookUrlFor = opts.hookUrlFor
     this.launchFor = opts.launchFor
     this.accountIdFor = opts.accountIdFor
     this.meta = opts.meta
@@ -178,6 +193,7 @@ export class SessionManager extends EventEmitter<{
       currentModel: rt?.currentModel ?? null,
       subagentsRunning: rt ? [...rt.subagents.values()].filter((s) => s.status === "running").length : 0,
       subagents: rt ? this.subagentBriefs(rt) : [],
+      context: rt?.context ?? rec.context,
     }
   }
 
@@ -311,6 +327,7 @@ export class SessionManager extends EventEmitter<{
       lastActivityAt: null,
       costUsd: 0,
       tokens: null,
+      context: null,
       createdAt: now(),
       archivedAt: null,
     }
@@ -335,6 +352,7 @@ export class SessionManager extends EventEmitter<{
     const built = this.launchFor(rec)
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
+      hookUrl: this.hookUrlFor(rec.mcpToken),
       protocol: built.protocol,
       orchestratorCanEdit: built.orchestratorCanEdit,
       model: built.model,
@@ -359,6 +377,10 @@ export class SessionManager extends EventEmitter<{
       subagents: new Map(),
       taskToTool: new Map(),
       agentCalls: new Map(),
+      context: rec.context,
+      turnHadAssistant: false,
+      lastCompactEventId: null,
+      hold: null,
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -376,6 +398,7 @@ export class SessionManager extends EventEmitter<{
         this.rememberCommands(rec.id, rt.accountId, parseCommands(resp.commands))
         if (this.runtimes.get(rec.id) !== rt) return
         this.setStatus(rec.id, rt, rt.pendingControl.size ? "needs_input" : "idle")
+        void this.refreshContext(rec.id, rt)
       })
       .catch((err) => {
         if (!proc.exited) void proc.close(1000)
@@ -423,6 +446,7 @@ export class SessionManager extends EventEmitter<{
   }
 
   private setStatus(id: string, rt: Runtime, status: SessionStatus, detail: string | null = null) {
+    if (detail === null && status === "needs_input" && rt.hold) detail = rt.hold
     const changed = rt.status !== status || rt.statusDetail !== detail
     rt.status = status
     rt.statusDetail = detail
@@ -434,7 +458,7 @@ export class SessionManager extends EventEmitter<{
   }
 
   private deriveStatus(rt: Runtime): SessionStatus {
-    if (rt.pendingControl.size || rt.cliState === "requires_action") return "needs_input"
+    if (rt.hold || rt.pendingControl.size || rt.cliState === "requires_action") return "needs_input"
     return rt.cliState === "running" ? "working" : "idle"
   }
 
@@ -459,9 +483,20 @@ export class SessionManager extends EventEmitter<{
           if (event.kind === "tool_use" && AGENT_TOOLS.has(event.name)) {
             rt.agentCalls.set(event.id, { input: (event.input ?? {}) as Record<string, unknown>, parent: event.parent })
           }
-          this.addEvent(id, event)
+          if ((event.kind === "text" || event.kind === "tool_use" || event.kind === "thinking") && !event.parent) rt.turnHadAssistant = true
+          const stored = this.addEvent(id, event)
+          if (event.kind === "compact") {
+            rt.lastCompactEventId = stored.id
+            this.emit("compacted", id, stored.id)
+          }
           break
         }
+        case "compact_summary":
+          if (rt.lastCompactEventId !== null) this.patchEvent(rt.lastCompactEventId, { summary: action.text } as Partial<TimelineEvent>)
+          break
+        case "compact_failed":
+          this.emit("compactFailed", id, action.reason)
+          break
         case "commands":
           this.rememberCommands(id, rt.accountId, action.commands)
           break
@@ -576,13 +611,16 @@ export class SessionManager extends EventEmitter<{
         case "turn_end": {
           if (rt.cliState !== "idle" && !rt.pendingControl.size) {
             rt.cliState = "idle"
-            this.setStatus(id, rt, "idle")
+            this.setStatus(id, rt, this.deriveStatus(rt))
           }
+          const local = !rt.turnHadAssistant
+          rt.turnHadAssistant = false
           const rec = this.db.getSession(id)
           if (rec) {
             this.broadcastSession(id)
-            this.emit("turnEnd", rec, { ok: action.ok, aborted: action.aborted, result: action.result })
+            this.emit("turnEnd", rec, { ok: action.ok, aborted: action.aborted, result: action.result, local })
           }
+          void this.refreshContext(id, rt)
           break
         }
         case "command":
@@ -733,6 +771,44 @@ export class SessionManager extends EventEmitter<{
     return stored
   }
 
+  /**
+   * Pedido de control a la sesión (side_question, mcp_status, mcp_toggle, …). Si está detenida,
+   * la reanuda: el proceso carga la conversación, pero no se manda ningún mensaje.
+   */
+  async control(id: string, subtype: string, payload: Record<string, unknown> = {}, timeoutMs = 30_000) {
+    await this.start(id)
+    const rt = this.runtimes.get(id)
+    if (!rt || rt.proc.exited) throw new Error("La sesión no está corriendo")
+    return rt.proc.request(subtype, payload, timeoutMs)
+  }
+
+  /** Marca que la sesión espera algo tuyo (aparece como "te necesita" con ese detalle), o lo limpia. */
+  setHold(id: string, reason: string | null) {
+    const rt = this.runtimes.get(id)
+    if (!rt || rt.hold === reason) return
+    rt.hold = reason
+    this.setStatus(id, rt, this.deriveStatus(rt), reason)
+  }
+
+  contextOf(id: string): ContextUsage | null {
+    return this.runtimes.get(id)?.context ?? this.db.getSession(id)?.context ?? null
+  }
+
+  /** Pide a Claude Code cuánto contexto usa la sesión (estimación local, sin llamar a la API). */
+  async refreshContext(id: string, rt = this.runtimes.get(id)) {
+    if (!rt || rt.proc.exited) return
+    try {
+      const usage = toContextUsage(await rt.proc.request("get_context_usage", { detail: "summary" }, 15_000))
+      if (!usage || this.runtimes.get(id) !== rt) return
+      rt.context = usage
+      this.db.updateSession(id, { context: usage })
+      this.broadcastSession(id)
+      this.emit("context", id, usage)
+    } catch {
+      // versiones viejas del CLI o proceso cerrándose: no es grave
+    }
+  }
+
   async interrupt(id: string) {
     const rt = this.runtimes.get(id)
     if (!rt || rt.proc.exited) return
@@ -824,6 +900,28 @@ function contentWithFiles(text: string, files: AttachmentRecord[]): Record<strin
     }
   }
   return blocks
+}
+
+function toContextUsage(raw: Record<string, unknown>): ContextUsage | null {
+  const tokens = Number(raw.totalTokens)
+  const max = Number(raw.maxTokens)
+  if (!Number.isFinite(tokens) || !Number.isFinite(max) || max <= 0) return null
+  const autoCompact = raw.isAutoCompactEnabled !== false
+  const threshold = Number(raw.autoCompactThreshold)
+  const categories = Array.isArray(raw.categories)
+    ? (raw.categories as { name?: string; tokens?: number; kind?: string; isDeferred?: boolean }[])
+        // Solo lo que ocupa contexto de verdad: sin espacio libre, herramientas diferidas ni el margen reservado para compactar.
+        .filter((c) => (c.kind ?? "used") === "used" && !c.isDeferred && !/buffer/i.test(String(c.name)) && typeof c.tokens === "number" && c.tokens > 0)
+        .map((c) => ({ name: String(c.name ?? ""), tokens: Number(c.tokens) }))
+    : []
+  return {
+    tokens,
+    max,
+    threshold: autoCompact && Number.isFinite(threshold) && threshold > 0 ? threshold : null,
+    autoCompact,
+    categories,
+    updatedAt: now(),
+  }
 }
 
 function normalizeQuestions(raw: unknown): Question[] {

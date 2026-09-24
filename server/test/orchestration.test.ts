@@ -47,9 +47,9 @@ class FakeSessions extends EventEmitter {
     return rec
   }
   /** Simula que la orquestadora terminó su turno. */
-  endTurn(rec: SessionRecord, ok = true) {
+  endTurn(rec: SessionRecord, ok = true, local = false) {
     this.statuses.set(rec.id, "idle")
-    this.emit("turnEnd", rec, { ok, aborted: !ok, result: "" })
+    this.emit("turnEnd", rec, { ok, aborted: !ok, result: "", local })
   }
 }
 
@@ -76,6 +76,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     lastActivityAt: null,
     costUsd: 0,
     tokens: null,
+    context: null,
     createdAt: Date.now(),
     archivedAt: null,
   }
@@ -194,6 +195,22 @@ describe("cola de resultados", () => {
     assert.equal(orch.reviewState(projectId).paused, true)
     await orch.reviewNow(projectId)
     assert.equal(sessions.sent.length, 2)
+  })
+
+  it("un comando local (/compact) no cierra ni reanuda una revisión en pausa", async () => {
+    orch.report(a, { status: "done", summary: "A" })
+    await sleep(400)
+    orch.proposePrompt(orq, { session: "FRONTEND", title: "T", prompt: "P" })
+    sessions.endTurn(orq, false)
+    assert.equal(orch.reviewState(projectId).paused, true)
+    // Compactar a la orquestadora termina un turno sin respuesta del modelo.
+    sessions.endTurn(orq, true, true)
+    assert.equal(db.listDrafts({ projectId, states: ["staged"] }).length, 1, "la propuesta sigue bloqueada")
+    assert.equal(db.listReports({ projectId, states: ["in_review"] }).length, 1, "el resultado sigue en revisión")
+    assert.equal(orch.reviewState(projectId).paused, true)
+    // Cuando retoma y termina de verdad, se cierra.
+    sessions.endTurn(orq)
+    assert.equal(db.listDrafts({ projectId, states: ["ready"] }).length, 1)
   })
 
   it("con auto-envío, las propuestas salen solas al cerrar la revisión", async () => {
