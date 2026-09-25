@@ -42,6 +42,8 @@ interface State {
   compactions: Record<string, CompactionState>
   /** Turno en curso de cada sesión que está trabajando: cuándo empezó y cuántos tokens van. */
   turns: Record<string, TurnProgress | undefined>
+  /** Sube cada vez que el server avisa que cambió algo de los CLIs. */
+  clisTick: number
   meta: Meta | null
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
@@ -76,6 +78,7 @@ export const useStore = create<State>((set, get) => ({
   accounts: {},
   compactions: {},
   turns: {},
+  clisTick: 0,
   meta: null,
   focused: null,
 
@@ -193,6 +196,9 @@ export const useStore = create<State>((set, get) => ({
         break
       case "turn":
         set((s) => ({ turns: { ...s.turns, [msg.sessionId]: msg.turn ?? undefined } }))
+        break
+      case "clis_changed":
+        set((s) => ({ clisTick: s.clisTick + 1 }))
         break
       case "toast":
         notify(msg)

@@ -15,6 +15,7 @@ import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
+import type { Clis } from "./clis.ts"
 import type { SkillMarket } from "./skill-market.ts"
 import type { ClaudeSettingValue, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
@@ -30,6 +31,7 @@ interface Deps {
   tools: Tools
   overview: Overview
   skillMarket: SkillMarket
+  clis: Clis
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -69,7 +71,28 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis } = deps
+
+  // ------------------------------------------------------------------ CLIs (de la máquina, para todos)
+
+  app.get<{ Querystring: { refresh?: string } }>("/api/clis", (req, reply) => guard(reply, () => clis.view(req.query.refresh === "1")))
+  app.post<{ Params: { id: string }; Body: { credential?: number } }>("/api/clis/:id/login", (req, reply) =>
+    guard(reply, () => clis.login(req.params.id, Number(req.body?.credential ?? 0)))
+  )
+  app.post<{ Params: { id: string } }>("/api/clis/:id/install", (req, reply) => guard(reply, () => clis.install(req.params.id)))
+  app.get<{ Params: { id: string } }>("/api/clis/jobs/:id", (req, reply) => guard(reply, () => clis.job(req.params.id)))
+  app.post<{ Params: { id: string }; Body: { text?: string } }>("/api/clis/jobs/:id/input", (req, reply) =>
+    guard(reply, () => {
+      clis.answer(req.params.id, String(req.body?.text ?? ""))
+      return clis.job(req.params.id)
+    })
+  )
+  app.post<{ Params: { id: string } }>("/api/clis/jobs/:id/cancel", (req, reply) =>
+    guard(reply, () => {
+      clis.cancel(req.params.id)
+      return clis.job(req.params.id)
+    })
+  )
 
   const broadcastAccount = (id: string) => {
     const a = accounts.get(id)

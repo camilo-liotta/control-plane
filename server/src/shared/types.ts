@@ -654,6 +654,8 @@ export type ServerMessage =
   | { type: "compaction"; state: CompactionState }
   /** El turno en curso de una sesión (null cuando termina): para el indicador de "trabajando". */
   | { type: "turn"; sessionId: string; turn: TurnProgress | null }
+  /** Cambió algo de los CLIs (un login o una instalación que avanzó o terminó). */
+  | { type: "clis_changed" }
   | {
       type: "toast"
       level: ToastLevel
@@ -664,3 +666,53 @@ export type ServerMessage =
       /** Qué abrir al tocar "Ver" (por defecto, la sesión). */
       open?: "compaction"
     }
+
+// ------------------------------------------------------------------ CLIs
+
+export type CliAuthState = "ok" | "expired" | "logged_out" | "unknown"
+
+export interface CliCredential {
+  index: number
+  /** Qué credencial es, si el CLI tiene más de una (ej. gcloud: tu usuario y las de aplicación). */
+  label: string | null
+  state: CliAuthState
+  account: string | null
+  detail: string | null
+}
+
+export interface CliInfo {
+  id: string
+  name: string
+  description: string
+  category: string
+  docs: string
+  installed: boolean
+  path: string | null
+  version: string | null
+  /** Cómo instalarlo en esta máquina; runnable: el dashboard lo puede correr (no pide sudo). */
+  install: { command: string; runnable: boolean } | null
+  credentials: CliCredential[]
+}
+
+export interface CliJob {
+  id: string
+  cliId: string
+  kind: "login" | "install"
+  label: string
+  command: string
+  status: "running" | "done" | "failed"
+  exitCode: number | null
+  /** Lo que imprime (sin tokens), para ver links, códigos o preguntas. */
+  output: string
+  urls: string[]
+  code: string | null
+  startedAt: number
+  endedAt: number | null
+}
+
+export interface CliView {
+  platform: string
+  at: number
+  clis: CliInfo[]
+  jobs: CliJob[]
+}

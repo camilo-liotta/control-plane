@@ -6,6 +6,7 @@ import { useLocation } from "wouter"
 import type { ToolsView } from "@shared/types"
 
 import { PageHeader } from "@/components/page-header"
+import { CliSection } from "@/components/tools/cli-section"
 import { McpSection } from "@/components/tools/mcp-section"
 import { PluginSection } from "@/components/tools/plugin-section"
 import { SkillSection } from "@/components/tools/skill-section"
@@ -107,41 +108,47 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
               ? `Lo que usa Claude Code en ${project.name} (${project.repoPath}): lo de tu cuenta más lo propio del proyecto.`
               : "Lo que tiene tu cuenta de Claude Code en todos los proyectos. Elegí un proyecto para ver y ajustar lo que aplica en él."}
           </p>
-          {error && (
-            <div className="mb-4 rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-sm">
-              <p className="font-medium">No pude leer las herramientas</p>
-              <p className="text-muted-foreground">{error}</p>
-            </div>
-          )}
-          {!view && !error && (
-            <div className="space-y-3">
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Spinner className="size-4" />
-                Consultando a Claude Code (conecta los MCP para ver su estado; tarda unos segundos)…
-              </p>
-              {Array.from({ length: 5 }, (_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          )}
-          {view && (
-            <Tabs value={tab} onValueChange={setTab}>
-              <TabsList className="mb-5">
-                <TabsTrigger value="mcp">MCP · {view.mcp.filter((s) => !s.internal).length}</TabsTrigger>
-                <TabsTrigger value="plugins">Plugins · {view.plugins.length}</TabsTrigger>
-                <TabsTrigger value="skills">Skills · {view.skills.length}</TabsTrigger>
-              </TabsList>
-              <TabsContent value="mcp">
-                <McpSection view={view} onChanged={() => void refresh()} />
-              </TabsContent>
-              <TabsContent value="plugins">
-                <PluginSection view={view} onChanged={() => void refresh()} />
-              </TabsContent>
-              <TabsContent value="skills">
-                <SkillSection view={view} onChanged={() => void refresh()} />
-              </TabsContent>
-            </Tabs>
-          )}
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList className="mb-5">
+              <TabsTrigger value="mcp">MCP{view ? ` · ${view.mcp.filter((s) => !s.internal).length}` : ""}</TabsTrigger>
+              <TabsTrigger value="plugins">Plugins{view ? ` · ${view.plugins.length}` : ""}</TabsTrigger>
+              <TabsTrigger value="skills">Skills{view ? ` · ${view.skills.length}` : ""}</TabsTrigger>
+              <TabsTrigger value="clis">CLIs</TabsTrigger>
+            </TabsList>
+            {tab !== "clis" && error && (
+              <div className="mb-4 rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-sm">
+                <p className="font-medium">No pude leer las herramientas</p>
+                <p className="text-muted-foreground">{error}</p>
+              </div>
+            )}
+            {tab !== "clis" && !view && !error && (
+              <div className="space-y-3">
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Spinner className="size-4" />
+                  Consultando a Claude Code (conecta los MCP para ver su estado; tarda unos segundos)…
+                </p>
+                {Array.from({ length: 5 }, (_, i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </div>
+            )}
+            {view && (
+              <>
+                <TabsContent value="mcp">
+                  <McpSection view={view} onChanged={() => void refresh()} />
+                </TabsContent>
+                <TabsContent value="plugins">
+                  <PluginSection view={view} onChanged={() => void refresh()} />
+                </TabsContent>
+                <TabsContent value="skills">
+                  <SkillSection view={view} onChanged={() => void refresh()} />
+                </TabsContent>
+              </>
+            )}
+            <TabsContent value="clis">
+              <CliSection />
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
     </div>

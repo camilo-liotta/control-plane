@@ -29,6 +29,7 @@ ${peerList}
 - Trabajá de forma autónoma: decidí vos lo razonable y no reportes cada paso.
 - Otras sesiones editan el mismo repo al mismo tiempo. Antes de tocar algo compartido (schemas, contratos, configuración, archivos fuera de tu tarea) avisale a la sesión afectada con SendMessage. Con list_sessions (control-plane) o ListAgents ves quién está haciendo qué. Si otra sesión te avisa algo, tenelo en cuenta antes de seguir.
 ${self.worktree ? "" : "- Cuidá el checkout compartido: no cambies de rama (git checkout/switch), no uses git stash, git reset --hard, git clean ni reescribas historia. Si commiteás, agregá solo tus archivos (git add <rutas>), nunca git add -A ni git add .\n"}- No le escribas a la orquestadora para contarle avances: ella recibe tu resultado final.
+- Si un CLI te falla por falta de login o credenciales vencidas (gh, gcloud, aws…), no intentes loguearte: el login lo hace el usuario desde el dashboard (Herramientas → CLIs). Con list_clis ves cuáles están y su estado. Avisá qué necesitás y seguí con lo que no dependa de eso.
 - Podés usar subagentes (herramienta Agent) para repartir partes de tu tarea o investigar en paralelo. Si el prompt trae una sección "Subagentes que tenés que lanzar", lanzalos tal cual se indica y después integrá lo que devuelvan antes de reportar.
 
 ## Al terminar

@@ -155,6 +155,17 @@ Cada cuenta es un directorio de configuración de Claude Code, el que se elige c
 
 Las sesiones abiertas recargan plugins y skills solas después de un cambio; un MCP nuevo lo toman al reanudarse.
 
+### CLIs
+
+La pestaña **CLIs** es un marketplace de las herramientas de línea de comandos de la máquina (gh, gcloud, aws, az, wrangler, vercel, netlify, fly, railway, neonctl, supabase, psql, dbt, docker, kubectl, terraform y más). Son de tu usuario del sistema, así que las ven todas las cuentas y todos los proyectos.
+
+- **Instalados**: cada uno con su versión y su login (**Logueado**, **Vencido** o **Sin login**) y con qué cuenta. gcloud muestra aparte tu usuario y las credenciales de aplicación (ADC), que son las que usan las librerías.
+- **Iniciar sesión** o **Reautenticar** corre el login del propio CLI (por ejemplo `gcloud auth login`). Se abre el navegador y el login lo hacés vos. En la tarjeta ves lo que imprime: el link, el código de un login por dispositivo o una pregunta para contestarle. Al terminar vuelve a revisar el estado.
+- **Para instalar**: el comando para tu sistema (brew en macOS; npm, snap, apt o el instalador oficial en Linux). **Instalar** lo corre si no pide sudo; si lo pide, **Copiar** te lo da para una terminal.
+- Las sesiones consultan lo mismo con la herramienta MCP `list_clis`. Si un CLI les falla por el login, no intentan loguearse: te avisan para que lo hagas desde acá.
+
+El dashboard solo corre comandos del catálogo, nunca guarda credenciales y saca los tokens de lo que muestra.
+
 ## Configuración de Claude Code desde el dashboard
 
 Selector de cuenta → **Configuración de Claude Code** muestra las opciones del menú `/config` de esa cuenta: tema, modo del editor, modelo por defecto, compactación automática, checkpoints, notificaciones, mensajes entre sesiones, IDE, etc.
@@ -238,6 +249,7 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/tools.ts          skills, plugins y MCP
   src/skill-market.ts   marketplaces de skills y skills con IA
   src/overview.ts       resumen del proyecto (git, tokens, última actividad)
+  src/clis.ts           catálogo de CLIs, sus logins e instalaciones
   src/claude/config-settings.ts  opciones de /config
   src/prompts.ts        protocolo de orquestadora y workers
 web/      Vite + React + Tailwind + shadcn/ui

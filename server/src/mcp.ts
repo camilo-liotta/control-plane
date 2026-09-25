@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
 import { version } from "./config.ts"
+import type { Clis } from "./clis.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
@@ -66,7 +67,7 @@ function wrap<A>(fn: (args: A) => string | Promise<string>) {
 /** Herramientas de control-plane que ve cada sesión según su rol. */
 function buildServer(
   self: SessionRecord,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis }
 ): McpServer {
   const { db, sessions, orchestration } = deps
   const server = new McpServer({ name: "control-plane", version })
@@ -98,6 +99,20 @@ function buildServer(
         .join("\n")
     })
   )
+
+  if (deps.clis) {
+    const clis = deps.clis
+    server.registerTool(
+      "list_clis",
+      {
+        title: "CLIs de la máquina",
+        description:
+          "Qué CLIs del catálogo están instalados (gh, gcloud, aws, wrangler, vercel, psql…), su versión y si están logueados o con la sesión vencida. Consultalo antes de depender de uno, o si uno te falla por credenciales.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => clis.summary())
+    )
+  }
 
   if (self.kind === "worker") {
     server.registerTool(
@@ -236,7 +251,7 @@ function toWebRequest(req: FastifyRequest): Request {
 
 export function registerMcp(
   app: FastifyInstance,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis }
 ) {
   const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
     const self = deps.db.getSessionByToken(req.params.token)
