@@ -1,5 +1,5 @@
-import { useEffect } from "react"
-import { Redirect, Route, Switch } from "wouter"
+import { useEffect, useRef } from "react"
+import { Redirect, Route, Switch, useLocation } from "wouter"
 
 import { AccountsDialog } from "@/components/accounts"
 import { AppSidebar, useInboxCount } from "@/components/app-sidebar"
@@ -16,7 +16,7 @@ import { SubagentSheet } from "@/components/subagent-sheet"
 import { SessionToolsSheet } from "@/components/tools/session-tools-sheet"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
-import { useStore } from "@/lib/store"
+import { useCurrentAccount, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { connect } from "@/lib/ws"
 import { Home } from "@/pages/home"
@@ -62,6 +62,28 @@ function Dialogs() {
   )
 }
 
+/**
+ * Al cambiar de cuenta, si estabas en un proyecto (su chat, tablero o herramientas) de otra cuenta,
+ * volvés al inicio de la nueva: la cuenta funciona como una organización.
+ */
+function LeaveOtherAccount() {
+  const [location, navigate] = useLocation()
+  const account = useCurrentAccount()
+  const projects = useStore((s) => s.projects)
+  const previous = useRef(account?.id)
+  useEffect(() => {
+    if (previous.current === account?.id) return
+    previous.current = account?.id
+    const id = /^\/p\/([^/]+)/.exec(location)?.[1]
+    const project = id ? projects[id] : undefined
+    if (!account || !project) return
+    const mine = project.accountId ? project.accountId === account.id : account.isDefault
+    if (!mine) navigate("/")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.id])
+  return null
+}
+
 function ConnectionBanner() {
   const connected = useStore((s) => s.connected)
   const loaded = useStore((s) => s.loaded)
@@ -86,6 +108,7 @@ export default function App() {
   return (
     <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
+      <LeaveOtherAccount />
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <ConnectionBanner />
         {!loaded ? (
