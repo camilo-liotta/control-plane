@@ -177,18 +177,25 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
       useUi.getState().set({ compactFor: session.id })
       return
     }
+    const message = text.trim()
+    const attached = pending
+    // La caja se limpia al mandar, no cuando vuelve la respuesta: si la sesión tarda en reanudarse,
+    // el mensaje no queda ahí como si no hubiera salido.
+    update("")
+    setPending([])
     setSending(true)
     try {
       await api.send(
         session.id,
-        text.trim(),
+        message,
         ready.map((p) => p.id!)
       )
-      update("")
-      for (const p of pending) if (p.preview) URL.revokeObjectURL(p.preview)
-      setPending([])
+      for (const p of attached) if (p.preview) URL.revokeObjectURL(p.preview)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
+      // No salió: vuelve a la caja, salvo que ya hayas empezado a escribir otro.
+      if (!drafts.get(session.id)) update(message)
+      setPending((current) => (current.length ? current : attached))
     } finally {
       setSending(false)
       ref.current?.focus()
