@@ -1,0 +1,11 @@
+<!-- Ícono de la app: el mismo dibujo de web/public/favicon.svg, claro sobre un fondo oscuro. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#1f2430"/>
+  <g transform="translate(160 160) scale(44)" color="#e8eaf0">
+    <path d="M8 5.2 3.2 11.4M8 5.2v6.2M8 5.2l4.8 6.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".55"/>
+    <circle cx="8" cy="3.6" r="2.1" fill="currentColor"/>
+    <circle cx="3" cy="12.6" r="1.6" stroke="currentColor" stroke-width="1.2"/>
+    <circle cx="8" cy="12.6" r="1.6" stroke="currentColor" stroke-width="1.2"/>
+    <circle cx="13" cy="12.6" r="1.6" stroke="currentColor" stroke-width="1.2"/>
+  </g>
+</svg>

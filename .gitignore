@@ -7,3 +7,7 @@ dist/
 *.log
 .vscode/
 .idea/
+
+# App de escritorio (Tauri)
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

@@ -1,0 +1,15 @@
+{
+  "name": "@control-plane/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "build": "tauri build",
+    "test": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5"
+  }
+}

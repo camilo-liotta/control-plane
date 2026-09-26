@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "control-plane",
+  "version": "0.1.0",
+  "identifier": "app.control-plane.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb", "dmg"],
+    "category": "DeveloperTool",
+    "shortDescription": "Dashboard local para orquestar sesiones de Claude Code",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+  }
+}
