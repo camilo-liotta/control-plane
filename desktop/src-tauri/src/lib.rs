@@ -4,6 +4,7 @@
 mod app_menu;
 pub mod bundle_copy;
 pub mod desktop_ws;
+mod drop;
 pub mod health;
 pub mod launch_env;
 pub mod launcher;
@@ -198,6 +199,8 @@ pub fn run() {
                 WindowEvent::Focused(true) if win.label() == window::MAIN => {
                     notify::dismiss_all(win.app_handle());
                 }
+                // Archivos soltados en la ventana: adjuntos para el chat abierto.
+                WindowEvent::DragDrop(e) if win.label() == window::MAIN => drop::on_event(win, e),
                 _ => {}
             }
         })

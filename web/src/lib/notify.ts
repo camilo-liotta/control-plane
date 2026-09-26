@@ -5,6 +5,7 @@ import { navigate } from "wouter/use-browser-location"
 import { noticeHref, noticeOpen } from "@shared/notice"
 import type { NoticeOpen, ServerMessage } from "@shared/types"
 
+import { draggingFromDesktop, dropFromDesktop } from "./desktop-drop"
 import { playNotice } from "./sounds"
 import { useStore } from "./store"
 import { useUi } from "./ui"
@@ -22,6 +23,9 @@ declare global {
     __cpDesktop?: {
       open: (target: DesktopTarget) => boolean
       inbox: () => void
+      /** Archivos soltados en la ventana, ya leídos por la app (nunca las rutas). */
+      dropFiles: (files: unknown, errors: unknown) => boolean
+      dragging: (on: unknown) => void
     }
   }
 }
@@ -177,5 +181,7 @@ export function installDesktopApi() {
   window.__cpDesktop = {
     open: openFromDesktop,
     inbox: () => useUi.getState().set({ inbox: true }),
+    dropFiles: dropFromDesktop,
+    dragging: draggingFromDesktop,
   }
 }

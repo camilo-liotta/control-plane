@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
+import { freshFiles, registerDropTarget } from "@/lib/desktop-drop"
 import { clipboardImages, formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
 import { inDesktop } from "@/lib/notify"
 import { useUi } from "@/lib/ui"
@@ -121,6 +122,11 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     ref.current?.focus()
   }
 
+  // Los archivos que la app de escritorio lee cuando se sueltan en la ventana.
+  const addRef = useRef(addFiles)
+  addRef.current = addFiles
+  useEffect(() => registerDropTarget({ add: (files) => addRef.current(files), dragging: setDragging }), [])
+
   const remove = (key: string) =>
     setPending((p) => {
       const item = p.find((x) => x.key === key)
@@ -143,7 +149,8 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     const over = (e: DragEvent) => {
       if (hasFiles(e)) e.preventDefault()
     }
-    const leave = () => {
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return
       depth = Math.max(0, depth - 1)
       if (!depth) setDragging(false)
     }
@@ -152,7 +159,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
       e.preventDefault()
       depth = 0
       setDragging(false)
-      addFiles(Array.from(e.dataTransfer?.files ?? []))
+      addFiles(freshFiles(Array.from(e.dataTransfer?.files ?? []), "page"))
     }
     el.addEventListener("dragenter", enter)
     el.addEventListener("dragover", over)
