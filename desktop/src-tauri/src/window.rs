@@ -36,15 +36,17 @@ impl fmt::Display for PortError {
     }
 }
 
-/// De dónde sale el puerto: `CONTROL_PLANE_PORT`, si no los ajustes, si no el de siempre.
+/// De dónde sale el puerto: `CONTROL_PLANE_PORT` del entorno de la app, si no el de la shell de
+/// login (el de tu `.zshrc`), si no los ajustes, si no el de siempre.
 /// En desarrollo el de siempre es 4710 y el 4700 se rechaza salvo que se permita a propósito.
 pub fn resolve_port(
     env_port: Option<&str>,
+    login_port: Option<&str>,
     settings_port: Option<u16>,
     debug: bool,
     allow_4700: bool,
 ) -> Result<u16, PortError> {
-    let port = match env_port.map(str::trim).filter(|v| !v.is_empty()) {
+    let port = match given(env_port).or(given(login_port)) {
         Some(v) => match v.parse::<u16>() {
             Ok(p) if p != 0 => p,
             _ => return Err(PortError::Invalid(v.to_string())),
@@ -61,12 +63,20 @@ pub fn resolve_port(
     Ok(port)
 }
 
-/// Lee el puerto del entorno y de los ajustes, según el tipo de build.
-pub fn port_from_env(settings_port: Option<u16>) -> Result<u16, PortError> {
+fn given(v: Option<&str>) -> Option<&str> {
+    v.map(str::trim).filter(|v| !v.is_empty())
+}
+
+/// Lee el puerto del entorno, de la shell de login y de los ajustes, según el tipo de build.
+pub fn port_from_env(
+    login_port: Option<&str>,
+    settings_port: Option<u16>,
+) -> Result<u16, PortError> {
     let env_port = std::env::var("CONTROL_PLANE_PORT").ok();
     let allow = std::env::var("CONTROL_PLANE_ALLOW_4700").is_ok_and(|v| v == "1");
     resolve_port(
         env_port.as_deref(),
+        login_port,
         settings_port,
         cfg!(debug_assertions),
         allow,
@@ -226,13 +236,37 @@ mod tests {
     #[test]
     fn port_sources_in_order() {
         assert_eq!(
-            resolve_port(Some("4800"), Some(4900), false, false),
+            resolve_port(Some("4800"), None, Some(4900), false, false),
             Ok(4800)
         );
-        assert_eq!(resolve_port(None, Some(4900), false, false), Ok(4900));
-        assert_eq!(resolve_port(None, None, false, false), Ok(4700));
-        assert_eq!(resolve_port(None, None, true, false), Ok(4710));
-        assert_eq!(resolve_port(Some("  "), None, true, false), Ok(4710));
+        assert_eq!(resolve_port(None, None, Some(4900), false, false), Ok(4900));
+        assert_eq!(resolve_port(None, None, None, false, false), Ok(4700));
+        assert_eq!(resolve_port(None, None, None, true, false), Ok(4710));
+        assert_eq!(resolve_port(Some("  "), None, None, true, false), Ok(4710));
+    }
+
+    #[test]
+    fn login_port_comes_after_the_app_env() {
+        assert_eq!(
+            resolve_port(None, Some("4712"), Some(4900), false, false),
+            Ok(4712)
+        );
+        assert_eq!(
+            resolve_port(Some("4711"), Some("4712"), None, false, false),
+            Ok(4711)
+        );
+        assert_eq!(
+            resolve_port(Some(" "), Some("4712"), None, true, false),
+            Ok(4712)
+        );
+        assert!(matches!(
+            resolve_port(None, Some("x"), None, false, false),
+            Err(PortError::Invalid(_))
+        ));
+        assert_eq!(
+            resolve_port(None, Some("4700"), None, true, false),
+            Err(PortError::Reserved(4700))
+        );
     }
 
     #[test]
@@ -240,7 +274,7 @@ mod tests {
         for v in ["abc", "0", "70000", "-1", "4710x"] {
             assert!(
                 matches!(
-                    resolve_port(Some(v), None, false, false),
+                    resolve_port(Some(v), None, None, false, false),
                     Err(PortError::Invalid(_))
                 ),
                 "{v}"
@@ -251,15 +285,18 @@ mod tests {
     #[test]
     fn debug_refuses_4700_unless_allowed() {
         assert_eq!(
-            resolve_port(Some("4700"), None, true, false),
+            resolve_port(Some("4700"), None, None, true, false),
             Err(PortError::Reserved(4700))
         );
         assert_eq!(
-            resolve_port(None, Some(4700), true, false),
+            resolve_port(None, None, Some(4700), true, false),
             Err(PortError::Reserved(4700))
         );
-        assert_eq!(resolve_port(Some("4700"), None, true, true), Ok(4700));
-        assert_eq!(resolve_port(Some("4700"), None, false, false), Ok(4700));
+        assert_eq!(resolve_port(Some("4700"), None, None, true, true), Ok(4700));
+        assert_eq!(
+            resolve_port(Some("4700"), None, None, false, false),
+            Ok(4700)
+        );
     }
 
     #[test]
