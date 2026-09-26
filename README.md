@@ -92,7 +92,7 @@ Si el server se cae:
 
 ### Salir
 
-Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> o `control-plane --quit` desde una terminal:
+Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde una terminal en Linux: `control-plane-desktop --quit` si la instalaste con el `.deb`, o el propio `.AppImage` con `--quit`:
 
 - Si el server no lo lanzó la app, sale sin tocarlo.
 - Si lo lanzó ella, hace lo que diga **Al salir ▸** en la bandeja:

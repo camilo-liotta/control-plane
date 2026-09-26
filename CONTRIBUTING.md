@@ -73,7 +73,7 @@ node -e 'import("./server/test/fake-claude.ts").then((m) => console.log(m.writeF
 CLAUDE_BIN=$FAKE/claude.mjs CONTROL_PLANE_PORT=4710 CONTROL_PLANE_HOME=$(mktemp -d) CLAUDE_CONFIG_DIR=$(mktemp -d) npm run dev -w desktop
 ```
 
-Probar sin mouse, con una segunda apertura del mismo binario:
+Probar sin mouse, con una segunda apertura del mismo binario (en desarrollo, `desktop/src-tauri/target/debug/control-plane-desktop`):
 
 - `--quit`: sale como con **Salir** (pasa por **Al salir**). Anda también en release.
 - `--action <id> [--port N]`: aprieta un botón de la pantalla que se ve. Solo en desarrollo. Los ids: `retry`, `launch`, `pick-node`, `get-node`, `open-anyway`, `cancel`, `set-port` (con `--port`), `use-that`, `wait`, `log` y `stop`.
