@@ -5,9 +5,30 @@ import { navigate } from "wouter/use-browser-location"
 import type { ServerMessage } from "@shared/types"
 
 import { playNotice } from "./sounds"
+import { useStore } from "./store"
 import { useUi } from "./ui"
 
 type ToastMessage = Extract<ServerMessage, { type: "toast" }>
+
+/** A dónde lleva la app de escritorio: un href o los campos del toast tal cual. */
+export type DesktopTarget = string | { projectId?: string; sessionId?: string; open?: "compaction" }
+
+declare global {
+  interface Window {
+    /** Lo define la app de escritorio antes de cargar la página. */
+    __CONTROL_PLANE_DESKTOP__?: { version: string }
+    /** Lo que llama la app de escritorio (desde Rust, con eval) para mover la ventana. */
+    __cpDesktop?: {
+      open: (target: DesktopTarget) => boolean
+      inbox: () => void
+    }
+  }
+}
+
+/** Si la web corre dentro de la app de escritorio. */
+export function inDesktop() {
+  return typeof window !== "undefined" && typeof window.__CONTROL_PLANE_DESKTOP__ === "object" && window.__CONTROL_PLANE_DESKTOP__ !== null
+}
 
 export type NotifyPermission = NotificationPermission | "unsupported"
 
@@ -79,14 +100,18 @@ function hrefFor(msg: { projectId?: string; sessionId?: string }) {
   return null
 }
 
-function open(msg: ToastMessage) {
+function open(msg: Pick<ToastMessage, "projectId" | "sessionId" | "open">) {
   const href = hrefFor(msg)
   if (href) navigate(href)
   if (msg.open === "compaction" && msg.sessionId) useUi.getState().set({ compactFor: msg.sessionId })
 }
 
-/** Muestra una notificación del sistema operativo. Devuelve false si el navegador no la dejó salir. */
+/**
+ * Muestra una notificación del sistema operativo. Devuelve false si el navegador no la dejó salir.
+ * Con la app de escritorio (adentro o conectada al server) no hace nada: los avisos los manda ella.
+ */
 export function systemNotification(title: string, body: string | undefined, onClick?: () => void, tag?: string): boolean {
+  if (inDesktop() || useStore.getState().desktopConnected) return false
   if (!notificationsSupported() || Notification.permission !== "granted") return false
   try {
     const n = new Notification(title, { body, tag, icon: "/favicon.svg" })
@@ -121,4 +146,36 @@ export function notify(msg: ToastMessage) {
   // Si no estás mirando el dashboard (otra pestaña, otra ventana, otra app), avisa el sistema.
   const away = document.hidden || !document.hasFocus()
   if (away && osNotificationsEnabled()) systemNotification(msg.title, msg.body, () => open(msg), msg.sessionId ?? msg.projectId)
+}
+
+const str = (v: unknown) => (typeof v === "string" && v ? v : undefined)
+
+/** Para la app de escritorio: lleva la ventana a un href o a lo que abre el "Ver" de un toast. Ignora lo inválido. */
+function openFromDesktop(target: unknown): boolean {
+  try {
+    if (typeof target === "string") {
+      // Solo rutas de la propia web.
+      if (!target.startsWith("/") || target.startsWith("//")) return false
+      navigate(target)
+      return true
+    }
+    if (!target || typeof target !== "object") return false
+    const t = target as Record<string, unknown>
+    const sessionId = str(t.sessionId)
+    const projectId = str(t.projectId) ?? (sessionId ? useStore.getState().sessions[sessionId]?.projectId : undefined)
+    if (!projectId && !sessionId) return false
+    open({ projectId, sessionId, open: t.open === "compaction" ? "compaction" : undefined })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Registra window.__cpDesktop, solo dentro de la app de escritorio. */
+export function installDesktopApi() {
+  if (!inDesktop()) return
+  window.__cpDesktop = {
+    open: openFromDesktop,
+    inbox: () => useUi.getState().set({ inbox: true }),
+  }
 }

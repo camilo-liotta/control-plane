@@ -7,7 +7,8 @@ import path from "node:path"
  * - como Claude Code, sigue desde el último cost-state del transcript al reanudar y guarda uno al salir;
  * - con FAKE_FULL=1 la conversación "no entra": los mensajes terminan en blocking_limit hasta un /compact;
  * - /clear sigue con una conversación nueva que arranca sus totales de cero (como el de verdad);
- * - con FAKE_NO_COMPACT=1, /compact contesta "No messages to compact" sin compactar.
+ * - con FAKE_NO_COMPACT=1, /compact contesta "No messages to compact" sin compactar;
+ * - `--version` contesta una versión y los otros subcomandos (auth status, agents) salen sin nada.
  */
 const SCRIPT = String.raw`#!/usr/bin/env node
 import fs from "node:fs"
@@ -16,6 +17,9 @@ import readline from "node:readline"
 
 const args = process.argv.slice(2)
 const flag = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : null }
+// Lo que el server corre aparte (versión, auth status, agents): contesta y sale.
+if (args[0] === "--version") { console.log("0.0.0-fake (Claude Code)"); process.exit(0) }
+if (!args.includes("-p")) process.exit(0)
 let sid = flag("--resume") ?? flag("--session-id")
 const dir = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"))
 const file = path.join(dir, sid + ".jsonl")

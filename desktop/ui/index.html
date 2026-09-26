@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>control-plane</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f7f9;
+        --fg: #1f2430;
+        --muted: #6b7080;
+        --card: #ffffff;
+        --border: #e2e4ea;
+        --accent: #1f2430;
+        --accent-fg: #f7f7f9;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #15171d;
+          --fg: #e8eaf0;
+          --muted: #9aa0ae;
+          --card: #1d2028;
+          --border: #2c303b;
+          --accent: #e8eaf0;
+          --accent-fg: #15171d;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+      }
+      main {
+        width: min(460px, calc(100vw - 48px));
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--card);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 17px;
+        font-weight: 600;
+      }
+      p {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+      code {
+        font: 13px ui-monospace, "SF Mono", "Ubuntu Mono", monospace;
+      }
+      pre {
+        margin: 0 0 16px;
+        padding: 10px 12px;
+        max-height: 180px;
+        overflow: auto;
+        border-radius: 8px;
+        background: var(--bg);
+        font: 12px/1.45 ui-monospace, "SF Mono", "Ubuntu Mono", monospace;
+        white-space: pre-wrap;
+      }
+      button {
+        padding: 7px 14px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-fg);
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .status {
+        margin: 12px 0 0;
+        font-size: 13px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .tone {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 8px;
+        border-radius: 50%;
+        vertical-align: middle;
+        background: var(--muted);
+      }
+      [data-tone="warn"] .tone {
+        background: #d08a1c;
+      }
+      [data-tone="error"] .tone {
+        background: #d0473b;
+      }
+      [data-tone="loading"] .tone {
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      button.secondary {
+        background: transparent;
+        color: var(--fg);
+        box-shadow: inset 0 0 0 1px var(--border);
+      }
+      input {
+        width: 90px;
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        color: var(--fg);
+        font: inherit;
+      }
+      .notice {
+        margin: 16px 0 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: color-mix(in srgb, #d08a1c 14%, transparent);
+        color: var(--fg);
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1><span class="tone"></span><span id="title">Abriendo control-plane…</span></h1>
+      <p id="message"></p>
+      <pre id="detail" hidden></pre>
+      <pre id="log" hidden></pre>
+      <div id="actions" class="actions"></div>
+      <p id="notice" class="notice" hidden></p>
+    </main>
+    <script src="error.js"></script>
+  </body>
+</html>

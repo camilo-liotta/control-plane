@@ -1,0 +1,80 @@
+{
+  "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "control-plane",
+  "version": "0.1.0",
+  "identifier": "app.control-plane.desktop",
+  "build": {
+    "frontendDist": "../ui",
+    "beforeDevCommand": {
+      "script": "npm run stage",
+      "wait": true
+    },
+    "beforeBuildCommand": "npm run stage"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self'",
+        "connect-src": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "appimage",
+      "deb",
+      "dmg"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Dashboard local para orquestar sesiones de Claude Code",
+    "icon": [
+      "icons/16x16.png",
+      "icons/32x32.png",
+      "icons/48x48.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../server-bundle/": "app/"
+    },
+    "longDescription": "Una ventana propia para el dashboard local de control-plane: bandeja con lo que te necesita, avisos del sistema e inicio junto con la sesión.",
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "priority": "optional",
+        "desktopTemplate": "control-plane.desktop"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
+    }
+  }
+}

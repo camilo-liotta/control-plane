@@ -6,6 +6,9 @@ import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { installDesktopApi } from "@/lib/notify"
+
+installDesktopApi()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

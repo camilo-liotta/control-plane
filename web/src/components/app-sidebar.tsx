@@ -32,7 +32,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { UsageMeter } from "@/components/usage-meter"
-import { requestNotifications, setOsNotificationsEnabled, systemNotification, useNotifications } from "@/lib/notify"
+import { inDesktop, requestNotifications, setOsNotificationsEnabled, systemNotification, useNotifications } from "@/lib/notify"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
@@ -152,18 +152,58 @@ function ThemeToggle() {
   )
 }
 
+/** Dentro de la app de escritorio: los avisos del sistema son de ella. */
+function DesktopNotificationsMenu() {
+  const label = "Avisos del sistema: los manda la app de escritorio"
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              aria-label={label}
+            >
+              <Bell className="size-4" />
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="top" align="start" className="w-80 gap-3 p-3.5">
+        <div>
+          <p className="text-sm font-medium">Avisos del sistema</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+            Los manda la app de escritorio cuando una sesión te necesita, hay propuestas listas o algo va a compactarse.
+            Los prendés o apagás desde el menú del ícono de la bandeja, en Avisos.
+          </p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function NotificationsMenu() {
+  if (inDesktop()) return <DesktopNotificationsMenu />
+  return <BrowserNotificationsMenu />
+}
+
+function BrowserNotificationsMenu() {
   const { permission, enabled } = useNotifications()
+  const desktop = useStore((s) => s.desktopConnected)
   if (permission === "unsupported") return null
   const on = permission === "granted" && enabled
   const Icon = on ? BellRing : permission === "denied" || !enabled ? BellOff : Bell
-  const label = on
-    ? "Avisos del sistema: activados"
-    : permission === "denied"
-      ? "Avisos del sistema: bloqueados por el navegador"
-      : permission === "default"
-        ? "Avisos del sistema: sin activar"
-        : "Avisos del sistema: apagados"
+  const label = desktop
+    ? "Avisos del sistema: los manda la app de escritorio"
+    : on
+      ? "Avisos del sistema: activados"
+      : permission === "denied"
+        ? "Avisos del sistema: bloqueados por el navegador"
+        : permission === "default"
+          ? "Avisos del sistema: sin activar"
+          : "Avisos del sistema: apagados"
 
   const allow = async () => {
     const result = await requestNotifications()
@@ -209,15 +249,23 @@ function NotificationsMenu() {
             estás mirando el dashboard.
           </p>
         </div>
+        {desktop && (
+          <p className="rounded-md border bg-muted/40 p-2.5 text-xs leading-snug">
+            La app de escritorio está conectada: los avisos del sistema los manda ella. Cuando la cierres, vuelven a salir
+            desde acá.
+          </p>
+        )}
         {permission === "granted" && (
           <>
             <label className="flex items-center justify-between gap-3 text-sm">
               <span>{enabled ? "Activados" : "Apagados"}</span>
               <Switch checked={enabled} onCheckedChange={setOsNotificationsEnabled} aria-label="Avisos del sistema" />
             </label>
-            <Button size="sm" variant="outline" onClick={test} disabled={!enabled}>
-              Probar un aviso
-            </Button>
+            {!desktop && (
+              <Button size="sm" variant="outline" onClick={test} disabled={!enabled}>
+                Probar un aviso
+              </Button>
+            )}
           </>
         )}
         {permission === "default" && (
