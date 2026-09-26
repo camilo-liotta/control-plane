@@ -10,10 +10,10 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuBuilder, MenuEvent, MenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, Runtime};
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::desktop_ws::Snapshot;
 use crate::settings::OnExit;
+use crate::startup;
 use crate::window;
 use crate::AppState;
 
@@ -194,7 +194,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         settings.notifications,
         None::<&str>,
     )?;
-    let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
+    let autostart_on = startup::autostart_enabled(app);
     let autostart = CheckMenuItem::with_id(
         app,
         AUTOSTART,
@@ -350,9 +350,7 @@ impl<R: Runtime> Tray<R> {
         for (mode, item) in &self.on_exit {
             let _ = item.set_checked(*mode == settings.on_exit);
         }
-        let _ = self
-            .autostart
-            .set_checked(app.autolaunch().is_enabled().unwrap_or(false));
+        let _ = self.autostart.set_checked(startup::autostart_enabled(app));
     }
 }
 
@@ -377,12 +375,7 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
                 .update_settings(|s| s.on_exit = mode);
         }
         Action::ToggleAutostart => {
-            let auto = app.autolaunch();
-            let res = if auto.is_enabled().unwrap_or(false) {
-                auto.disable()
-            } else {
-                auto.enable()
-            };
+            let res = startup::set_autostart(app, !startup::autostart_enabled(app));
             if let Err(e) = res {
                 eprintln!("No pude cambiar el inicio automático: {e}");
             }
