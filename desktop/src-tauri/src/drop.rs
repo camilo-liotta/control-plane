@@ -140,9 +140,20 @@ pub struct DropError {
 /// El JS que le pasa a la página archivos y errores. Todo va serializado con `serde_json`: ningún
 /// nombre de archivo puede cerrar el string e inyectar código.
 pub fn drop_script(files: &[Dropped], errors: &[DropError]) -> String {
-    let files = serde_json::to_string(files).expect("se serializa siempre");
-    let errors = serde_json::to_string(errors).expect("se serializa siempre");
-    format!("window.__cpDesktop?.dropFiles({files}, {errors})")
+    format!(
+        "window.__cpDesktop?.dropFiles({}, {})",
+        js_json(files),
+        js_json(errors)
+    )
+}
+
+/// JSON que además es JS en cualquier motor: U+2028 y U+2029 van escapados (antes de ES2019
+/// cortaban un string literal).
+fn js_json<T: Serialize + ?Sized>(v: &T) -> String {
+    serde_json::to_string(v)
+        .expect("se serializa siempre")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 pub fn dragging_script(on: bool) -> String {
@@ -334,7 +345,9 @@ mod tests {
                 serde_json::from_str(rest.strip_prefix(',').unwrap()).unwrap();
             assert_eq!(errors_v[0]["name"], name);
             // Sin caracteres de control ni separadores de línea sueltos.
-            assert!(!script.contains('\n') && !script.contains('\r'));
+            assert!(!script
+                .chars()
+                .any(|c| c.is_control() || c == '\u{2028}' || c == '\u{2029}'));
         }
     }
 

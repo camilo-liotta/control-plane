@@ -21,19 +21,20 @@ export function registerDropTarget(target: DropTarget) {
   }
 }
 
-let recent: { key: string; at: number }[] = []
+type Via = "app" | "page"
+let recent: { key: string; via: Via; at: number }[] = []
 
 /**
  * Descarta los archivos que ya llegaron por el otro camino hace un instante: si algún webview
- * entrega el `File` en el drop y además la app los manda, no se adjuntan dos veces.
+ * entrega el `File` en el drop (`page`) y además la app los manda (`app`), no se adjuntan dos veces.
  */
-export function freshFiles(files: File[]): File[] {
+export function freshFiles(files: File[], via: Via): File[] {
   const now = Date.now()
   recent = recent.filter((r) => now - r.at < 3000)
   return files.filter((f) => {
     const key = `${f.name}\0${f.size}`
-    if (recent.some((r) => r.key === key)) return false
-    recent.push({ key, at: now })
+    if (recent.some((r) => r.key === key && r.via !== via)) return false
+    recent.push({ key, via, at: now })
     return true
   })
 }
@@ -80,7 +81,7 @@ export function dropFromDesktop(files: unknown, errors: unknown): boolean {
       })
       return false
     }
-    const fresh = freshFiles(list)
+    const fresh = freshFiles(list, "app")
     if (fresh.length) target.add(fresh)
     return true
   } catch {

@@ -159,7 +159,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
       e.preventDefault()
       depth = 0
       setDragging(false)
-      addFiles(freshFiles(Array.from(e.dataTransfer?.files ?? [])))
+      addFiles(freshFiles(Array.from(e.dataTransfer?.files ?? []), "page"))
     }
     el.addEventListener("dragenter", enter)
     el.addEventListener("dragover", over)
