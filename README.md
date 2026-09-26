@@ -44,8 +44,18 @@ Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la b
 
 Después de [compilar](#compilar-en-linux):
 
-- **`.deb`**: `sudo apt install ./desktop/src-tauri/target/release/bundle/deb/control-plane_0.1.0_amd64.deb`. Para desinstalar: `sudo apt remove control-plane`. Si prendiste "Abrir al iniciar sesión", borrá también `~/.config/autostart/control-plane.desktop`.
+- **`.deb`**: `sudo apt install ./desktop/src-tauri/target/release/bundle/deb/control-plane_0.1.0_amd64.deb`. Trae como dependencias `libwebkit2gtk-4.1-0`, `libgtk-3-0` y `libayatana-appindicator3-1`; Node no, ese lo ponés vos. El binario queda en `/usr/bin/control-plane-desktop` y el server empaquetado, en `/usr/lib/control-plane/app/`.
 - **AppImage**: queda en `desktop/src-tauri/target/release/bundle/appimage/`. Dale permiso con `chmod +x control-plane_0.1.0_amd64.AppImage` y abrilo. En Ubuntu 24.04 y posteriores necesita `libfuse2t64` (`sudo apt install libfuse2t64`).
+  - Un AppImage se desmonta al salir, así que la app copia el server afuera la primera vez, a `~/.local/share/app.control-plane.desktop/server-bundle/<versión>-<huella>/`. Así, un server que dejaste corriendo sigue andando después de salir. Hay una copia de unos 4 MB por cada build y las viejas no se borran solas. Para limpiarlas, con la app cerrada y sin un server corriendo: `rm -rf ~/.local/share/app.control-plane.desktop/server-bundle`. La próxima vez que la abras, copia la que necesita.
+  - "Abrir al iniciar sesión" apunta a la ruta del `.AppImage`. Si lo movés, apagalo y volvé a prenderlo.
+
+Para desinstalar el `.deb`: `sudo apt remove control-plane`. Lo que queda en tu home:
+
+- El inicio automático, si lo prendiste: `~/.config/autostart/control-plane.desktop` (o en `$XDG_CONFIG_HOME/autostart/`).
+- Los ajustes, en `~/.config/app.control-plane.desktop/`.
+- Los logs, el estado del server y las copias del AppImage, en `~/.local/share/app.control-plane.desktop/`.
+
+Para sacar todo, con la app cerrada: `rm -rf ~/.config/autostart/control-plane.desktop ~/.config/app.control-plane.desktop ~/.local/share/app.control-plane.desktop`. La base del dashboard (`~/.control-plane`) no es de la app: queda donde está.
 
 ### Compilar en Linux
 
@@ -112,6 +122,7 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
 
 - Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en bandeja → **Avisos**.
 - Si tenés el dashboard abierto también en una pestaña, esa pestaña deja de mandar los suyos mientras la app está conectada, así no se duplican.
+- En Linux los avisos nativos piden no sonar (`suppress-sound`): el sonido lo pone la página, así no suenan dos.
 - Los [sonidos](#sonidos) siguen saliendo de la página y se configuran con el parlante de la barra lateral. **Avisos** no los apaga. Dentro de la app esa configuración es propia, aparte de la del navegador.
 
 ### Pantallas de error
