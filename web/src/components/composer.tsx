@@ -338,7 +338,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
                   {p.preview ? (
                     <button
                       type="button"
-                      onClick={() => useUi.getState().set({ lightbox: { id: p.id, name: p.name, src: p.preview } })}
+                      onClick={() => useUi.getState().set({ lightbox: p.id ? { id: p.id, name: p.name } : { name: p.name, src: p.preview } })}
                       className="rounded-md focus-visible:ring-3 focus-visible:ring-ring/40 focus-visible:outline-none"
                       aria-label={`Ver ${p.name}`}
                     >
