@@ -1,11 +1,21 @@
 //! App de escritorio de control-plane: una ventana propia para el dashboard que sirve el server.
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod app_menu;
 pub mod desktop_ws;
+pub mod health;
 pub mod launch_env;
 pub mod login_env;
+#[cfg(target_os = "macos")]
+mod macos;
 pub mod node;
 pub mod notify;
+pub mod policy;
+pub mod screen;
+pub mod server_log;
+pub mod server_state;
 pub mod settings;
+pub mod sidecar;
 pub mod startup;
 pub mod tray;
 pub mod window;
@@ -13,11 +23,11 @@ pub mod window;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager, Runtime, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, Runtime, WindowEvent};
 
-use crate::desktop_ws::{DesktopWs, WsEvent};
+use crate::desktop_ws::{DesktopWs, Toast, WsEvent};
 use crate::settings::Settings;
-use crate::window::PortError;
+use crate::sidecar::{Hooks, Sidecar};
 
 /// Estado compartido de la app.
 pub struct AppState {
@@ -25,8 +35,6 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     /// Dónde se guardan (`None` si no hay carpeta de configuración).
     pub settings_path: Option<PathBuf>,
-    /// Puerto del server, o por qué no hay uno válido.
-    pub port: Result<u16, PortError>,
 }
 
 impl AppState {
@@ -62,6 +70,44 @@ fn on_ws_event<R: Runtime>(app: &AppHandle<R>, event: WsEvent) {
     }
 }
 
+/// Lo que el sidecar le avisa al resto de la app: el WS de escritorio se reconecta con cada
+/// server nuevo, las caídas van a avisos nativos y el diálogo de salida cuenta las sesiones.
+fn hooks() -> Hooks {
+    Hooks {
+        on_server: Box::new(|app, port| app.state::<DesktopWs>().reconnect(port)),
+        notify: Box::new(|app, title, body| {
+            notify::handle(
+                app,
+                Toast {
+                    level: "warn".into(),
+                    title: title.into(),
+                    body: Some(body.into()),
+                    ..Default::default()
+                },
+            )
+        }),
+        running: Box::new(|app| {
+            app.state::<DesktopWs>()
+                .snapshot()
+                .summary
+                .map(|s| s.running)
+        }),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn test_action(argv: &[String]) -> Option<screen::Request> {
+    let arg = |name: &str| {
+        argv.iter()
+            .position(|a| a == name)
+            .and_then(|i| argv.get(i + 1))
+    };
+    Some(screen::Request {
+        action: screen::Action::from_id(arg("--action")?)?,
+        port: arg("--port").and_then(|p| p.parse().ok()),
+    })
+}
+
 pub fn run() {
     let context = tauri::generate_context!();
     // Linux: una segunda apertura con token de activación se lo pasa a la primera y termina.
@@ -70,9 +116,26 @@ pub fn run() {
         return;
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // macOS: un "Salir" (Cmd+Q) que pasa por la decisión sobre el server.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(|app| app_menu::build(app));
+    builder
         // Primero: una segunda apertura enfoca la ventana que ya está y termina.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `control-plane --quit` desde una terminal: salir como con "Salir" (pasa por la
+            // decisión sobre el server).
+            if argv.iter().any(|a| a == "--quit") {
+                app.exit(0);
+                return;
+            }
+            // Solo en desarrollo: `--action <id> [--port N]` aprieta un botón de la pantalla
+            // local (para probar los flujos sin mouse).
+            #[cfg(debug_assertions)]
+            if let Some(req) = test_action(&argv) {
+                app.state::<Sidecar>().action(req);
+                return;
+            }
             let handle = app.clone();
             let token = startup::activation_token(&argv);
             eprintln!(
@@ -84,34 +147,38 @@ pub fn run() {
             });
         }))
         .plugin(startup::autostart_plugin())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let handle = app.handle();
-            let settings = settings::load(handle);
-            // Entorno de la shell de login (PATH y lista blanca), node y claude: lo usa T3.
-            let launch = launch_env::LaunchEnv::prepare(&settings);
-            eprintln!("{}", launch.summary());
-            let port = window::port_from_env(launch.login_var("CONTROL_PLANE_PORT"), settings.port);
-            if let Err(e) = &port {
-                eprintln!("{e}");
+            // `--quit` sin ninguna abierta: no hay nada que cerrar (y no se abre una).
+            if std::env::args().any(|a| a == "--quit") {
+                eprintln!("No hay ninguna control-plane abierta.");
+                std::process::exit(0);
             }
+            let handle = app.handle();
+            #[cfg(target_os = "macos")]
+            handle.on_menu_event(|app, event| app_menu::on_event(app, &event));
             app.manage(AppState {
-                settings: Mutex::new(settings),
+                settings: Mutex::new(settings::load(handle)),
                 settings_path: settings::path(handle),
-                port: port.clone(),
             });
-            app.manage(launch);
 
-            // T3: descubrir o lanzar el server y supervisarlo.
-            window::create_main(handle, port.clone())?;
+            // La ventana sale enseguida con "cargando"; el entorno de la shell de login, el
+            // puerto y el server se resuelven en el hilo del sidecar.
+            let inbox = sidecar::create(handle);
+            let sc = handle.state::<Sidecar>();
+            let actions = handle.clone();
+            window::create_main(handle, sc.guard(), sc.token(), move |req| {
+                actions.state::<Sidecar>().action(req)
+            })?;
+            #[cfg(target_os = "macos")]
+            macos::watch_power_off(sc.system_ending_flag());
 
-            // Bandeja, avisos y WS de escritorio. T3 reconecta el WS cuando lanza o adopta un
-            // server: `app.state::<DesktopWs>().reconnect(Some(puerto))`.
+            // Bandeja, avisos y WS de escritorio (sin conexión hasta que el sidecar tenga server).
             tray::init(handle)?;
             notify::init(handle);
             let events = handle.clone();
-            app.manage(DesktopWs::start(port.ok(), move |e| {
-                on_ws_event(&events, e)
-            }));
+            app.manage(DesktopWs::start(None, move |e| on_ws_event(&events, e)));
+            sidecar::start(handle.clone(), inbox, hooks());
             Ok(())
         })
         .on_window_event(|win, event| {
@@ -125,12 +192,15 @@ pub fn run() {
         })
         .build(context)
         .expect("no pude iniciar la app")
-        .run(|_app, _event| match _event {
+        .run(|app, event| match event {
+            // Cmd+Q, el menú de la app o "Salir" en la bandeja (que llama a app.exit(0)): el
+            // sidecar decide qué hacer con el server y vuelve a pedir la salida si corresponde.
+            RunEvent::ExitRequested { api, .. } if app.state::<Sidecar>().intercept_exit() => {
+                api.prevent_exit();
+            }
             // macOS: clic en el ícono del Dock con la ventana escondida.
             #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen { .. } => window::show_main(_app),
-            // T3: RunEvent::ExitRequested → preguntar qué hacer con el server antes de salir
-            // (también llega desde "Salir" en la bandeja, que llama a app.exit(0)).
+            RunEvent::Reopen { .. } => window::show_main(app),
             _ => {}
         });
 }

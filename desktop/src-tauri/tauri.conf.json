@@ -4,7 +4,12 @@
   "version": "0.1.0",
   "identifier": "app.control-plane.desktop",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui",
+    "beforeDevCommand": {
+      "script": "npm run stage",
+      "wait": true
+    },
+    "beforeBuildCommand": "npm run stage"
   },
   "app": {
     "windows": [],
@@ -14,7 +19,7 @@
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self'",
-        "connect-src": "http://127.0.0.1:*"
+        "connect-src": "'none'"
       }
     }
   },
@@ -33,6 +38,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../server-bundle/": "app/"
+    }
   }
 }

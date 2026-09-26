@@ -22,7 +22,10 @@ pub struct LaunchEnv {
 
 impl LaunchEnv {
     pub fn prepare(settings: &Settings) -> Self {
-        let app_env: Vec<(String, String)> = std::env::vars().collect();
+        // Sin lo que pone un AppImage: ni la shell ni el server tienen que ver sus librerías.
+        let app_env: Vec<(String, String)> = login_env::without_bundle_env(std::env::vars())
+            .into_iter()
+            .collect();
         let get = |k: &str| {
             app_env
                 .iter()
@@ -31,7 +34,12 @@ impl LaunchEnv {
         };
         let home = get("HOME").map(PathBuf::from);
         let shell = login_env::detect_shell(get("SHELL"));
-        let login = LoginEnv::read(&shell, &settings.import_env, login_env::TIMEOUT);
+        let login = LoginEnv::read_with(
+            &shell,
+            &settings.import_env,
+            login_env::TIMEOUT,
+            Some(&app_env.iter().cloned().collect()),
+        );
         let path = login_env::merge_path(
             login.get("PATH"),
             get("PATH"),
@@ -40,11 +48,12 @@ impl LaunchEnv {
         );
         let server_env = login_env::server_env(app_env.clone(), &login, &path);
         let env = |k: &str| server_env.get(k).map(String::as_str);
-        let node = node::find_node(
+        let node = node::find_node_with(
             settings.node_path.as_deref(),
             env("CONTROL_PLANE_NODE"),
             &path,
             &shell,
+            Some(&server_env),
         );
         let claude = node::find_claude(env("CLAUDE_BIN"), &path, &shell);
         Self {

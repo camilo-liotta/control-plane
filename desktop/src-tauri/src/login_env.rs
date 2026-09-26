@@ -192,6 +192,43 @@ impl fmt::Display for LoginEnvError {
     }
 }
 
+/// Variables que pone el runtime de un AppImage (o su hook de GTK) y que solo sirven para la app
+/// empaquetada: si le llegan a la shell, al server o a las sesiones de Claude, cargan librerías
+/// del AppImage (que además desaparecen cuando la app se cierra).
+const BUNDLE_ONLY: &[&str] = &["APPDIR", "APPIMAGE", "ARGV0", "OWD", "GDK_BACKEND"];
+
+/// El entorno de la app sin lo que es del AppImage: las variables propias del runtime afuera, y
+/// de las listas de rutas (PATH, LD_LIBRARY_PATH, XDG_DATA_DIRS…) las entradas dentro de él.
+/// Fuera de un AppImage (sin `APPDIR`), queda igual.
+pub fn without_bundle_env(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    let vars: BTreeMap<String, String> = vars.into_iter().collect();
+    let Some(appdir) = vars
+        .get("APPDIR")
+        .filter(|d| d.starts_with('/') && d.len() > 1)
+        .map(|d| d.trim_end_matches('/').to_string())
+    else {
+        return vars;
+    };
+    let inside = |p: &str| p == appdir || p.starts_with(&format!("{appdir}/"));
+    vars.into_iter()
+        .filter(|(k, _)| !BUNDLE_ONLY.contains(&k.as_str()))
+        .filter_map(|(k, v)| {
+            if !v.contains(&appdir) {
+                return Some((k, v));
+            }
+            // Una lista de rutas: se sacan las del AppImage y se deja el resto.
+            let kept: Vec<&str> = v
+                .split(':')
+                .filter(|p| !p.is_empty() && !inside(p))
+                .collect();
+            let was_list = v.contains(':') || inside(&v);
+            (was_list && !kept.is_empty()).then(|| (k, kept.join(":")))
+        })
+        .collect()
+}
+
 /// El resultado de leer la shell de login: las variables de la lista blanca, o por qué no se pudo.
 #[derive(Debug, Clone)]
 pub struct LoginEnv {
@@ -209,14 +246,24 @@ impl LoginEnv {
 
     /// Lee el entorno de la shell de login con un tiempo máximo.
     pub fn read(shell: &Path, import: &[String], timeout: Duration) -> Self {
+        Self::read_with(shell, import, timeout, None)
+    }
+
+    /// Como [`LoginEnv::read`], con la shell lanzada solo con `base` como entorno (si viene).
+    pub fn read_with(
+        shell: &Path,
+        import: &[String],
+        timeout: Duration,
+        base: Option<&BTreeMap<String, String>>,
+    ) -> Self {
         let started = Instant::now();
         let kind = ShellKind::of(shell);
-        let mut result = run_shell(shell, kind, EnvFormat::Nul, timeout);
+        let mut result = run_shell(shell, kind, EnvFormat::Nul, timeout, base);
         // Un `env` sin `-0` (algún macOS viejo) no imprime nada entre los marcadores: otra vuelta
         // una por línea, con lo que quede de tiempo.
         if matches!(&result, Ok(v) if !v.contains_key("PATH")) {
             let left = timeout.saturating_sub(started.elapsed());
-            result = run_shell(shell, kind, EnvFormat::Lines, left);
+            result = run_shell(shell, kind, EnvFormat::Lines, left, base);
         }
         let (vars, error) = match result {
             Ok(all) => (
@@ -241,9 +288,13 @@ fn run_shell(
     kind: ShellKind,
     format: EnvFormat,
     timeout: Duration,
+    base: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, String>, LoginEnvError> {
     let marker = new_marker();
     let mut cmd = Command::new(shell);
+    if let Some(base) = base {
+        cmd.env_clear().envs(base);
+    }
     cmd.args(args(kind, script(&marker, format)))
         .env("TERM", "dumb")
         // oh-my-zsh: que no pregunte si actualiza.
@@ -453,6 +504,68 @@ mod tests {
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    #[test]
+    fn appimage_env_is_removed() {
+        let vars = [
+            ("APPDIR", "/tmp/.mount_cpX1"),
+            ("APPIMAGE", "/home/u/control-plane.AppImage"),
+            ("ARGV0", "control-plane"),
+            ("OWD", "/home/u"),
+            ("GDK_BACKEND", "x11"),
+            (
+                "LD_LIBRARY_PATH",
+                "/tmp/.mount_cpX1/usr/lib:/tmp/.mount_cpX1/usr/lib64",
+            ),
+            ("PATH", "/tmp/.mount_cpX1/usr/bin:/usr/bin:/bin"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_cpX1/usr/share:/usr/share"),
+            ("GIO_MODULE_DIR", "/tmp/.mount_cpX1/usr/lib/gio/modules"),
+            ("HOME", "/home/u"),
+            ("OTRA", "/tmp/.mount_cpX1-no-es-adentro:/x"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        let env = without_bundle_env(vars);
+        for gone in [
+            "APPDIR",
+            "APPIMAGE",
+            "ARGV0",
+            "OWD",
+            "GDK_BACKEND",
+            "LD_LIBRARY_PATH",
+            "GIO_MODULE_DIR",
+        ] {
+            assert!(!env.contains_key(gone), "{gone}");
+        }
+        assert_eq!(env["PATH"], "/usr/bin:/bin");
+        assert_eq!(env["XDG_DATA_DIRS"], "/usr/share");
+        assert_eq!(env["HOME"], "/home/u");
+        assert_eq!(env["OTRA"], "/tmp/.mount_cpX1-no-es-adentro:/x");
+    }
+
+    #[test]
+    fn outside_an_appimage_nothing_changes() {
+        let vars = [
+            ("GDK_BACKEND", "wayland"),
+            ("LD_LIBRARY_PATH", "/opt/x/lib"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        assert_eq!(without_bundle_env(vars.clone()), vars.into_iter().collect());
+    }
+
+    #[test]
+    fn shell_gets_only_the_base_env_when_given() {
+        let base: BTreeMap<String, String> =
+            [("PATH".to_string(), "/usr/bin:/bin".to_string())].into();
+        std::env::set_var("CP_T3_NO_DEBE_LLEGAR", "1");
+        let env = LoginEnv::read_with(
+            Path::new("/bin/sh"),
+            &["CP_T3_NO_DEBE_LLEGAR".into()],
+            TIMEOUT,
+            Some(&base),
+        );
+        assert_eq!(env.error, None);
+        assert!(!env.vars.contains_key("CP_T3_NO_DEBE_LLEGAR"));
     }
 
     #[test]
