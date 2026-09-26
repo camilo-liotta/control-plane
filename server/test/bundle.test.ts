@@ -77,7 +77,7 @@ describe("el server empaquetado", () => {
   })
 
   it("trae lo que necesita la app", () => {
-    assert.deepEqual(fs.readdirSync(app).sort(), ["THIRD_PARTY_LICENSES", "compact-hook.mjs", "server.mjs", "web"])
+    assert.deepEqual(fs.readdirSync(app).sort(), [".control-plane-bundle", "THIRD_PARTY_LICENSES", "compact-hook.mjs", "server.mjs", "web"])
     const licenses = fs.readFileSync(path.join(app, "THIRD_PARTY_LICENSES"), "utf8")
     for (const name of ["fastify@", "@modelcontextprotocol/sdk@", "zod@", "ws@"]) assert.ok(licenses.includes(`\n${name}`), name)
   })
