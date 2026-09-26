@@ -239,10 +239,27 @@ fn bundle_dir(app: &AppHandle) -> PathBuf {
         }
         return Path::new(env!("CARGO_MANIFEST_DIR")).join("../server-bundle");
     }
-    app.path()
+    let bundle = app
+        .path()
         .resource_dir()
         .map(|d| d.join("app"))
-        .unwrap_or_else(|_| PathBuf::from("app"))
+        .unwrap_or_else(|_| PathBuf::from("app"));
+    // Desde un AppImage, una copia fuera del montaje: si el server queda corriendo al salir, su
+    // web y su hook siguen ahí (ver bundle_copy).
+    if app.env().appimage.is_some() {
+        if let Ok(data) = app.path().app_local_data_dir() {
+            let version = app.package_info().version.to_string();
+            match crate::bundle_copy::persistent_copy(
+                &bundle,
+                &data.join("server-bundle"),
+                &version,
+            ) {
+                Ok(copy) => return copy,
+                Err(e) => eprintln!("No pude copiar el server fuera del AppImage: {e}"),
+            }
+        }
+    }
+    bundle
 }
 
 /// La carpeta de datos del server. En desarrollo, si no viene definida, una temporal propia de

@@ -247,7 +247,7 @@ mod linux {
             } else {
                 body
             };
-            let hints: HashMap<&str, Value> = HashMap::new();
+            let hints = hints();
             let id: u32 = self.proxy.call(
                 "Notify",
                 &(
@@ -269,6 +269,16 @@ mod linux {
             book.live.insert(id, (toast, None));
             Ok(())
         }
+    }
+
+    /// Hints del aviso. `suppress-sound`: el sonido lo pone la web (también con la ventana
+    /// escondida); sin esto, KDE, dunst y otros sonarían una segunda vez. `desktop-entry`: para
+    /// que el sistema asocie el aviso con la app instalada (nombre e ícono).
+    pub(super) fn hints() -> HashMap<&'static str, Value<'static>> {
+        HashMap::from([
+            ("suppress-sound", Value::Bool(true)),
+            ("desktop-entry", Value::from("control-plane")),
+        ])
     }
 
     impl Book {
@@ -389,6 +399,15 @@ mod tests {
         let back: serde_json::Value = serde_json::from_str(arg).unwrap();
         assert_eq!(back["sessionId"], t.session_id.clone().unwrap());
         assert!(!js.contains('\u{2028}'));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notifications_do_not_play_a_sound() {
+        use zbus::zvariant::Value;
+        let h = linux::hints();
+        assert_eq!(h.get("suppress-sound"), Some(&Value::Bool(true)));
+        assert_eq!(h.get("desktop-entry"), Some(&Value::from("control-plane")));
     }
 
     #[test]
