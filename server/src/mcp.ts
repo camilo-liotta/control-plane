@@ -5,6 +5,7 @@ import { z } from "zod"
 
 import { version } from "./config.ts"
 import type { Clis } from "./clis.ts"
+import type { UserTasks } from "./user-tasks.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
@@ -67,7 +68,7 @@ function wrap<A>(fn: (args: A) => string | Promise<string>) {
 /** Herramientas de control-plane que ve cada sesión según su rol. */
 function buildServer(
   self: SessionRecord,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks }
 ): McpServer {
   const { db, sessions, orchestration } = deps
   const server = new McpServer({ name: "control-plane", version })
@@ -99,6 +100,61 @@ function buildServer(
         .join("\n")
     })
   )
+
+  if (deps.tasks) {
+    const tasks = deps.tasks
+    server.registerTool(
+      "create_user_task",
+      {
+        title: "Crear una tarea para el usuario",
+        description:
+          "Deja en el tablero del proyecto algo que necesitás que haga el usuario y no podés hacer vos (loguearse en un CLI o una web, aprobar o configurar algo en otro sistema, conseguir un dato). Mejor que pedírselo en el chat: ahí se pierde. Si ya hay una abierta para lo mismo, se suma a esa.",
+        inputSchema: {
+          title: z.string().min(1).describe("Qué hay que hacer, en pocas palabras (ej. \"Reautenticar gcloud\")."),
+          steps: z.array(z.string().min(1)).min(1).max(12).describe("Pasos cortos y en orden: qué abrir, qué comando correr (entre `backticks`), qué elegir. Sin explicaciones largas."),
+          why: z.string().optional().describe("Para qué hace falta, en una línea."),
+          blocking: z.boolean().optional().describe("true si estás frenado esperando esto. Cuando el usuario la marque hecha, te llega un aviso."),
+          due: z.string().optional().describe("Para cuándo, si tiene fecha (ISO 8601, ej. 2026-09-30T23:40:00Z)."),
+        },
+      },
+      wrap((args: { title: string; steps: string[]; why?: string; blocking?: boolean; due?: string }) => {
+        const due = args.due ? Date.parse(args.due) : null
+        if (args.due && (due === null || Number.isNaN(due))) throw new Error("La fecha no se entiende: usá ISO 8601 (2026-09-30T23:40:00Z)")
+        const { task, existing } = tasks.create(self.projectId, { ...args, due }, self)
+        return existing
+          ? `Ya había una tarea abierta para eso: ${task.id} "${task.title}". Sumé tu pedido; no hace falta crear otra.`
+          : `Tarea ${task.id} creada en el tablero del proyecto. ${task.blocking ? "Cuando el usuario la marque hecha te llega un aviso." : "Seguí con lo que no dependa de esto."}`
+      })
+    )
+    server.registerTool(
+      "list_user_tasks",
+      {
+        title: "Tareas para el usuario",
+        description: "Las tareas para el usuario del proyecto: las abiertas (con sus pasos) y las cerradas hace poco. Miralas antes de crear una, o para ver si algo que pediste ya está hecho.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => tasks.summary(self.projectId))
+    )
+    server.registerTool(
+      "update_user_task",
+      {
+        title: "Actualizar una tarea para el usuario",
+        description:
+          "Cerrá una tarea si ves que ya está hecha (por ejemplo, el login ya anda) o que dejó de hacer falta, con una nota que diga cómo te diste cuenta. También sirve para corregir sus pasos o marcar que te está frenando.",
+        inputSchema: {
+          id: z.string().describe("Id de la tarea (ej. t_ab12cd)."),
+          status: z.enum(["done", "dismissed", "open"]).optional().describe("done: ya está hecha; dismissed: ya no hace falta; open: volverla a abrir."),
+          note: z.string().optional().describe("Por qué la cerrás o qué cambió, en una línea."),
+          steps: z.array(z.string().min(1)).max(12).optional(),
+          blocking: z.boolean().optional(),
+        },
+      },
+      wrap((args: { id: string; status?: "done" | "dismissed" | "open"; note?: string; steps?: string[]; blocking?: boolean }) => {
+        const t = tasks.update(args.id, args, self)
+        return `Tarea ${t.id} ${t.status === "open" ? "actualizada" : t.status === "done" ? "cerrada como hecha" : "descartada"}.`
+      })
+    )
+  }
 
   if (deps.clis) {
     const clis = deps.clis
@@ -251,7 +307,7 @@ function toWebRequest(req: FastifyRequest): Request {
 
 export function registerMcp(
   app: FastifyInstance,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks }
 ) {
   const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
     const self = deps.db.getSessionByToken(req.params.token)

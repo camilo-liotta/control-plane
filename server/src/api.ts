@@ -16,6 +16,7 @@ import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
 import type { Clis } from "./clis.ts"
+import type { UserTasks } from "./user-tasks.ts"
 import type { SkillMarket } from "./skill-market.ts"
 import type { ClaudeSettingValue, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
@@ -32,6 +33,7 @@ interface Deps {
   overview: Overview
   skillMarket: SkillMarket
   clis: Clis
+  tasks: UserTasks
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -40,7 +42,7 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
-export function snapshot({ db, sessions, orchestration, accounts, compaction }: Deps): Snapshot {
+export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
@@ -48,6 +50,7 @@ export function snapshot({ db, sessions, orchestration, accounts, compaction }: 
     reports: db.listRecentReports(now() - 2 * DAY).map((r) => orchestration.reportView(r)),
     accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
     compactions: compaction.list(),
+    tasks: tasks.list(),
     turns: sessions.turns(),
     meta: sessions.meta,
   }
@@ -71,7 +74,19 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks } = deps
+
+  // ------------------------------------------------------------------ tareas para vos
+
+  app.post<{ Params: { id: string }; Body: { title?: string; steps?: string[]; why?: string; due?: number | null } }>("/api/projects/:id/tasks", (req, reply) =>
+    guard(reply, () => tasks.create(req.params.id, { title: String(req.body?.title ?? ""), steps: Array.isArray(req.body?.steps) ? req.body.steps.map(String) : [], why: req.body?.why ?? null, due: req.body?.due ?? null }, null).task)
+  )
+  app.patch<{ Params: { id: string }; Body: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] } }>("/api/tasks/:id", (req, reply) =>
+    guard(reply, () => {
+      const b = req.body ?? {}
+      return tasks.update(req.params.id, { status: b.status, note: b.note, title: b.title, steps: b.steps }, "user", { notify: b.notify })
+    })
+  )
 
   // ------------------------------------------------------------------ CLIs (de la máquina, para todos)
 

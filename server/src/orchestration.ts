@@ -165,6 +165,7 @@ export class Orchestration {
     this.hub.broadcast({
       type: "toast",
       level: input.status === "blocked" ? "warn" : "success",
+      event: input.status === "blocked" ? "blocked" : "result",
       title: `${worker.name} reportó: ${STATUS_LABEL[input.status]}`,
       body: input.summary.slice(0, 180),
       projectId: worker.projectId,
@@ -275,6 +276,7 @@ export class Orchestration {
       this.hub.broadcast({
         type: "toast",
         level: "error",
+        event: "error",
         title: "No pude entregarle la cola a la orquestadora",
         body: errorMessage(err),
         projectId,
@@ -374,6 +376,7 @@ export class Orchestration {
       this.hub.broadcast({
         type: "toast",
         level: "info",
+        event: "proposals",
         title: `${staged.length === 1 ? "Hay una propuesta lista" : `Hay ${staged.length} propuestas listas`} para revisar`,
         body: inReview.length
           ? `La orquestadora terminó de revisar ${inReview.length} ${inReview.length === 1 ? "resultado" : "resultados"}.`
