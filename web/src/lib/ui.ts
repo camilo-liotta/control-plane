@@ -10,8 +10,8 @@ interface UiState {
   importFor: string | null
   /** Subagente abierto en el panel lateral. */
   subagent: { sessionId: string; toolUseId: string } | null
-  /** Imagen abierta en grande. */
-  lightbox: { id: string; name: string } | null
+  /** Imagen abierta en grande: un adjunto (`id`) o, mientras se sube, su vista previa local (`src`). */
+  lightbox: { id?: string; name: string; src?: string } | null
   /** Cuenta de Claude Code elegida en el selector (se recuerda en este navegador). */
   account: string | null
   accountsDialog: boolean

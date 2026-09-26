@@ -41,6 +41,29 @@ export async function prepareUpload(file: File): Promise<{ name: string; mime: s
   return { name, mime, data: await readAsBase64(blob), size: blob.size }
 }
 
+const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }
+
+/**
+ * Las imágenes del portapapeles, con la API asíncrona. Para cuando el evento `paste` no las trae:
+ * WebKitGTK (la app de escritorio en Linux) solo pone texto en `clipboardData`. Llamala desde el
+ * `paste`, que cuenta como gesto del usuario y no pide permiso. Si no se puede leer, devuelve [].
+ */
+export async function clipboardImages(): Promise<File[]> {
+  if (!navigator.clipboard?.read) return []
+  try {
+    const files: File[] = []
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find((t) => VISION_TYPES.has(t))
+      if (!type) continue
+      const blob = await item.getType(type)
+      files.push(new File([blob], `pegado.${EXT[type]}`, { type }))
+    }
+    return files
+  } catch {
+    return []
+  }
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`

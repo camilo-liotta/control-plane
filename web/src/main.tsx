@@ -6,9 +6,11 @@ import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { installUndoKeys } from "@/lib/edit-keys"
 import { installDesktopApi } from "@/lib/notify"
 
 installDesktopApi()
+installUndoKeys()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

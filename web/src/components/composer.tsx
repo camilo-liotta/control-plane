@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
-import { formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
+import { clipboardImages, formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
+import { inDesktop } from "@/lib/notify"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
@@ -335,7 +336,14 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
                   title={p.error ?? p.name}
                 >
                   {p.preview ? (
-                    <img src={p.preview} alt={p.name} className="size-12 rounded-md object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => useUi.getState().set({ lightbox: p.id ? { id: p.id, name: p.name } : { name: p.name, src: p.preview } })}
+                      className="rounded-md focus-visible:ring-3 focus-visible:ring-ring/40 focus-visible:outline-none"
+                      aria-label={`Ver ${p.name}`}
+                    >
+                      <img src={p.preview} alt={p.name} className="size-12 rounded-md object-cover" />
+                    </button>
                   ) : (
                     <FileIcon className="size-4 text-muted-foreground" />
                   )}
@@ -368,6 +376,11 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
               if (files.length) {
                 e.preventDefault()
                 addFiles(files)
+                return
+              }
+              // En la app de escritorio en Linux (WebKitGTK) el evento no trae las imágenes: se leen aparte.
+              if (inDesktop() && !e.clipboardData.types.includes("text/plain")) {
+                void clipboardImages().then((images) => images.length && addFiles(images))
               }
             }}
             rows={1}
