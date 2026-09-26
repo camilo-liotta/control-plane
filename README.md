@@ -261,6 +261,8 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
 web/      Vite + React + Tailwind + shadcn/ui
 ```
 
+`npm run bundle -w server -- --out <carpeta> [--web web/dist]` empaqueta el server en una carpeta que corre sola con `node <carpeta>/server.mjs` (Node 24), sin `node_modules`: es lo que lleva adentro la app de escritorio. Si no le pasás `CONTROL_PLANE_WEB_DIST` ni `CONTROL_PLANE_COMPACT_HOOK`, usa `web/` y `compact-hook.mjs` de esa misma carpeta.
+
 ## Contribuir
 
 Es un proyecto personal, pero si lo usás y querés mejorarlo, bienvenido:
