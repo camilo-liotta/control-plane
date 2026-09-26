@@ -630,6 +630,27 @@ export interface Snapshot {
 
 export type ToastLevel = "info" | "success" | "warn" | "error"
 
+/** Lo que muestra la app de escritorio en la bandeja: cuántas te necesitan y cuántas trabajan. */
+export interface DesktopSummary {
+  /** Sesiones que te necesitan más propuestas listas para enviar (lo mismo que la bandeja de entrada). */
+  needs: number
+  /** Sesiones trabajando o iniciando. */
+  working: number
+  /** Proyectos sin archivar, con sus conteos. */
+  projects: { id: string; name: string; needs: number; working: number }[]
+}
+
+/** Lo que responde GET /api/health: la app de escritorio lo usa para reconocer al server. */
+export interface Health {
+  app: "control-plane"
+  version: string
+  pid: number
+  port: number
+  startedAt: number
+  /** El que puso la app al lanzarlo (CONTROL_PLANE_LAUNCH_ID), o null. */
+  launchId: string | null
+}
+
 export type ServerMessage =
   | { type: "hello"; snapshot: Snapshot }
   | { type: "project"; project: Project }
@@ -656,6 +677,10 @@ export type ServerMessage =
   | { type: "turn"; sessionId: string; turn: TurnProgress | null }
   /** Cambió algo de los CLIs (un login o una instalación que avanzó o terminó). */
   | { type: "clis_changed" }
+  /** Solo a la app de escritorio: el resumen para la bandeja (al conectar y cuando cambia). */
+  | { type: "desktop_summary"; summary: DesktopSummary }
+  /** Solo a la web: si hay una app de escritorio conectada (al conectar y cuando cambia). */
+  | { type: "desktop"; connected: boolean }
   | {
       type: "toast"
       level: ToastLevel

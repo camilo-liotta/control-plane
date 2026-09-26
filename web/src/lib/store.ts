@@ -44,6 +44,8 @@ interface State {
   turns: Record<string, TurnProgress | undefined>
   /** Sube cada vez que el server avisa que cambió algo de los CLIs. */
   clisTick: number
+  /** Si hay una app de escritorio conectada al server. */
+  desktopConnected: boolean
   meta: Meta | null
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
@@ -79,6 +81,7 @@ export const useStore = create<State>((set, get) => ({
   compactions: {},
   turns: {},
   clisTick: 0,
+  desktopConnected: false,
   meta: null,
   focused: null,
 
@@ -199,6 +202,12 @@ export const useStore = create<State>((set, get) => ({
         break
       case "clis_changed":
         set((s) => ({ clisTick: s.clisTick + 1 }))
+        break
+      case "desktop":
+        set({ desktopConnected: msg.connected })
+        break
+      case "desktop_summary":
+        // es para la app de escritorio: a la web no le llega
         break
       case "toast":
         notify(msg)

@@ -15,6 +15,9 @@ import { Compaction } from "./compaction.ts"
 import { config, version } from "./config.ts"
 import { listLiveSessions, type LiveSession } from "./claude/local.ts"
 import { Db, type SessionRecord } from "./db.ts"
+import { desktopSummary } from "./desktop.ts"
+import { localOnly, registerHealth, registerWs } from "./http.ts"
+import { acquireLock, LockError } from "./lock.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
@@ -41,6 +44,11 @@ async function main() {
     console.error(`No encontré el binario de Claude Code ("${config.claudeBin}"). Instalalo o definí CLAUDE_BIN.`)
     process.exit(1)
   }
+
+  // Antes de abrir la base: dos servers sobre la misma carpeta de datos la pisarían.
+  const startedAt = Date.now()
+  const lock = await acquireLock(config.home, { pid: process.pid, port: config.port, startedAt })
+  process.on("exit", () => lock.release())
 
   const db = new Db(path.join(config.home, "control-plane.db"))
   const hub = new Hub()
@@ -185,31 +193,16 @@ async function main() {
   const skillMarket = new SkillMarket({ db, accounts, tools, home: config.home })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }) })
   const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis }
+  hub.setSummary(() => desktopSummary(deps))
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
   const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })
 
-  // Solo para esta máquina: rechaza otros hosts (DNS rebinding) y orígenes ajenos.
-  const allowedHosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`])
-  const allowedOrigins = new Set([
-    `http://127.0.0.1:${config.port}`,
-    `http://localhost:${config.port}`,
-    ...config.devOrigins,
-  ])
-  app.addHook("onRequest", async (req, reply) => {
-    if (!allowedHosts.has(String(req.headers.host ?? ""))) {
-      return reply.code(403).send({ error: "host no permitido" })
-    }
-    const origin = req.headers.origin
-    if (origin && !allowedOrigins.has(origin) && !req.url.startsWith("/mcp/")) {
-      return reply.code(403).send({ error: "origen no permitido" })
-    }
-  })
+  localOnly(app, config.port, config.devOrigins)
 
   await app.register(fastifyWebsocket)
-  app.get("/ws", { websocket: true }, (socket) => {
-    hub.add(socket, { type: "hello", snapshot: snapshot(deps) })
-  })
+  registerWs(app, hub, () => ({ type: "hello", snapshot: snapshot(deps) }))
+  registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId })
 
   registerApi(app, deps)
   registerMcp(app, deps)
@@ -249,9 +242,11 @@ async function main() {
     orchestration.dispose()
     compaction.dispose()
     clis.dispose()
+    hub.dispose()
     await sessions.shutdown().catch(() => {})
     await app.close().catch(() => {})
     db.close()
+    lock.release()
     process.exit(0)
   }
   process.on("SIGINT", () => void shutdown("SIGINT"))
@@ -259,6 +254,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err)
+  console.error(err instanceof LockError ? err.message : err)
   process.exit(1)
 })

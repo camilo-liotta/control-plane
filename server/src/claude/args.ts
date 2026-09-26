@@ -1,8 +1,6 @@
-import { fileURLToPath } from "node:url"
-
+import { config } from "../config.ts"
 import type { SessionRecord } from "../db.ts"
 
-const COMPACT_HOOK = fileURLToPath(new URL("./compact-hook.mjs", import.meta.url))
 /** Tiempo máximo del hook (segundos): el modo "esperarme" responde antes (compactWaitMin ≤ 45). */
 const HOOK_TIMEOUT_SEC = 3600
 
@@ -76,7 +74,7 @@ export function buildLaunch(
 
 /** Hooks con los que el dashboard participa de la compactación (se suman a los del usuario). */
 function compactHooks(url: string) {
-  const command = `${quote(process.execPath)} ${quote(COMPACT_HOOK)} ${quote(url)}`
+  const command = `${quote(process.execPath)} ${quote(config.compactHook)} ${quote(url)}`
   const hook = { type: "command", command, timeout: HOOK_TIMEOUT_SEC }
   return {
     PreCompact: [{ hooks: [hook] }],

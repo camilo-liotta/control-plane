@@ -222,6 +222,8 @@ Variables de entorno (opcionales):
 | `CONTROL_PLANE_WEB_DIST` | `web/dist` | La web compilada que sirve el server (para probar otra build sin tocar la tuya) |
 | `CLAUDE_BIN` | `claude` | Binario de Claude Code (para las cuentas sin comando propio) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |
+| `CONTROL_PLANE_COMPACT_HOOK` | `server/src/claude/compact-hook.mjs` | Script del hook de compactación que corren las sesiones (uso interno de la app de escritorio) |
+| `CONTROL_PLANE_LAUNCH_ID` | — | Lo pone la app de escritorio al lanzar el server, para reconocerlo en `/api/health` (uso interno) |
 
 Por proyecto (menú del tablero → Configuración): auto-envío, ventana de agrupación, si la orquestadora puede editar, qué hacer cuando Claude va a compactar solo, modelo y esfuerzo por defecto, e instrucciones extra para los workers y para la orquestadora. Las instrucciones aplican al iniciar o reanudar cada sesión.
 
@@ -234,6 +236,7 @@ El estado del dashboard es local de cada máquina: el repo solo tiene el código
 - **Un nombre de sesión "ya existe fuera del dashboard"**: hay una sesión viva con ese nombre en una terminal. Los mensajes entre sesiones se dirigen por nombre, así que no se permite repetirlo: elegí otro o cerrala e importala.
 - **La sesión terminó inesperadamente**: el aviso en el chat muestra el final del error de `claude`. Reanudala desde el encabezado.
 - **Puerto ocupado**: `CONTROL_PLANE_PORT=4800 npm start`.
+- **"Ya hay un control-plane usando esta carpeta de datos"**: cada server toma `server.lock` en `CONTROL_PLANE_HOME` para que no haya dos sobre la misma base. Detené el otro (el mensaje dice su puerto y su pid) o usá otra carpeta. Si el server anterior se cortó de golpe, el lock viejo se toma solo.
 - **Los avisos del sistema no aparecen**: tocá la campana (abajo en la barra lateral). Ahí ves si el navegador los permite, los prendés o apagás y mandás uno de prueba. Si están bloqueados, se habilitan desde el ícono a la izquierda de la dirección → Notificaciones → Permitir. Si igual no llegan, revisá que tu navegador tenga permiso en los ajustes de notificaciones del sistema. Solo aparecen cuando no estás mirando el dashboard (si no, ves el aviso adentro).
 - **Una cuenta figura "Sin login" pero en la terminal anda**: el directorio tiene que ser exactamente el que usa tu comando. `alias claude-personal` (o `type claude-personal`) te muestra cuál es.
 
@@ -252,6 +255,9 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/clis.ts           catálogo de CLIs, sus logins e instalaciones
   src/claude/config-settings.ts  opciones de /config
   src/prompts.ts        protocolo de orquestadora y workers
+  src/http.ts           chequeo de host/origen, /api/health y /ws
+  src/lock.ts           lock de la carpeta de datos (un server por base)
+  src/desktop.ts        resumen para la bandeja de la app de escritorio
 web/      Vite + React + Tailwind + shadcn/ui
 ```
 
