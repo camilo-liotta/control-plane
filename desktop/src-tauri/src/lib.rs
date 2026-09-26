@@ -1,5 +1,8 @@
 //! App de escritorio de control-plane: una ventana propia para el dashboard que sirve el server.
 
+pub mod launch_env;
+pub mod login_env;
+pub mod node;
 pub mod settings;
 pub mod window;
 
@@ -24,7 +27,10 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
             let settings = settings::load(handle);
-            let port = window::port_from_env(settings.port);
+            // Entorno de la shell de login (PATH y lista blanca), node y claude: lo usa T3.
+            let launch = launch_env::LaunchEnv::prepare(&settings);
+            eprintln!("{}", launch.summary());
+            let port = window::port_from_env(launch.login_var("CONTROL_PLANE_PORT"), settings.port);
             if let Err(e) = &port {
                 eprintln!("{e}");
             }
@@ -32,8 +38,8 @@ pub fn run() {
                 settings,
                 port: port.clone(),
             });
+            app.manage(launch);
 
-            // T2: entorno de la shell de login (PATH y lista blanca), antes de buscar node.
             // T3: descubrir o lanzar el server y supervisarlo.
             window::create_main(handle, port)?;
             // T4: bandeja, notificaciones nativas y autostart.
