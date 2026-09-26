@@ -84,6 +84,14 @@ describe("lock de la carpeta de datos", () => {
       }
     })
 
+    it("un health que falla una vez no alcanza para darlo por muerto", async () => {
+      write({ pid: process.pid, port, startedAt: old })
+      let probes = 0
+      const probe = async () => (++probes >= 2 ? process.pid : null)
+      await assert.rejects(acquireLock(home, { pid: 1234567, port: 4711, startedAt: Date.now() }, { probe }), LockError)
+      assert.equal(probes, 2)
+    })
+
     it("espera a un server que recién arranca", async () => {
       write({ pid: process.pid, port: await freePort(), startedAt: Date.now() })
       let probes = 0

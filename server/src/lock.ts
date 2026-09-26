@@ -12,6 +12,8 @@ export class LockError extends Error {}
 
 /** Un server recién lanzado tarda un poco en responder el health: mientras tanto se lo espera. */
 const STARTUP_GRACE_MS = 30_000
+/** Aunque el lock sea viejo, un health que falla una vez (server ocupado) no alcanza para darlo por muerto. */
+const MIN_RETRY_MS = 1500
 
 export interface ServerLock {
   file: string
@@ -80,7 +82,7 @@ export function releaseLock(file: string, pid: number) {
 
 async function isAlive(held: LockInfo, probe: (port: number) => Promise<number | null>, grace: number) {
   // Si el server recién arranca todavía no escucha: se espera un rato mientras su pid siga vivo.
-  const until = held.startedAt + grace
+  const until = Math.max(held.startedAt + grace, Date.now() + Math.min(grace, MIN_RETRY_MS))
   for (;;) {
     if (!pidAlive(held.pid)) return false
     if ((await probe(held.port)) === held.pid) return true
