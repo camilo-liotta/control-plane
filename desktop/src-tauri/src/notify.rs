@@ -62,7 +62,19 @@ pub fn open_script(t: &Toast) -> Option<String> {
     Some(format!("window.__cpDesktop?.open({json})"))
 }
 
+/// Con qué `.desktop` se asocian los avisos y el contador del dock. La app de desarrollo usa otro
+/// nombre, así sus avisos no suman al ícono de la app instalada.
+pub fn desktop_id() -> &'static str {
+    if cfg!(debug_assertions) {
+        "control-plane-dev"
+    } else {
+        "control-plane"
+    }
+}
+
 /// El clic en un aviso: ventana al frente (con el token de activación, si vino) y a lo que avisaba.
+/// Después se cierran los avisos que quedaron: ya se vieron (y el dock deja de contarlos). El token
+/// se usa antes, en el mismo turno del hilo principal.
 fn on_click<R: Runtime>(app: &AppHandle<R>, toast: Toast, token: Option<String>) {
     eprintln!(
         "Clic en un aviso ({} token de activación).",
@@ -75,7 +87,22 @@ fn on_click<R: Runtime>(app: &AppHandle<R>, toast: Toast, token: Option<String>)
         {
             let _ = w.eval(js);
         }
+        dismiss_all(&handle);
     });
+}
+
+/// Cierra los avisos de la app que siguen en la lista del sistema (al tocar uno o cuando la
+/// ventana gana el foco, como los navegadores). No bloquea: las llamadas van en otro hilo.
+pub fn dismiss_all<R: Runtime>(_app: &AppHandle<R>) {
+    #[cfg(target_os = "linux")]
+    if let Some(n) = _app.try_state::<Notifier>() {
+        let inner = n.inner.clone();
+        std::thread::spawn(move || {
+            if let Some(linux) = inner.get() {
+                linux.dismiss_all();
+            }
+        });
+    }
 }
 
 /// Estado de Tauri: el canal a las notificaciones del sistema.
@@ -167,6 +194,8 @@ mod linux {
         by_group: HashMap<String, u32>,
         /// id → el toast y el token de activación, si ya llegó.
         live: HashMap<u32, (Toast, Option<String>)>,
+        /// Tocados: GNOME ya los saca, pero otros demonios los dejan en la lista.
+        clicked: Vec<u32>,
     }
 
     pub struct Linux {
@@ -214,6 +243,8 @@ mod linux {
                             "ActionInvoked" => {
                                 if let Ok((id, _action)) = body.deserialize::<(u32, String)>() {
                                     if let Some((toast, token)) = book.remove(id) {
+                                        // Queda anotado para cerrarlo después de usar el token.
+                                        book.clicked.push(id);
                                         drop(book);
                                         on_click(toast, token);
                                     }
@@ -222,6 +253,7 @@ mod linux {
                             "NotificationClosed" => {
                                 if let Ok((id, _reason)) = body.deserialize::<(u32, u32)>() {
                                     book.remove(id);
+                                    book.clicked.retain(|c| *c != id);
                                 }
                             }
                             _ => {}
@@ -269,6 +301,15 @@ mod linux {
             book.live.insert(id, (toast, None));
             Ok(())
         }
+
+        /// Cierra todos los avisos vivos (y los tocados) con `CloseNotification`.
+        pub fn dismiss_all(&self) {
+            let ids = self.book.lock().unwrap().take_all();
+            for id in ids {
+                // Si ya no existe, el demonio lo ignora o contesta un error: da igual.
+                let _: zbus::Result<()> = self.proxy.call("CloseNotification", &(id,));
+            }
+        }
     }
 
     /// Hints del aviso. `suppress-sound`: el sonido lo pone la web (también con la ventana
@@ -277,14 +318,41 @@ mod linux {
     pub(super) fn hints() -> HashMap<&'static str, Value<'static>> {
         HashMap::from([
             ("suppress-sound", Value::Bool(true)),
-            ("desktop-entry", Value::from("control-plane")),
+            ("desktop-entry", Value::from(super::desktop_id())),
         ])
     }
 
     impl Book {
+        /// Vacía el registro y devuelve los ids para cerrar.
+        pub(super) fn take_all(&mut self) -> Vec<u32> {
+            let mut ids: Vec<u32> = self.live.drain().map(|(id, _)| id).collect();
+            ids.append(&mut self.clicked);
+            self.by_group.clear();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        }
+
         fn remove(&mut self, id: u32) -> Option<(Toast, Option<String>)> {
             self.by_group.retain(|_, v| *v != id);
             self.live.remove(&id)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn take_all_returns_live_and_clicked_once_and_empties_the_book() {
+            let mut b = Book::default();
+            b.live.insert(7, (Toast::default(), None));
+            b.live.insert(3, (Toast::default(), Some("tok".into())));
+            b.by_group.insert("session:s".into(), 7);
+            b.clicked = vec![9, 3];
+            assert_eq!(b.take_all(), vec![3, 7, 9]);
+            assert!(b.live.is_empty() && b.by_group.is_empty() && b.clicked.is_empty());
+            assert!(b.take_all().is_empty());
         }
     }
 }
@@ -407,7 +475,7 @@ mod tests {
         use zbus::zvariant::Value;
         let h = linux::hints();
         assert_eq!(h.get("suppress-sound"), Some(&Value::Bool(true)));
-        assert_eq!(h.get("desktop-entry"), Some(&Value::from("control-plane")));
+        assert_eq!(h.get("desktop-entry"), Some(&Value::from(desktop_id())));
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub mod bundle_copy;
 pub mod desktop_ws;
 pub mod health;
 pub mod launch_env;
+pub mod launcher;
 pub mod login_env;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -65,6 +66,9 @@ fn on_ws_event<R: Runtime>(app: &AppHandle<R>, event: WsEvent) {
         WsEvent::Changed(snap) => {
             if let Some(tray) = app.try_state::<tray::Tray<R>>() {
                 tray.refresh(&snap);
+            }
+            if let Some(l) = app.try_state::<launcher::Launcher>() {
+                l.set(launcher::badge(&snap));
             }
         }
         WsEvent::Toast(toast) => notify::handle(app, toast),
@@ -177,6 +181,7 @@ pub fn run() {
             // Bandeja, avisos y WS de escritorio (sin conexión hasta que el sidecar tenga server).
             tray::init(handle)?;
             notify::init(handle);
+            app.manage(launcher::Launcher::start());
             let events = handle.clone();
             app.manage(DesktopWs::start(None, move |e| on_ws_event(&events, e)));
             sidecar::start(handle.clone(), inbox, hooks());
@@ -184,11 +189,16 @@ pub fn run() {
         })
         .on_window_event(|win, event| {
             // Cerrar la ventana la esconde: el server y las sesiones siguen.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                if win.label() == window::MAIN {
+            match event {
+                WindowEvent::CloseRequested { api, .. } if win.label() == window::MAIN => {
                     api.prevent_close();
                     let _ = win.hide();
                 }
+                // Con la ventana al frente, los avisos que quedaron en la lista ya se vieron.
+                WindowEvent::Focused(true) if win.label() == window::MAIN => {
+                    notify::dismiss_all(win.app_handle());
+                }
+                _ => {}
             }
         })
         .build(context)
