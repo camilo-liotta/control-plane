@@ -636,6 +636,11 @@ export interface DesktopSummary {
   needs: number
   /** Sesiones trabajando o iniciando. */
   working: number
+  /**
+   * Sesiones con el proceso de Claude Code vivo (iniciando, esperando, trabajando o que te necesitan):
+   * las que corta detener el server (se reanudan después). Solo el total.
+   */
+  running: number
   /** Proyectos sin archivar, con sus conteos. */
   projects: { id: string; name: string; needs: number; working: number }[]
 }

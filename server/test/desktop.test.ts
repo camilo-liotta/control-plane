@@ -1,14 +1,21 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import net from "node:net"
+import os from "node:os"
+import path from "node:path"
 import { after, before, describe, it } from "node:test"
 
 import fastifyWebsocket from "@fastify/websocket"
 import Fastify, { type FastifyInstance } from "fastify"
 
+import { AttachmentStore } from "../src/attachments.ts"
+import { Db, defaultSettings } from "../src/db.ts"
 import { desktopSummary } from "../src/desktop.ts"
 import { localOnly, registerHealth, registerWs } from "../src/http.ts"
 import { Hub } from "../src/hub.ts"
+import { SessionManager } from "../src/sessions.ts"
 import type { Draft, DesktopSummary, ServerMessage, Session, StoredEvent } from "../src/shared/types.ts"
+import { writeFakeClaude } from "./fake-claude.ts"
 
 async function freePort(): Promise<number> {
   const srv = net.createServer()
@@ -69,11 +76,14 @@ describe("resumen de escritorio", () => {
           // de un proyecto archivado: suma al total, como en la web
           session("f", "p3", "needs_input"),
         ],
+        // Con proceso vivo: los que no están detenidos, más allá de su status.
+        isRunning: (id) => ["a", "b", "c", "d", "f"].includes(id),
       },
     })
     assert.deepEqual(summary, {
       needs: 4,
       working: 2,
+      running: 5,
       projects: [
         { id: "p1", name: "Uno", needs: 2, working: 1 },
         { id: "p2", name: "Dos", needs: 0, working: 1 },
@@ -125,7 +135,7 @@ describe("WS de escritorio", () => {
   before(async () => {
     const port = await freePort()
     base = `ws://127.0.0.1:${port}/ws`
-    summary = { needs: 0, working: 0, projects: [] }
+    summary = { needs: 0, working: 0, running: 0, projects: [] }
     hub = new Hub()
     hub.setSummary(() => structuredClone(summary))
     app = Fastify()
@@ -176,7 +186,7 @@ describe("WS de escritorio", () => {
     summary.needs = 3
     hub.broadcast({ type: "project", project: { id: "p1" } as never })
     const next = await desk.waitFor((m) => m.type === "desktop_summary" && m.summary.needs > 0)
-    assert.deepEqual(next, { type: "desktop_summary", summary: { needs: 3, working: 2, projects: [] } })
+    assert.deepEqual(next, { type: "desktop_summary", summary: { needs: 3, working: 2, running: 0, projects: [] } })
     await sleep(450)
     assert.equal(desk.got.filter((m) => m.type === "desktop_summary").length, 2)
     assert.ok(!web.got.some((m) => m.type === "desktop_summary"))
@@ -198,5 +208,40 @@ describe("WS de escritorio", () => {
     hub.broadcast({ type: "partial", sessionId: "s", messageId: "m", index: 0, block: "text", delta: "x" })
     await web.waitFor((m) => m.type === "partial")
     web.close()
+  })
+})
+
+describe("running del resumen, contra el proceso real", () => {
+  it("cuenta la sesión mientras su proceso vive, aunque esté esperando", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-running-"))
+    const bin = writeFakeClaude(dir)
+    const db = new Db(path.join(dir, "t.db"))
+    const env = { CLAUDE_CONFIG_DIR: dir }
+    db.insertProject({ id: "p1", name: "P", repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 1, archivedAt: null })
+    const sessions = new SessionManager({
+      db,
+      hub: new Hub(),
+      attachments: new AttachmentStore(db),
+      mcpUrlFor: () => "http://127.0.0.1/mcp",
+      hookUrlFor: () => "http://127.0.0.1/hooks",
+      launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env, bin, accountId: "acc" }),
+      accountIdFor: () => "acc",
+      meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
+    })
+    const rec = sessions.create({ projectId: "p1", kind: "worker", name: "EPSILON", role: "", cwd: dir, claudeSessionId: "c-1" })
+    const summary = () => desktopSummary({ db, sessions })
+    try {
+      assert.equal(summary().running, 0)
+      await sessions.send(rec.id, "hola", { origin: "user" })
+      for (let i = 0; i < 100 && sessions.statusOf(rec.id) !== "idle"; i++) await sleep(50)
+      assert.equal(sessions.statusOf(rec.id), "idle")
+      assert.deepEqual([summary().running, summary().working], [1, 0])
+      await sessions.stop(rec.id)
+      assert.equal(summary().running, 0)
+    } finally {
+      await sessions.stop(rec.id).catch(() => {})
+      db.close()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

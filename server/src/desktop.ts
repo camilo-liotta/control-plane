@@ -3,7 +3,7 @@ import type { DesktopSummary, Session } from "./shared/types.ts"
 
 export interface SummaryDeps {
   db: Pick<Db, "listProjects" | "listDrafts">
-  sessions: { list(): Session[] }
+  sessions: { list(): Session[]; isRunning(id: string): boolean }
 }
 
 const isWorking = (s: Session) => s.status === "working" || s.status === "starting"
@@ -27,6 +27,8 @@ export function desktopSummary({ db, sessions }: SummaryDeps): DesktopSummary {
   return {
     needs: all.filter((s) => s.status === "needs_input").length + ready.length,
     working: all.filter(isWorking).length,
+    // El proceso real, no el status: es lo que corta detener el server.
+    running: all.filter((s) => sessions.isRunning(s.id)).length,
     projects,
   }
 }
