@@ -13,7 +13,7 @@ import { registerApi, snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
 import { Compaction } from "./compaction.ts"
 import { config, version } from "./config.ts"
-import { listLiveSessions, type LiveSession } from "./claude/local.ts"
+import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
@@ -22,6 +22,7 @@ import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
 import { SessionManager } from "./sessions.ts"
 import { Overview } from "./overview.ts"
+import { CliUsage } from "./cli-usage.ts"
 import { Clis } from "./clis.ts"
 import { SkillMarket } from "./skill-market.ts"
 import { Tools } from "./tools.ts"
@@ -183,7 +184,23 @@ async function main() {
   })
   const tools = new Tools({ db, sessions, accounts, home: config.home })
   const skillMarket = new SkillMarket({ db, accounts, tools, home: config.home })
-  const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }) })
+  // Qué usan tus sesiones: los transcripts de todas las cuentas (también las de la terminal).
+  const usage = new CliUsage({
+    dirs: () => {
+      const names = new Map(db.listProjects().map((p) => [path.basename(transcriptDir(p.repoPath)), p.name]))
+      return accounts.list().flatMap((a) => {
+        const root = path.join(accounts.dir(a), "projects")
+        let dirs: string[] = []
+        try {
+          dirs = fs.readdirSync(root)
+        } catch {
+          return []
+        }
+        return dirs.map((d) => ({ dir: path.join(root, d), label: names.get(d) ?? d.replace(/^-home-[^-]+-(projects-)?|^-Users-[^-]+-(projects-)?/, "") }))
+      })
+    },
+  })
+  const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
   const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis }
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.

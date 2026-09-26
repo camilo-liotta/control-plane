@@ -104,3 +104,19 @@ exit 3
     assert.equal(after.clis[0]!.credentials[0]!.state, "ok")
   })
 })
+
+describe("qué usan las sesiones", () => {
+  it("saca los programas de un comando sin contar heredocs, comillas, funciones propias ni lo básico", async () => {
+    const { programsIn } = await import("../src/cli-usage.ts")
+    const cmd = [
+      "cd repo && FOO=1 gcloud auth list | jq .",
+      "timeout 30 bq query 'select * from t'",
+      "run() { python x.py; }",
+      "run; ID=$(gh run list --json id); echo `date`",
+      "python3 - <<'PY'\nimport os\nconst x = 1\nPY",
+      "neon \\\n  connection-string main",
+      "./scripts/deploy.sh && /usr/bin/doppler run -- npm test",
+    ].join("\n")
+    assert.deepEqual(programsIn(cmd), ["gcloud", "jq", "bq", "gh", "neon", "doppler"])
+  })
+})

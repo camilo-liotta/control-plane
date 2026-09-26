@@ -4,6 +4,7 @@ import { navigate } from "wouter/use-browser-location"
 
 import type { ServerMessage } from "@shared/types"
 
+import { playNotice } from "./sounds"
 import { useUi } from "./ui"
 
 type ToastMessage = Extract<ServerMessage, { type: "toast" }>
@@ -112,6 +113,10 @@ export function notify(msg: ToastMessage) {
   else if (msg.level === "warn") toast.warning(msg.title, options)
   else if (msg.level === "error") toast.error(msg.title, options)
   else toast.info(msg.title, options)
+
+  // El sonido va aparte de las notificaciones del sistema (se configura en el parlante de la barra).
+  const event = msg.event ?? (msg.level === "error" ? "error" : msg.level === "warn" ? "needs_you" : null)
+  if (event) playNotice(event)
 
   // Si no estás mirando el dashboard (otra pestaña, otra ventana, otra app), avisa el sistema.
   const away = document.hidden || !document.hasFocus()

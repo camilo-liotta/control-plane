@@ -803,6 +803,7 @@ export class SessionManager extends EventEmitter<{
         this.hub.broadcast({
           type: "toast",
           level: "warn",
+          event: "needs_you",
           title: `${rec.name} te necesita`,
           body: req.tool_name === "AskUserQuestion" ? "Tiene una pregunta para vos." : `Pide aprobar ${req.tool_name}.`,
           projectId: rec.projectId,

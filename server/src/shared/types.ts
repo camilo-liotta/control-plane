@@ -665,9 +665,14 @@ export type ServerMessage =
       sessionId?: string
       /** Qué abrir al tocar "Ver" (por defecto, la sesión). */
       open?: "compaction"
+      /** De qué se trata, para elegir el sonido. */
+      event?: NoticeEvent
     }
 
 // ------------------------------------------------------------------ CLIs
+
+/** Los tipos de aviso de la bandeja, cada uno con su sonido. */
+export type NoticeEvent = "result" | "blocked" | "needs_you" | "proposals" | "compaction" | "error"
 
 export type CliAuthState = "ok" | "expired" | "logged_out" | "unknown"
 
@@ -678,6 +683,8 @@ export interface CliCredential {
   state: CliAuthState
   account: string | null
   detail: string | null
+  /** Si el login pide pegar una credencial, no hay botón: este comando es para la terminal. */
+  terminalLogin: string | null
 }
 
 export interface CliInfo {
@@ -692,6 +699,19 @@ export interface CliInfo {
   /** Cómo instalarlo en esta máquina; runnable: el dashboard lo puede correr (no pide sudo). */
   install: { command: string; runnable: boolean } | null
   credentials: CliCredential[]
+  /** Cuántas veces lo usaron tus sesiones (últimos 30 días). */
+  usage: { count: number; lastAt: number } | null
+  /** Cuántas veces lo quisieron usar y no estaba instalado ("command not found"). */
+  wanted: number
+}
+
+/** Un programa que usaron tus sesiones y no está en el catálogo. */
+export interface UsedProgram {
+  name: string
+  path: string
+  count: number
+  lastAt: number
+  projects: string[]
 }
 
 export interface CliJob {
@@ -715,4 +735,7 @@ export interface CliView {
   at: number
   clis: CliInfo[]
   jobs: CliJob[]
+  used: UsedProgram[]
+  /** Todavía está leyendo los transcripts (la primera vez tarda). */
+  usageScanning: boolean
 }
