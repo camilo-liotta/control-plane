@@ -16,6 +16,12 @@ export const config = {
   /** Orígenes permitidos para la API (además del propio server). */
   devOrigins: ["http://localhost:4701", "http://127.0.0.1:4701"],
   production: process.env.NODE_ENV === "production",
+  /** Script del hook de compactación que corren las sesiones (se puede mover al empaquetar el server). */
+  compactHook: process.env.CONTROL_PLANE_COMPACT_HOOK
+    ? path.resolve(process.env.CONTROL_PLANE_COMPACT_HOOK)
+    : path.resolve(here, "claude/compact-hook.mjs"),
+  /** Lo pone la app de escritorio al lanzar el server, para reconocer al que lanzó ella. */
+  launchId: process.env.CONTROL_PLANE_LAUNCH_ID || null,
 }
 
 export const version = "0.1.0"
