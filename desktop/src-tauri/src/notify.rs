@@ -80,8 +80,9 @@ fn on_click<R: Runtime>(app: &AppHandle<R>, toast: Toast, token: Option<String>)
 
 /// Estado de Tauri: el canal a las notificaciones del sistema.
 pub struct Notifier {
+    /// Se conecta al bus en un hilo aparte, para no demorar el arranque.
     #[cfg(target_os = "linux")]
-    inner: Option<linux::Linux>,
+    inner: std::sync::Arc<std::sync::OnceLock<linux::Linux>>,
     #[cfg(target_os = "macos")]
     inner: macos::Mac,
 }
@@ -89,10 +90,17 @@ pub struct Notifier {
 pub fn init<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "linux")]
     let inner = {
-        let handle = app.clone();
-        linux::Linux::new(move |toast, token| on_click(&handle, toast, token))
-            .map_err(|e| eprintln!("Sin notificaciones del sistema: {e}"))
-            .ok()
+        let cell = std::sync::Arc::new(std::sync::OnceLock::new());
+        let (handle, slot) = (app.clone(), cell.clone());
+        std::thread::spawn(move || {
+            match linux::Linux::new(move |toast, token| on_click(&handle, toast, token)) {
+                Ok(n) => {
+                    let _ = slot.set(n);
+                }
+                Err(e) => eprintln!("Sin notificaciones del sistema: {e}"),
+            }
+        });
+        cell
     };
     #[cfg(target_os = "macos")]
     let inner = {
@@ -119,7 +127,7 @@ pub fn handle<R: Runtime>(app: &AppHandle<R>, toast: Toast) {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Some(n) = app.try_state::<Notifier>() {
         #[cfg(target_os = "linux")]
-        if let Some(inner) = &n.inner {
+        if let Some(inner) = n.inner.get() {
             if let Err(e) = inner.show(toast) {
                 eprintln!("No pude mostrar el aviso: {e}");
             }
@@ -219,6 +227,7 @@ mod linux {
                             _ => {}
                         }
                     }
+                    eprintln!("Se cortó la escucha de los avisos: los clics dejan de responder.");
                 })
                 .map_err(|e| zbus::Error::Failure(e.to_string()))?;
             Ok(Self {

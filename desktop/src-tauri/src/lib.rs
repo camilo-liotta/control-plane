@@ -37,8 +37,11 @@ impl AppState {
 
     /// Cambia los ajustes y los guarda.
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) {
-        let mut s = self.settings.lock().unwrap();
-        f(&mut s);
+        let s = {
+            let mut s = self.settings.lock().unwrap();
+            f(&mut s);
+            s.clone()
+        };
         if let Some(path) = &self.settings_path {
             if let Err(e) = s.save_to(path) {
                 eprintln!("No pude guardar los ajustes: {e}");

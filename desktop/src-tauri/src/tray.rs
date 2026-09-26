@@ -159,12 +159,13 @@ fn icon(kind: IconKind) -> Image<'static> {
     Image::from_bytes(bytes).expect("ícono de la bandeja válido")
 }
 
-#[derive(Default)]
-struct Shown {
+struct Shown<R: Runtime> {
     status: String,
     icon: Option<IconKind>,
     title: Option<String>,
     projects: Option<ProjectsModel>,
+    /// Los ítems de `ProjectsModel::List`, en el mismo orden.
+    project_items: Vec<MenuItem<R>>,
 }
 
 /// Estado de Tauri: el ícono y los ítems que cambian.
@@ -175,7 +176,7 @@ pub struct Tray<R: Runtime> {
     notifications: CheckMenuItem<R>,
     autostart: CheckMenuItem<R>,
     on_exit: Vec<(OnExit, CheckMenuItem<R>)>,
-    shown: Mutex<Shown>,
+    shown: Mutex<Shown<R>>,
 }
 
 pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -249,8 +250,11 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         on_exit,
         // El builder ya puso el ícono tranquilo: no se vuelve a escribir.
         shown: Mutex::new(Shown {
+            status: String::new(),
             icon: Some(IconKind::Calm),
-            ..Shown::default()
+            title: None,
+            projects: None,
+            project_items: Vec::new(),
         }),
     };
     tray.refresh(&Snapshot::default());
@@ -284,35 +288,56 @@ impl<R: Runtime> Tray<R> {
         }
         let model = projects_model(snap);
         if shown.projects.as_ref() != Some(&model) {
-            self.set_projects(&model);
+            self.set_projects(&mut shown, &model);
             shown.projects = Some(model);
         }
     }
 
-    fn set_projects(&self, model: &ProjectsModel) {
+    /// Si solo cambiaron los conteos (mismos proyectos, mismo orden), cambia los textos en el
+    /// lugar: así no parpadea ni se cierra el submenú abierto. Si no, lo rearma.
+    fn set_projects(&self, shown: &mut Shown<R>, model: &ProjectsModel) {
+        if let (Some(ProjectsModel::List(prev)), ProjectsModel::List(next)) =
+            (&shown.projects, model)
+        {
+            let same_ids = prev.len() == next.len()
+                && prev.iter().zip(next).all(|((a, _), (b, _))| a == b)
+                && shown.project_items.len() == next.len();
+            if same_ids {
+                for (((_, old), (_, label)), item) in
+                    prev.iter().zip(next).zip(&shown.project_items)
+                {
+                    if old != label {
+                        let _ = item.set_text(label);
+                    }
+                }
+                return;
+            }
+        }
         if let Ok(items) = self.projects.items() {
             for item in items {
                 let _ = self.projects.remove(&item);
             }
         }
+        shown.project_items.clear();
         let app = self.projects.app_handle();
-        let entries: Vec<(String, String, bool)> = match model {
-            ProjectsModel::Offline => vec![(String::new(), "Sin conexión".into(), false)],
-            ProjectsModel::Empty => vec![(String::new(), "Todavía no hay proyectos".into(), false)],
-            ProjectsModel::List(list) => list
-                .iter()
-                .map(|(id, label)| (format!("{PROJECT_PREFIX}{id}"), label.clone(), true))
-                .collect(),
-        };
-        for (id, label, enabled) in entries {
-            let item = if enabled {
-                MenuItem::with_id(app, id, label, true, None::<&str>)
-            } else {
-                MenuItem::new(app, label, false, None::<&str>)
-            };
-            if let Ok(item) = item {
-                let _ = self.projects.append(&item);
+        let item = match model {
+            ProjectsModel::Offline => MenuItem::new(app, "Sin conexión", false, None::<&str>),
+            ProjectsModel::Empty => {
+                MenuItem::new(app, "Todavía no hay proyectos", false, None::<&str>)
             }
+            ProjectsModel::List(list) => {
+                for (id, label) in list {
+                    let id = format!("{PROJECT_PREFIX}{id}");
+                    if let Ok(item) = MenuItem::with_id(app, id, label, true, None::<&str>) {
+                        let _ = self.projects.append(&item);
+                        shown.project_items.push(item);
+                    }
+                }
+                return;
+            }
+        };
+        if let Ok(item) = item {
+            let _ = self.projects.append(&item);
         }
     }
 
