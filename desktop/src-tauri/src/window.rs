@@ -174,6 +174,8 @@ pub fn create_main<R: Runtime>(
         .title("control-plane")
         .inner_size(1280.0, 820.0)
         .min_inner_size(720.0, 480.0)
+        // Al iniciar sesión arranca escondida: solo la bandeja.
+        .visible(!crate::startup::started_hidden())
         .initialization_script(init_script(app))
         .on_navigation(move |url| match classify(url, guard) {
             Nav::Allow => true,
@@ -196,7 +198,19 @@ pub fn create_main<R: Runtime>(
 
 /// Muestra la ventana principal y le da foco (desde la bandeja, otra instancia o una notificación).
 pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
+    show_main_with(app, None);
+}
+
+/// Como [`show_main`], con el token de activación de quien la pidió (una segunda apertura o el clic
+/// en una notificación): GNOME en Wayland solo le da foco a una ventana con token. Linux, y en el
+/// hilo principal (GTK).
+pub fn show_main_with<R: Runtime>(app: &AppHandle<R>, _token: Option<&str>) {
     if let Some(w) = app.get_webview_window(MAIN) {
+        #[cfg(target_os = "linux")]
+        if let (Some(token), Ok(gtk)) = (_token, w.gtk_window()) {
+            use gtk::prelude::GtkWindowExt;
+            gtk.set_startup_id(token);
+        }
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
