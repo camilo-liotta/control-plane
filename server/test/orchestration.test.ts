@@ -164,6 +164,25 @@ describe("cola de resultados", () => {
     assert.equal(db.listReports({ projectId, states: ["reviewed"] }).length, 2)
   })
 
+  it("el aviso de propuestas listas lleva al chat de la orquestadora, a las propuestas", () => {
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+    sessions.endTurn(orq)
+    const toast = hub.messages.find((m) => m.type === "toast" && m.event === "proposals")
+    assert.ok(toast && toast.type === "toast")
+    assert.deepEqual([toast.projectId, toast.sessionId, toast.open], [projectId, orq.id, "proposals"])
+  })
+
+  it("si no puede entregarle la cola, el aviso lleva al chat de la orquestadora", async () => {
+    sessions.send = async () => {
+      throw new Error("La sesión está detenida")
+    }
+    orch.report(a, { status: "done", summary: "Listo" })
+    await sleep(400)
+    const toast = hub.messages.find((m) => m.type === "toast" && m.event === "error")
+    assert.ok(toast && toast.type === "toast")
+    assert.deepEqual([toast.projectId, toast.sessionId, toast.open], [projectId, orq.id, undefined])
+  })
+
   it("un resultado nuevo vuelve a bloquear las propuestas listas", async () => {
     orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
     sessions.endTurn(orq)

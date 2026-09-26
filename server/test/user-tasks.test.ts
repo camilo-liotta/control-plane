@@ -56,7 +56,10 @@ describe("tareas para vos", () => {
     const { task, existing } = tasks.create("p1", { title: "Reautenticar gcloud", steps: ["Herramientas → CLIs", "Reautenticar en Google Cloud CLI"], blocking: false }, alfa)
     assert.equal(existing, false)
     assert.equal(task.createdBy, alfa.id)
-    assert.ok(messages.some((m) => m.type === "toast" && m.event === "task"))
+    // El aviso lleva al tablero, a "Tareas para vos" (la sesión viaja igual, para agrupar los avisos).
+    const toast = messages.find((m) => m.type === "toast" && m.event === "task")
+    assert.ok(toast && toast.type === "toast")
+    assert.deepEqual([toast.projectId, toast.sessionId, toast.open], ["p1", alfa.id, "tasks"])
     assert.ok(events.some((e) => e.id === alfa.id && e.event.kind === "notice" && e.event.text.includes("Creó una tarea")))
     assert.throws(() => tasks.create("p1", { title: "Algo", steps: [] }, alfa), /pasos/)
   })
@@ -91,7 +94,10 @@ describe("tareas para vos", () => {
   it("las que tienen fecha avisan un rato antes, una sola vez", () => {
     const { task } = tasks.create("p1", { title: "Correr el workflow de fin de mes", steps: ["`gh workflow run extractor.yml`"], due: Date.now() + 5 * 60_000 }, null)
     assert.deepEqual(db.dueTasks(Date.now() + 15 * 60_000).map((t) => t.id), [task.id])
-    db.markReminded(task.id, Date.now())
+    ;(tasks as unknown as { remind(): void }).remind()
+    const toast = messages.findLast((m) => m.type === "toast" && m.title === "Una tarea tuya vence en un rato")
+    assert.ok(toast && toast.type === "toast")
+    assert.deepEqual([toast.projectId, toast.open], ["p1", "tasks"])
     assert.equal(db.dueTasks(Date.now() + 15 * 60_000).length, 0)
   })
 

@@ -76,6 +76,8 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
 
   return (
     <article
+      data-draft-id={draft.id}
+      data-draft-state={draft.state}
       className={cn(
         "rounded-xl border bg-card p-4 shadow-xs transition-colors",
         draft.state === "ready" && "border-status-attention/40",

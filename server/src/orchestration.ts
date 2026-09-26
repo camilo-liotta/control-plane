@@ -280,6 +280,8 @@ export class Orchestration {
         title: "No pude entregarle la cola a la orquestadora",
         body: errorMessage(err),
         projectId,
+        // En su chat se ve por qué (detenida, con error) y se reanuda; la cola está en su panel.
+        sessionId: orch.id,
       })
       this.broadcastProject(projectId)
       return false
@@ -373,6 +375,7 @@ export class Orchestration {
     this.broadcastProject(projectId)
     if (staged.length) {
       const project = this.db.getProject(projectId)
+      const orch = this.orchestratorOf(projectId)
       this.hub.broadcast({
         type: "toast",
         level: "info",
@@ -382,6 +385,8 @@ export class Orchestration {
           ? `La orquestadora terminó de revisar ${inReview.length} ${inReview.length === 1 ? "resultado" : "resultados"}.`
           : undefined,
         projectId,
+        // Las propuestas se ven en el chat de la orquestadora: el aviso lleva ahí y baja hasta ellas.
+        ...(orch ? { sessionId: orch.id, open: "proposals" as const } : {}),
       })
       if (project?.settings.autoDispatch) {
         for (const d of staged) {

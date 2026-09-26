@@ -20,6 +20,12 @@ interface UiState {
   compactFor: string | null
   /** Sesión cuyo panel de herramientas (MCP, skills, plugins) está abierto. */
   toolsFor: string | null
+  /**
+   * Lo que la página de destino tiene que mostrar al llegar desde un aviso: las propuestas listas
+   * en el chat de la orquestadora (`id`: la sesión) o las tareas del tablero (`id`: el proyecto).
+   * La página lo limpia cuando lo muestra.
+   */
+  reveal: { kind: "proposals" | "tasks"; id: string; at: number } | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
   selectAccount: (id: string) => void
 }
@@ -48,6 +54,7 @@ export const useUi = create<UiState>((set) => ({
   settingsForAccount: null,
   compactFor: null,
   toolsFor: null,
+  reveal: null,
   set: (patch) => set(patch),
   selectAccount: (id) => {
     try {

@@ -36,6 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { tokens, usd } from "@/lib/format"
+import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
@@ -104,6 +105,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const [panelOpen, setPanelOpen] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const setUi = useUi((s) => s.set)
+  const pendingReveal = useUi((s) => s.reveal)
 
   useEffect(() => {
     stick.current = true
@@ -132,6 +134,23 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     ro.observe(inner)
     return () => ro.disconnect()
   }, [shown])
+
+  // Llegaste desde "Hay una propuesta lista": la vista baja hasta la primera propuesta lista del
+  // chat. Si no está entre los mensajes cargados, se ve en el panel (en pantallas chicas, se abre).
+  useEffect(() => {
+    if (pendingReveal?.kind !== "proposals" || pendingReveal.id !== sessionId || !events) return
+    const raf = requestAnimationFrame(() => {
+      const inChat = content.current?.querySelector<HTMLElement>('[data-draft-state="ready"]')
+      const inPanel = document.querySelector<HTMLElement>('aside [data-draft-state="ready"]')
+      const target = inChat ?? (inPanel?.offsetParent ? inPanel : null)
+      if (target) {
+        if (inChat) stick.current = false
+        reveal(target)
+      } else if (document.querySelector('[data-draft-state="ready"]') || inPanel) setPanelOpen(true)
+      setUi({ reveal: null })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [pendingReveal, sessionId, events, setUi])
 
   const onScroll = () => {
     const el = scroller.current
