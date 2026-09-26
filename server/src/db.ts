@@ -19,6 +19,8 @@ import type {
   TaskState,
   TokenUsage,
   TimelineEvent,
+  UserTask,
+  UserTaskStatus,
 } from "./shared/types.ts"
 
 export const defaultSettings: ProjectSettings = {
@@ -186,6 +188,27 @@ const MIGRATIONS: string[] = [
   `,
   `
   ALTER TABLE drafts ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0;
+  `,
+  `
+  CREATE TABLE user_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    steps TEXT NOT NULL,
+    why TEXT,
+    blocking INTEGER NOT NULL DEFAULT 0,
+    due INTEGER,
+    created_by TEXT,
+    also_by TEXT,
+    status TEXT NOT NULL,
+    note TEXT,
+    closed_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    closed_at INTEGER,
+    reminded_at INTEGER
+  );
+  CREATE INDEX user_tasks_project ON user_tasks(project_id, status);
   `,
 ]
 
@@ -365,6 +388,34 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   context: "context",
   createdAt: "created_at",
   archivedAt: "archived_at",
+}
+
+function toTask(r: Row): UserTask {
+  const list = (v: unknown): string[] => {
+    try {
+      const a = JSON.parse(String(v ?? "[]")) as unknown
+      return Array.isArray(a) ? a.map(String) : []
+    } catch {
+      return []
+    }
+  }
+  return {
+    id: String(r.id),
+    projectId: String(r.project_id),
+    title: String(r.title),
+    steps: list(r.steps),
+    why: str(r.why),
+    blocking: bool(r.blocking),
+    due: num(r.due),
+    createdBy: str(r.created_by),
+    alsoBy: list(r.also_by),
+    status: String(r.status) as UserTaskStatus,
+    note: str(r.note),
+    closedBy: str(r.closed_by),
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+    closedAt: num(r.closed_at),
+  }
 }
 
 const DRAFT_COLUMNS: Partial<Record<keyof Draft, string>> = {
@@ -630,6 +681,52 @@ export class Db {
       ts: Number(r.ts),
       event: JSON.parse(String(r.data)) as TimelineEvent,
     }
+  }
+
+  // ------------------------------------------------------------------ tareas para vos
+
+  insertTask(t: UserTask) {
+    this.db
+      .prepare(
+        `INSERT INTO user_tasks (id, project_id, title, steps, why, blocking, due, created_by, also_by, status, note, closed_by, created_at, updated_at, closed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(t.id, t.projectId, t.title, JSON.stringify(t.steps), t.why, t.blocking ? 1 : 0, t.due, t.createdBy, JSON.stringify(t.alsoBy), t.status, t.note, t.closedBy, t.createdAt, t.updatedAt, t.closedAt)
+  }
+
+  updateTask(id: string, patch: Partial<UserTask>) {
+    const cols: Partial<Record<keyof UserTask, string>> = {
+      title: "title", steps: "steps", why: "why", blocking: "blocking", due: "due", alsoBy: "also_by", status: "status",
+      note: "note", closedBy: "closed_by", updatedAt: "updated_at", closedAt: "closed_at",
+    }
+    const keys = (Object.keys(patch) as (keyof UserTask)[]).filter((k) => cols[k])
+    if (!keys.length) return
+    this.db.prepare(`UPDATE user_tasks SET ${keys.map((k) => `${cols[k]} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => sqlValue(patch[k])), id)
+  }
+
+  getTask(id: string): UserTask | null {
+    const r = this.db.prepare("SELECT * FROM user_tasks WHERE id = ?").get(id) as Row | undefined
+    return r ? toTask(r) : null
+  }
+
+  /** Las abiertas y las que se cerraron hace poco. */
+  listTasks(opts: { projectId?: string; closedSince?: number } = {}): UserTask[] {
+    const since = opts.closedSince ?? 0
+    const rows = (
+      opts.projectId
+        ? this.db.prepare("SELECT * FROM user_tasks WHERE project_id = ? AND (status = 'open' OR closed_at >= ?) ORDER BY created_at").all(opts.projectId, since)
+        : this.db.prepare("SELECT * FROM user_tasks WHERE status = 'open' OR closed_at >= ? ORDER BY created_at").all(since)
+    ) as Row[]
+    return rows.map(toTask)
+  }
+
+  /** Las que tienen fecha, están abiertas y todavía no avisaron. */
+  dueTasks(until: number): UserTask[] {
+    return (this.db.prepare("SELECT * FROM user_tasks WHERE status = 'open' AND due IS NOT NULL AND due <= ? AND reminded_at IS NULL").all(until) as Row[]).map(toTask)
+  }
+
+  markReminded(id: string, at: number) {
+    this.db.prepare("UPDATE user_tasks SET reminded_at = ? WHERE id = ?").run(at, id)
   }
 
   // ------------------------------------------------------------------ drafts

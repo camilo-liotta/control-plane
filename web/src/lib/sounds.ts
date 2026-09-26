@@ -30,6 +30,7 @@ export const EVENTS: { id: NoticeEvent; label: string; hint: string }[] = [
   { id: "blocked", label: "Bloqueado", hint: "Un worker quedó trabado y pide una decisión" },
   { id: "proposals", label: "Propuestas listas", hint: "La orquestadora terminó de revisar" },
   { id: "compaction", label: "Compactación", hint: "El contexto se llena o espera tu elección" },
+  { id: "task", label: "Tarea para vos", hint: "Una sesión te dejó algo para hacer" },
   { id: "error", label: "Error", hint: "Algo falló" },
 ]
 
@@ -45,7 +46,7 @@ const DEFAULTS: SoundSettings = {
   enabled: true,
   volume: 0.6,
   onlyAway: false,
-  byEvent: { needs_you: "llamada", result: "acorde", blocked: "espera", proposals: "arpegio", compaction: "suave", error: "apagado" },
+  byEvent: { needs_you: "llamada", result: "acorde", blocked: "espera", proposals: "arpegio", compaction: "suave", error: "apagado", task: "toc" },
 }
 
 const KEY = "control-plane:sounds"

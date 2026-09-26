@@ -24,6 +24,7 @@ import { SessionManager } from "./sessions.ts"
 import { Overview } from "./overview.ts"
 import { CliUsage } from "./cli-usage.ts"
 import { Clis } from "./clis.ts"
+import { UserTasks } from "./user-tasks.ts"
 import { SkillMarket } from "./skill-market.ts"
 import { Tools } from "./tools.ts"
 
@@ -201,7 +202,8 @@ async function main() {
     },
   })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis }
+  const tasks = new UserTasks({ db, hub, sessions })
+  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks }
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
   const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })
@@ -266,6 +268,7 @@ async function main() {
     orchestration.dispose()
     compaction.dispose()
     clis.dispose()
+    tasks.dispose()
     await sessions.shutdown().catch(() => {})
     await app.close().catch(() => {})
     db.close()

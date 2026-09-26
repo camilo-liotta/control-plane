@@ -625,6 +625,7 @@ export interface Snapshot {
   accounts: Account[]
   compactions: CompactionState[]
   turns: { sessionId: string; turn: TurnProgress }[]
+  tasks: UserTask[]
   meta: Meta
 }
 
@@ -656,6 +657,7 @@ export type ServerMessage =
   | { type: "turn"; sessionId: string; turn: TurnProgress | null }
   /** Cambió algo de los CLIs (un login o una instalación que avanzó o terminó). */
   | { type: "clis_changed" }
+  | { type: "task"; task: UserTask }
   | {
       type: "toast"
       level: ToastLevel
@@ -672,7 +674,38 @@ export type ServerMessage =
 // ------------------------------------------------------------------ CLIs
 
 /** Los tipos de aviso de la bandeja, cada uno con su sonido. */
-export type NoticeEvent = "result" | "blocked" | "needs_you" | "proposals" | "compaction" | "error"
+export type NoticeEvent = "result" | "blocked" | "needs_you" | "proposals" | "compaction" | "error" | "task"
+
+// ------------------------------------------------------------------ tareas para vos
+
+export type UserTaskStatus = "open" | "done" | "dismissed"
+
+/** Algo que las sesiones necesitan que hagas vos (un login, una web, una aprobación en otro sistema). */
+export interface UserTask {
+  id: string
+  projectId: string
+  title: string
+  /** Pasos cortos, en orden. Pueden tener `comandos` y links. */
+  steps: string[]
+  /** Para qué hace falta, en una línea. */
+  why: string | null
+  /** Alguna sesión está frenada esperando esto. */
+  blocking: boolean
+  /** Para cuándo (las que tienen día, como "el 30/9 a la noche"). */
+  due: number | null
+  /** Quién la pidió (id de sesión) o null si la creaste vos. */
+  createdBy: string | null
+  /** Otras sesiones que pidieron lo mismo. */
+  alsoBy: string[]
+  status: UserTaskStatus
+  /** Cómo se cerró ("ya estaba hecho", tu nota al marcarla). */
+  note: string | null
+  /** "user" o el id de la sesión que la cerró. */
+  closedBy: string | null
+  createdAt: number
+  updatedAt: number
+  closedAt: number | null
+}
 
 export type CliAuthState = "ok" | "expired" | "logged_out" | "unknown"
 

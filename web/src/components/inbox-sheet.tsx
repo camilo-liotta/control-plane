@@ -1,4 +1,4 @@
-import { Inbox } from "lucide-react"
+import { ClipboardList, Inbox } from "lucide-react"
 import { Link } from "wouter"
 
 import { DraftCard } from "@/components/draft-card"
@@ -31,6 +31,7 @@ export function InboxSheet() {
   const reports = useStore((s) => s.reports)
   const projects = useStore((s) => s.projects)
   const compactions = useStore((s) => s.compactions)
+  const tasks = useStore((s) => s.tasks)
 
   const needs = Object.values(sessions).filter((s) => s.status === "needs_input")
   const ready = Object.values(drafts).filter((d) => d.state === "ready").sort((a, b) => a.createdAt - b.createdAt)
@@ -38,7 +39,10 @@ export function InboxSheet() {
   const queue = Object.values(reports)
     .filter((r) => r.state === "queued" || r.state === "in_review")
     .sort((a, b) => a.createdAt - b.createdAt)
-  const empty = !needs.length && !ready.length && !staged.length && !queue.length
+  const todo = Object.values(tasks)
+    .filter((t) => t.status === "open")
+    .sort((a, b) => Number(b.blocking) - Number(a.blocking) || (a.due ?? Infinity) - (b.due ?? Infinity) || a.createdAt - b.createdAt)
+  const empty = !needs.length && !ready.length && !staged.length && !queue.length && !todo.length
   const close = () => setUi({ inbox: false })
 
   return (
@@ -85,6 +89,29 @@ export function InboxSheet() {
                         : compactions[s.id]?.waiting
                           ? "espera que elijas qué conservar al compactar"
                           : (s.statusDetail ?? "te necesita")}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </Group>
+          <Group title="Tareas para vos" count={todo.length}>
+            <div className="space-y-1.5">
+              {todo.map((t) => (
+                <Link
+                  key={t.id}
+                  href={`/p/${t.projectId}`}
+                  onClick={close}
+                  className={
+                    t.blocking
+                      ? "flex items-center gap-2.5 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 hover:bg-status-attention/10"
+                      : "flex items-center gap-2.5 rounded-lg border px-3 py-2 hover:bg-muted"
+                  }
+                >
+                  <ClipboardList className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {projects[t.projectId]?.name}
+                    {t.blocking ? " · te espera" : ""}
                   </span>
                 </Link>
               ))}

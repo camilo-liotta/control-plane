@@ -7,6 +7,7 @@ import { ArchivedSessions } from "@/components/archived-sessions"
 import { DraftCard } from "@/components/draft-card"
 import { PageHeader } from "@/components/page-header"
 import { ProjectOverviewCard } from "@/components/project-overview"
+import { UserTasksCard } from "@/components/user-tasks"
 import { GraphLegend, ProjectGraph } from "@/components/project-graph"
 import { ReportCard } from "@/components/report-card"
 import { OrchestratorCard, WorkerCard } from "@/components/session-cards"
@@ -149,6 +150,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-6">
           <ProjectOverviewCard project={project} />
+          <UserTasksCard project={project} />
           <OrchestratorCard project={project} orchestrator={orchestrator} drafts={drafts} />
 
           <section className="overflow-hidden rounded-2xl border bg-card shadow-xs">

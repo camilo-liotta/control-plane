@@ -246,9 +246,12 @@ function NotificationsMenu() {
 export function useInboxCount() {
   const drafts = useStore((s) => s.drafts)
   const sessions = useStore((s) => s.sessions)
+  const tasks = useStore((s) => s.tasks)
   const ready = Object.values(drafts).filter((d) => d.state === "ready").length
   const needs = Object.values(sessions).filter((s) => s.status === "needs_input").length
-  return ready + needs
+  // Las tareas que frenan a una sesión también esperan algo de vos.
+  const waiting = Object.values(tasks).filter((t) => t.status === "open" && t.blocking).length
+  return ready + needs + waiting
 }
 
 export function AppSidebar() {

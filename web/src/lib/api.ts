@@ -8,6 +8,7 @@ import type {
   ClaudeSettingValue,
   CliJob,
   CliView,
+  UserTask,
   CompactionState,
   ContextUsage,
   Draft,
@@ -159,6 +160,10 @@ export const api = {
   compactionApply: (id: string, selection: CompactionSelection) =>
     request("POST", `/api/sessions/${id}/compaction/apply`, selection),
   compactionDirect: (id: string) => request("POST", `/api/sessions/${id}/compaction/direct`),
+  createTask: (projectId: string, task: { title: string; steps: string[]; why?: string; due?: number | null }) =>
+    request<UserTask>("POST", `/api/projects/${projectId}/tasks`, task),
+  updateTask: (id: string, patch: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] }) =>
+    request<UserTask>("PATCH", `/api/tasks/${id}`, patch),
   clis: (refresh = false) => request<CliView>("GET", `/api/clis${refresh ? "?refresh=1" : ""}`),
   cliLogin: (id: string, credential = 0) => request<CliJob>("POST", `/api/clis/${id}/login`, { credential }),
   cliInstall: (id: string) => request<CliJob>("POST", `/api/clis/${id}/install`),
