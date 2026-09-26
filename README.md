@@ -41,6 +41,20 @@ Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga 
 
 Atajos: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> para saltar a cualquier sesión, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>B</kbd> para ocultar la barra lateral.
 
+### Sonidos
+
+El parlante, al lado de la campana, configura los **sonidos de la bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), todos suaves, elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
+
+### Tareas para vos
+
+Cuando una sesión necesita algo que no puede hacer ella (un login, algo en una web, aprobar o configurar algo en otro sistema, conseguir un dato), no lo deja perdido en su chat: crea una **tarea para vos** en el tablero del proyecto.
+
+- Cada tarea tiene pasos cortos y en orden (con los comandos para copiar y los links), para qué hace falta, quién la pidió y, si tiene, para cuándo. Las que tienen fecha avisan un rato antes.
+- **Te está esperando**: la sesión quedó frenada por esa tarea. Esas van primero y suman a la Bandeja. Cuando la marcás **Hecha**, se le avisa a la sesión, con tu nota si escribiste una, y sigue.
+- Las sesiones miran las abiertas antes de crear una: si otra ya pidió lo mismo, se suman a esa. También las cierran solas cuando ven que ya está hecha o dejó de hacer falta, y dicen por qué.
+- Podés crear una a mano, marcarla **No hace falta** o reabrir una cerrada. Las cerradas de la última semana quedan a la vista.
+- En la Bandeja aparecen las abiertas de todos los proyectos, y "Tarea para vos" tiene su propio sonido.
+
 ### El resumen del proyecto
 
 Arriba de todo en el tablero de cada proyecto:
@@ -157,10 +171,12 @@ Las sesiones abiertas recargan plugins y skills solas después de un cambio; un 
 
 ### CLIs
 
-La pestaña **CLIs** es un marketplace de las herramientas de línea de comandos de la máquina (gh, gcloud, aws, az, wrangler, vercel, netlify, fly, railway, neonctl, supabase, psql, dbt, docker, kubectl, terraform y más). Son de tu usuario del sistema, así que las ven todas las cuentas y todos los proyectos.
+La pestaña **CLIs** es un marketplace de las herramientas de línea de comandos de la máquina (gh, gcloud, aws, az, wrangler, vercel, netlify, fly, railway, heroku, firebase, neonctl, supabase, doppler, 1Password, cloudflared, ngrok, pulumi, psql, dbt, docker, kubectl, terraform y más). Son de tu usuario del sistema, así que las ven todas las cuentas y todos los proyectos.
 
 - **Instalados**: cada uno con su versión y su login (**Logueado**, **Vencido** o **Sin login**) y con qué cuenta. gcloud muestra aparte tu usuario y las credenciales de aplicación (ADC), que son las que usan las librerías.
 - **Iniciar sesión** o **Reautenticar** corre el login del propio CLI (por ejemplo `gcloud auth login`). Se abre el navegador y el login lo hacés vos. En la tarjeta ves lo que imprime: el link, el código de un login por dispositivo o una pregunta para contestarle. Al terminar vuelve a revisar el estado.
+- Los que se loguean pegando un token o una contraseña (1Password, doctl, ngrok) no tienen botón: la credencial no pasa por el dashboard. Te muestra el comando para una terminal.
+- **Usados por tus sesiones**: cuántas veces usaron cada CLI en los últimos 30 días, y los programas instalados que no están en el catálogo, con su ruta y en qué proyectos. Se lee de los transcripts de todas tus cuentas, también de lo que corriste en la terminal. A esos programas no se les corre nada, ni `--version`. Si una sesión quiso usar uno del catálogo y no estaba ("command not found"), aparece primero en **Para instalar**.
 - **Para instalar**: el comando para tu sistema (brew en macOS; npm, snap, apt o el instalador oficial en Linux). **Instalar** lo corre si no pide sudo; si lo pide, **Copiar** te lo da para una terminal.
 - Las sesiones consultan lo mismo con la herramienta MCP `list_clis`. Si un CLI les falla por el login, no intentan loguearse: te avisan para que lo hagas desde acá.
 
@@ -196,7 +212,7 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
 
 - Cada sesión es `claude -p --input-format stream-json --output-format stream-json` con `--dangerously-skip-permissions`, `--name`, `--append-system-prompt` (el protocolo) y `--mcp-config` (el MCP local). Es un proceso largo que recibe mensajes por stdin, igual que una sesión interactiva.
 - **Protocolo**: al arrancar, cada sesión recibe su rol, quiénes son las otras y las reglas (coordinar con `SendMessage` antes de tocar algo compartido, no pisar el checkout, reportar al terminar). Se arma en `server/src/prompts.ts` y se puede ampliar por proyecto en su configuración.
-- **Herramientas MCP de control-plane**: `list_sessions` (todas, con el contexto que usa cada una); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora). Las propuestas aceptan `subagents` para pedir subagentes específicos y `fresh` para empezar de cero.
+- **Herramientas MCP de control-plane**: `list_sessions` (todas, con el contexto que usa cada una); `create_user_task`, `list_user_tasks` y `update_user_task` (todas, para las tareas para vos); `list_clis` (todas); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora). Las propuestas aceptan `subagents` para pedir subagentes específicos y `fresh` para empezar de cero.
 - **Adjuntos**: se guardan en `~/.control-plane/attachments/<sesión>/` y se sirven solo a esta máquina.
 - **Compactación**: cada sesión se lanza con hooks `PreCompact` y `PostCompact` (en `--settings`, se suman a los tuyos) que llaman al server. La salida de `PreCompact` es, para Claude Code, instrucciones extra del resumen: así viaja tu selección, y en modo "esperarme" el hook no responde hasta que elegís. El borrador se pide con `side_question` (lo mismo que `/btw`); si la sesión ya está compactando, se lee la conversación en una copia que no se guarda (`--resume --fork-session --no-session-persistence`).
 - **Herramientas**: se leen de una sesión abierta en esa carpeta (`mcp_status`, `get_context_usage`) o, si no hay, de un Claude Code sin conversación que carga la config, conecta los MCP y se cierra (no guarda nada ni corre tus hooks). Los cambios los hace Claude Code: `claude plugin`, `claude mcp`, `mcp_toggle` y `skillOverrides` en los settings.
@@ -253,6 +269,8 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/skill-market.ts   marketplaces de skills y skills con IA
   src/overview.ts       resumen del proyecto (git, tokens, última actividad)
   src/clis.ts           catálogo de CLIs, sus logins e instalaciones
+  src/cli-usage.ts      qué programas usan tus sesiones (desde los transcripts)
+  src/user-tasks.ts     tareas para vos (las crean y cierran las sesiones)
   src/claude/config-settings.ts  opciones de /config
   src/prompts.ts        protocolo de orquestadora y workers
   src/http.ts           chequeo de host/origen, /api/health y /ws

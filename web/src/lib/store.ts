@@ -5,6 +5,7 @@ import type {
   Account,
   CompactionState,
   Draft,
+  UserTask,
   Meta,
   ModelOption,
   Project,
@@ -32,6 +33,7 @@ interface State {
   projects: Record<string, Project>
   sessions: Record<string, Session>
   drafts: Record<string, Draft>
+  tasks: Record<string, UserTask>
   reports: Record<string, Report>
   events: Record<string, StoredEvent[]>
   hasMore: Record<string, boolean>
@@ -72,6 +74,7 @@ export const useStore = create<State>((set, get) => ({
   projects: {},
   sessions: {},
   drafts: {},
+  tasks: {},
   reports: {},
   events: {},
   hasMore: {},
@@ -99,6 +102,7 @@ export const useStore = create<State>((set, get) => ({
           projects: byId(snapshot.projects),
           sessions: byId(snapshot.sessions),
           drafts: byId(snapshot.drafts),
+          tasks: byId(snapshot.tasks ?? []),
           reports: byId(snapshot.reports),
           accounts: byId(snapshot.accounts),
           compactions: Object.fromEntries((snapshot.compactions ?? []).map((c) => [c.sessionId, c])),
@@ -171,6 +175,9 @@ export const useStore = create<State>((set, get) => ({
         break
       case "draft":
         set((s) => ({ drafts: { ...s.drafts, [msg.draft.id]: msg.draft } }))
+        break
+      case "task":
+        set((s) => ({ tasks: { ...s.tasks, [msg.task.id]: msg.task } }))
         break
       case "report":
         set((s) => ({ reports: { ...s.reports, [msg.report.id]: msg.report } }))

@@ -6,6 +6,7 @@ import { Link, useLocation } from "wouter"
 import type { Project, Session } from "@shared/types"
 
 import { AccountSwitcher } from "@/components/accounts"
+import { SoundsMenu } from "@/components/sounds-menu"
 import { SessionLamp } from "@/components/status"
 import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
@@ -293,9 +294,12 @@ function BrowserNotificationsMenu() {
 export function useInboxCount() {
   const drafts = useStore((s) => s.drafts)
   const sessions = useStore((s) => s.sessions)
+  const tasks = useStore((s) => s.tasks)
   const ready = Object.values(drafts).filter((d) => d.state === "ready").length
   const needs = Object.values(sessions).filter((s) => s.status === "needs_input").length
-  return ready + needs
+  // Las tareas que frenan a una sesión también esperan algo de vos.
+  const waiting = Object.values(tasks).filter((t) => t.status === "open" && t.blocking).length
+  return ready + needs + waiting
 }
 
 export function AppSidebar() {
@@ -373,6 +377,7 @@ export function AppSidebar() {
         <div className="flex items-center gap-1 px-1">
           <ThemeToggle />
           <NotificationsMenu />
+          <SoundsMenu />
           {claudeVersion && (
             <span className="ml-auto truncate font-mono text-[0.68rem] text-muted-foreground" title="Versión de Claude Code">
               claude {claudeVersion}

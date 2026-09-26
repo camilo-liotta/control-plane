@@ -439,6 +439,7 @@ export class Compaction {
         this.deps.sessions.setHold(rec.id, "Por compactar: elegí qué conservar")
         this.deps.hub.broadcast({
           type: "toast",
+          event: "compaction",
           level: "warn",
           title: `${rec.name} va a compactar el contexto`,
           body: `Elegí qué conservar. Si no, compacta como siempre en ${Math.round(ms / 60_000)} min.`,
@@ -478,6 +479,7 @@ export class Compaction {
     const pct = Math.round((usage.tokens / usage.max) * 100)
     this.deps.hub.broadcast({
       type: "toast",
+      event: "compaction",
       level: "info",
       title: `${rec.name} va por el ${pct}% del contexto`,
       body: "Pronto va a compactar. Si querés, elegí ahora qué conservar.",
@@ -550,6 +552,7 @@ export class Compaction {
       this.deps.sessions.setHold(rec.id, "Contexto lleno: compactá para seguir")
       this.deps.hub.broadcast({
         type: "toast",
+        event: "compaction",
         level: "warn",
         title: `${rec.name} tiene el contexto lleno`,
         body: "El mensaje no salió. Compactá y se reenvía solo.",

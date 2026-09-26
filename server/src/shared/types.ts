@@ -625,6 +625,7 @@ export interface Snapshot {
   accounts: Account[]
   compactions: CompactionState[]
   turns: { sessionId: string; turn: TurnProgress }[]
+  tasks: UserTask[]
   meta: Meta
 }
 
@@ -632,7 +633,7 @@ export type ToastLevel = "info" | "success" | "warn" | "error"
 
 /** Lo que muestra la app de escritorio en la bandeja: cuántas te necesitan y cuántas trabajan. */
 export interface DesktopSummary {
-  /** Sesiones que te necesitan más propuestas listas para enviar (lo mismo que la bandeja de entrada). */
+  /** Sesiones que te necesitan, propuestas listas y tareas que frenan a una sesión (lo mismo que la bandeja de entrada). */
   needs: number
   /** Sesiones trabajando o iniciando. */
   working: number
@@ -686,6 +687,7 @@ export type ServerMessage =
   | { type: "desktop_summary"; summary: DesktopSummary }
   /** Solo a la web: si hay una app de escritorio conectada (al conectar y cuando cambia). */
   | { type: "desktop"; connected: boolean }
+  | { type: "task"; task: UserTask }
   | {
       type: "toast"
       level: ToastLevel
@@ -695,9 +697,45 @@ export type ServerMessage =
       sessionId?: string
       /** Qué abrir al tocar "Ver" (por defecto, la sesión). */
       open?: "compaction"
+      /** De qué se trata, para elegir el sonido. */
+      event?: NoticeEvent
     }
 
 // ------------------------------------------------------------------ CLIs
+
+/** Los tipos de aviso de la bandeja, cada uno con su sonido. */
+export type NoticeEvent = "result" | "blocked" | "needs_you" | "proposals" | "compaction" | "error" | "task"
+
+// ------------------------------------------------------------------ tareas para vos
+
+export type UserTaskStatus = "open" | "done" | "dismissed"
+
+/** Algo que las sesiones necesitan que hagas vos (un login, una web, una aprobación en otro sistema). */
+export interface UserTask {
+  id: string
+  projectId: string
+  title: string
+  /** Pasos cortos, en orden. Pueden tener `comandos` y links. */
+  steps: string[]
+  /** Para qué hace falta, en una línea. */
+  why: string | null
+  /** Alguna sesión está frenada esperando esto. */
+  blocking: boolean
+  /** Para cuándo (las que tienen día, como "el 30/9 a la noche"). */
+  due: number | null
+  /** Quién la pidió (id de sesión) o null si la creaste vos. */
+  createdBy: string | null
+  /** Otras sesiones que pidieron lo mismo. */
+  alsoBy: string[]
+  status: UserTaskStatus
+  /** Cómo se cerró ("ya estaba hecho", tu nota al marcarla). */
+  note: string | null
+  /** "user" o el id de la sesión que la cerró. */
+  closedBy: string | null
+  createdAt: number
+  updatedAt: number
+  closedAt: number | null
+}
 
 export type CliAuthState = "ok" | "expired" | "logged_out" | "unknown"
 
@@ -708,6 +746,8 @@ export interface CliCredential {
   state: CliAuthState
   account: string | null
   detail: string | null
+  /** Si el login pide pegar una credencial, no hay botón: este comando es para la terminal. */
+  terminalLogin: string | null
 }
 
 export interface CliInfo {
@@ -722,6 +762,19 @@ export interface CliInfo {
   /** Cómo instalarlo en esta máquina; runnable: el dashboard lo puede correr (no pide sudo). */
   install: { command: string; runnable: boolean } | null
   credentials: CliCredential[]
+  /** Cuántas veces lo usaron tus sesiones (últimos 30 días). */
+  usage: { count: number; lastAt: number } | null
+  /** Cuántas veces lo quisieron usar y no estaba instalado ("command not found"). */
+  wanted: number
+}
+
+/** Un programa que usaron tus sesiones y no está en el catálogo. */
+export interface UsedProgram {
+  name: string
+  path: string
+  count: number
+  lastAt: number
+  projects: string[]
 }
 
 export interface CliJob {
@@ -745,4 +798,7 @@ export interface CliView {
   at: number
   clis: CliInfo[]
   jobs: CliJob[]
+  used: UsedProgram[]
+  /** Todavía está leyendo los transcripts (la primera vez tarda). */
+  usageScanning: boolean
 }

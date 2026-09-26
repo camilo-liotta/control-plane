@@ -75,6 +75,7 @@ export function CliSection() {
     return (view?.clis ?? [])
       .filter((c) => !c.installed)
       .filter((c) => !needle || `${c.name} ${c.id} ${c.description} ${c.category}`.toLowerCase().includes(needle))
+      .sort((a, b) => b.wanted - a.wanted)
   }, [view, q])
   const pending = installed.filter((c) => c.credentials.some((k) => k.state === "expired" || k.state === "logged_out")).length
 
@@ -125,6 +126,32 @@ export function CliSection() {
       </section>
 
       <section>
+        <h3 className="eyebrow mb-1">Usados por tus sesiones {view.used.length || ""}</h3>
+        <p className="mb-2 text-xs text-muted-foreground">
+          Otros programas que corrieron tus sesiones en los últimos 30 días y no están en el catálogo. Sin login desde acá: no sé cómo se chequea.
+          {view.usageScanning && " Leyendo los transcripts…"}
+        </p>
+        {view.used.length > 0 ? (
+          <ul className="divide-y rounded-xl border bg-card">
+            {view.used.map((u) => (
+              <li key={u.name} className="flex flex-wrap items-baseline gap-x-3 px-4 py-2 text-sm">
+                <span className="font-mono font-medium">{u.name}</span>
+                <span className="min-w-0 truncate font-mono text-[0.7rem] text-muted-foreground">{u.path}</span>
+                <span className="text-xs text-muted-foreground" title={u.projects.join(", ")}>
+                  en {u.projects.length === 1 ? u.projects[0] : `${u.projects.length} proyectos`}
+                </span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {u.count.toLocaleString("es-AR")} {u.count === 1 ? "vez" : "veces"} · {timeAgo(u.lastAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          !view.usageScanning && <p className="text-sm text-muted-foreground">Nada fuera del catálogo.</p>
+        )}
+      </section>
+
+      <section>
         <div className="mb-2 flex items-center gap-3">
           <h3 className="eyebrow">Para instalar {available.length}</h3>
           <div className="relative ml-auto w-64">
@@ -164,6 +191,11 @@ function InstalledCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
           {cli.version ? ` ${cli.version}` : ""}
         </span>
         <span className="text-xs text-muted-foreground">· {cli.description}</span>
+        {cli.usage && (
+          <span className="ml-auto text-[0.7rem] text-muted-foreground" title={`Última vez: ${timeAgo(cli.usage.lastAt)}`}>
+            tus sesiones lo usaron {cli.usage.count.toLocaleString("es-AR")} {cli.usage.count === 1 ? "vez" : "veces"}
+          </span>
+        )}
       </div>
       {cli.credentials.map((k) => (
         <div key={k.index} className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -171,7 +203,18 @@ function InstalledCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
           <TonePill tone={STATE[k.state].tone}>{STATE[k.state].label}</TonePill>
           {k.account && <span className="font-mono text-xs">{k.account}</span>}
           {k.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{k.detail}</span>}
-          {k.state !== "ok" && (
+          {k.state !== "ok" && k.terminalLogin && (
+            <button
+              type="button"
+              className="ml-auto inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 font-mono text-[0.7rem] hover:bg-muted/70"
+              title="El login pide pegar una credencial: corrélo en una terminal"
+              onClick={() => copy(k.terminalLogin!)}
+            >
+              <Copy className="size-3" />
+              {k.terminalLogin}
+            </button>
+          )}
+          {k.state !== "ok" && !k.terminalLogin && (
             <Button
               size="xs"
               variant={k.state === "expired" ? "default" : "outline"}
@@ -210,6 +253,11 @@ function AvailableCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
         <span className="ml-auto text-[0.7rem] text-muted-foreground">{cli.category}</span>
       </div>
       <p className="mt-0.5 text-xs text-muted-foreground">{cli.description}</p>
+      {cli.wanted > 0 && (
+        <p className="mt-1 text-[0.7rem] font-medium text-status-attention">
+          Tus sesiones lo quisieron usar {cli.wanted === 1 ? "una vez" : `${cli.wanted} veces`} y no estaba instalado.
+        </p>
+      )}
       {cli.install ? (
         <div className="mt-2 flex items-center gap-2">
           <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-[0.7rem]" title={cli.install.command}>

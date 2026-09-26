@@ -14,7 +14,7 @@ import { desktopSummary } from "../src/desktop.ts"
 import { localOnly, registerHealth, registerWs } from "../src/http.ts"
 import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
-import type { Draft, DesktopSummary, ServerMessage, Session, StoredEvent } from "../src/shared/types.ts"
+import type { Draft, DesktopSummary, ServerMessage, Session, StoredEvent, UserTask } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
 
 async function freePort(): Promise<number> {
@@ -27,6 +27,7 @@ async function freePort(): Promise<number> {
 
 const session = (id: string, projectId: string, status: Session["status"]) => ({ id, projectId, status }) as Session
 const draft = (id: string, projectId: string, state: Draft["state"]) => ({ id, projectId, state }) as Draft
+const task = (id: string, projectId: string, status: UserTask["status"], blocking: boolean) => ({ id, projectId, status, blocking }) as UserTask
 
 describe("health", () => {
   let app: FastifyInstance
@@ -65,6 +66,8 @@ describe("resumen de escritorio", () => {
           assert.deepEqual(opts?.states, ["ready"])
           return [draft("d1", "p1", "ready"), draft("d2", "p3", "ready")]
         },
+        // Solo suman las abiertas que frenan a una sesión, como en la web.
+        listTasks: () => [task("t1", "p1", "open", true), task("t2", "p2", "open", false), task("t3", "p2", "done", true), task("t4", "p2", "open", true)],
       },
       sessions: {
         list: () => [
@@ -81,12 +84,12 @@ describe("resumen de escritorio", () => {
       },
     })
     assert.deepEqual(summary, {
-      needs: 4,
+      needs: 6,
       working: 2,
       running: 5,
       projects: [
-        { id: "p1", name: "Uno", needs: 2, working: 1 },
-        { id: "p2", name: "Dos", needs: 0, working: 1 },
+        { id: "p1", name: "Uno", needs: 3, working: 1 },
+        { id: "p2", name: "Dos", needs: 1, working: 1 },
       ],
     })
   })
@@ -195,6 +198,13 @@ describe("WS de escritorio", () => {
     summary.needs = 0
     hub.broadcast({ type: "session", session: session("s", "p1", "idle") })
     await desk.waitFor((m) => m.type === "desktop_summary" && m.summary.needs === 0 && m.summary.working === 2)
+
+    // Una tarea que frena a una sesión mueve el resumen, pero el mensaje "task" no le llega a la app.
+    summary.needs = 7
+    hub.broadcast({ type: "task", task: task("t", "p1", "open", true) })
+    await desk.waitFor((m) => m.type === "desktop_summary" && m.summary.needs === 7)
+    await web.waitFor((m) => m.type === "task")
+    assert.deepEqual([...new Set(desk.got.map((m) => m.type))].sort(), ["desktop_summary", "toast"])
 
     desk.close()
     await web.waitFor((m) => m.type === "desktop" && !m.connected)

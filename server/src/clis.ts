@@ -3,7 +3,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import type { CliAuthState, CliCredential, CliInfo, CliJob, CliView } from "./shared/types.ts"
+import type { CliUsage } from "./cli-usage.ts"
+import type { CliAuthState, CliCredential, CliInfo, CliJob, CliView, UsedProgram } from "./shared/types.ts"
 import { now, oneLine, shortId } from "./util.ts"
 
 /**
@@ -25,7 +26,9 @@ interface CredentialSpec {
   label: string | null
   check: Check
   /** Argumentos del login (abre el navegador o muestra un link y un código). */
-  login: string[]
+  login?: string[]
+  /** Si el login pide pegar un token o una contraseña, no se hace desde acá: se muestra para la terminal. */
+  terminalLogin?: string
 }
 
 export interface CliSpec {
@@ -253,6 +256,158 @@ export const CATALOG: CliSpec[] = [
     auth: [{ label: null, login: ["login"], check: byExit({ args: ["projects", "list", "--output", "json"], expired: /expired|401/i, timeoutMs: 20_000 }) }],
   },
   {
+    id: "doppler",
+    name: "Doppler",
+    description: "Secretos y variables de entorno por proyecto y ambiente.",
+    category: "Servicios",
+    bins: ["doppler"],
+    docs: "https://docs.doppler.com/docs/install-cli",
+    install: { mac: "brew install dopplerhq/cli/doppler", linux: "curl -Ls https://cli.doppler.com/install.sh | sudo sh" },
+    auth: [
+      {
+        label: null,
+        login: ["login"],
+        check: byExit({
+          args: ["me", "--json"],
+          account: (o) => pick(o, /"workplace":\s*\{[^}]*"name":\s*"([^"]+)"/) ?? pick(o, /"name":\s*"([^"]+)"/),
+          expired: /expired|invalid token|unauthorized/i,
+          timeoutMs: 20_000,
+        }),
+      },
+    ],
+  },
+  {
+    id: "op",
+    name: "1Password CLI",
+    description: "Secretos y credenciales de 1Password.",
+    category: "Servicios",
+    bins: ["op"],
+    docs: "https://developer.1password.com/docs/cli/get-started/",
+    install: { mac: "brew install --cask 1password-cli" },
+    auth: [{ label: null, terminalLogin: "op signin", check: byExit({ args: ["whoami"], account: (o) => pick(o, /Email:\s*(\S+)/), expired: /expired|session/i }) }],
+  },
+  {
+    id: "cloudflared",
+    name: "cloudflared",
+    description: "Túneles de Cloudflare hacia servicios locales.",
+    category: "Infraestructura",
+    bins: ["cloudflared"],
+    docs: "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/",
+    install: { mac: "brew install cloudflared" },
+    auth: [
+      {
+        label: null,
+        login: ["tunnel", "login"],
+        check: async (_bin, run) => {
+          const r = await run(["tunnel", "list"], 20_000)
+          if (r.code === 0) return { state: "ok" }
+          if (r.code === null) return { state: "unknown", detail: "no contestó a tiempo" }
+          if (/origin certificate|cert\.pem|login/i.test(r.out)) return { state: "logged_out" }
+          return { state: "expired", detail: firstLine(r.out) }
+        },
+      },
+    ],
+  },
+  {
+    id: "ngrok",
+    name: "ngrok",
+    description: "Exponer un puerto local con una URL pública.",
+    category: "Infraestructura",
+    bins: ["ngrok"],
+    docs: "https://ngrok.com/download",
+    install: { mac: "brew install ngrok", linux: "sudo snap install ngrok" },
+    auth: [{ label: null, terminalLogin: "ngrok config add-authtoken <token>", check: byExit({ args: ["config", "check"] }) }],
+  },
+  {
+    id: "doctl",
+    name: "DigitalOcean CLI",
+    description: "Droplets, bases y apps de DigitalOcean.",
+    category: "Nube",
+    bins: ["doctl"],
+    docs: "https://docs.digitalocean.com/reference/doctl/how-to/install/",
+    install: { mac: "brew install doctl", linux: "sudo snap install doctl" },
+    auth: [{ label: null, terminalLogin: "doctl auth init", check: byExit({ args: ["account", "get"], account: (o) => pick(o, /(\S+@\S+)/), expired: /unauthorized|401/i, timeoutMs: 20_000 }) }],
+  },
+  {
+    id: "pulumi",
+    name: "Pulumi",
+    description: "Infraestructura como código en TypeScript o Python.",
+    category: "Infraestructura",
+    bins: ["pulumi"],
+    docs: "https://www.pulumi.com/docs/iac/download-install/",
+    install: { mac: "brew install pulumi/tap/pulumi", linux: "curl -fsSL https://get.pulumi.com | sh" },
+    auth: [{ label: null, login: ["login"], check: byExit({ args: ["whoami"], account: (o) => firstLine(o) || null, expired: /expired|unauthorized/i, timeoutMs: 20_000 }) }],
+  },
+  {
+    id: "firebase",
+    name: "Firebase CLI",
+    description: "Hosting, funciones y reglas de Firebase.",
+    category: "Deploy",
+    bins: ["firebase"],
+    docs: "https://firebase.google.com/docs/cli",
+    install: { npm: "firebase-tools" },
+    auth: [
+      {
+        label: null,
+        login: ["login", "--reauth"],
+        check: async (_bin, run) => {
+          const r = await run(["login:list"], 20_000)
+          if (r.code === null) return { state: "unknown", detail: "no contestó a tiempo" }
+          const account = pick(r.out, /Logged in as (\S+)/)
+          if (account) return { state: "ok", account }
+          return /No authorized accounts/i.test(r.out) ? { state: "logged_out" } : { state: "expired", detail: firstLine(r.out) }
+        },
+      },
+    ],
+  },
+  {
+    id: "heroku",
+    name: "Heroku CLI",
+    description: "Apps y add-ons de Heroku.",
+    category: "Deploy",
+    bins: ["heroku"],
+    docs: "https://devcenter.heroku.com/articles/heroku-cli",
+    install: { mac: "brew tap heroku/brew && brew install heroku", linux: "sudo snap install heroku --classic" },
+    auth: [{ label: null, login: ["login"], check: byExit({ args: ["auth:whoami"], account: (o) => firstLine(o) || null, expired: /expired|invalid credentials/i, timeoutMs: 20_000 }) }],
+  },
+  {
+    id: "helm",
+    name: "Helm",
+    description: "Paquetes (charts) para Kubernetes.",
+    category: "Infraestructura",
+    bins: ["helm"],
+    version: ["version", "--short"],
+    docs: "https://helm.sh/docs/intro/install/",
+    install: { mac: "brew install helm", linux: "sudo snap install helm --classic" },
+  },
+  {
+    id: "mongosh",
+    name: "mongosh",
+    description: "Cliente de MongoDB.",
+    category: "Datos",
+    bins: ["mongosh"],
+    docs: "https://www.mongodb.com/docs/mongodb-shell/install/",
+    install: { mac: "brew install mongosh" },
+  },
+  {
+    id: "mysql",
+    name: "mysql",
+    description: "Cliente de MySQL y MariaDB.",
+    category: "Datos",
+    bins: ["mysql"],
+    docs: "https://dev.mysql.com/doc/refman/8.4/en/mysql.html",
+    install: { mac: "brew install mysql-client", linux: "sudo apt install mysql-client" },
+  },
+  {
+    id: "redis-cli",
+    name: "redis-cli",
+    description: "Cliente de Redis.",
+    category: "Datos",
+    bins: ["redis-cli"],
+    docs: "https://redis.io/docs/latest/develop/tools/cli/",
+    install: { mac: "brew install redis", linux: "sudo apt install redis-tools" },
+  },
+  {
     id: "psql",
     name: "psql",
     description: "Cliente de PostgreSQL.",
@@ -438,9 +593,9 @@ export class Clis {
   private scanning: Promise<CliInfo[]> | null = null
   private jobs = new Map<string, JobRuntime>()
 
-  private readonly opts: { onChange?: () => void; platform?: NodeJS.Platform; catalog?: CliSpec[] }
+  private readonly opts: { onChange?: () => void; platform?: NodeJS.Platform; catalog?: CliSpec[]; usage?: CliUsage }
 
-  constructor(opts: { onChange?: () => void; platform?: NodeJS.Platform; catalog?: CliSpec[] } = {}) {
+  constructor(opts: { onChange?: () => void; platform?: NodeJS.Platform; catalog?: CliSpec[]; usage?: CliUsage } = {}) {
     this.opts = opts
   }
 
@@ -454,7 +609,36 @@ export class Clis {
 
   async view(refresh = false): Promise<CliView> {
     const list = await this.scan(refresh)
-    return { platform: this.platform, at: this.cache?.at ?? now(), clis: list, jobs: [...this.jobs.values()].map((j) => j.job).slice(-20) }
+    const usage = this.opts.usage
+    // Lo que usaron las sesiones se lee aparte (la primera vez tarda): al terminar, avisa y la vista se relee.
+    if (usage && !usage.busy && (refresh || Date.now() - usage.lastScan > 5 * 60_000)) void usage.scan().then(() => this.opts.onChange?.())
+    const snap = usage?.snapshot()
+    const known = new Set(this.catalog.flatMap((c) => c.bins))
+    const clis = list.map((c) => {
+      const spec = this.catalog.find((s) => s.id === c.id)!
+      const uses = spec.bins.map((b) => snap?.used.get(b)).filter((u) => u !== undefined)
+      const count = uses.reduce((n, u) => n + u.count, 0)
+      return {
+        ...c,
+        usage: count ? { count, lastAt: Math.max(...uses.map((u) => u.lastAt)) } : null,
+        wanted: c.installed ? 0 : spec.bins.reduce((n, b) => n + (snap?.missing.get(b)?.count ?? 0), 0),
+      }
+    })
+    const used: UsedProgram[] = []
+    for (const u of snap?.used.values() ?? []) {
+      if (known.has(u.name) || u.count < 2) continue
+      const file = which(u.name)
+      if (file) used.push({ name: u.name, path: file, count: u.count, lastAt: u.lastAt, projects: [...u.projects].sort() })
+    }
+    used.sort((a, b) => b.count - a.count)
+    return {
+      platform: this.platform,
+      at: this.cache?.at ?? now(),
+      clis,
+      jobs: [...this.jobs.values()].map((j) => j.job).slice(-20),
+      used: used.slice(0, 40),
+      usageScanning: usage?.busy ?? false,
+    }
   }
 
   /** Lo que ven las sesiones con list_clis: solo lo instalado, con su estado. */
@@ -498,9 +682,11 @@ export class Clis {
       version: null,
       install,
       credentials: [],
+      usage: null,
+      wanted: 0,
     }
     if (!file) {
-      base.credentials = (spec.auth ?? []).map((a, i) => ({ index: i, label: a.label, state: "logged_out", account: null, detail: null }))
+      base.credentials = (spec.auth ?? []).map((a, i) => ({ index: i, label: a.label, state: "logged_out", account: null, detail: null, terminalLogin: a.login ? null : (a.terminalLogin ?? null) }))
       return base
     }
     const v = await runCommand(file, spec.version ?? ["--version"], 8000)
@@ -509,9 +695,9 @@ export class Clis {
       (spec.auth ?? []).map(async (a, i): Promise<CliCredential> => {
         try {
           const r = await a.check(file, (args, t) => runCommand(file, args, t))
-          return { index: i, label: a.label, state: r.state, account: r.account ?? null, detail: r.detail ? scrubSecrets(r.detail) : null }
+          return { index: i, label: a.label, state: r.state, account: r.account ?? null, detail: r.detail ? scrubSecrets(r.detail) : null, terminalLogin: a.login ? null : (a.terminalLogin ?? null) }
         } catch {
-          return { index: i, label: a.label, state: "unknown", account: null, detail: null }
+          return { index: i, label: a.label, state: "unknown", account: null, detail: null, terminalLogin: a.login ? null : (a.terminalLogin ?? null) }
         }
       })
     )
@@ -528,7 +714,7 @@ export class Clis {
   login(id: string, credential = 0): CliJob {
     const spec = this.spec(id)
     const auth = spec.auth?.[credential]
-    if (!auth) throw new Error(`${spec.name} no tiene login desde acá`)
+    if (!auth?.login) throw new Error(auth?.terminalLogin ? `El login de ${spec.name} pide una credencial: corré ${auth.terminalLogin} en una terminal` : `${spec.name} no tiene login desde acá`)
     const file = spec.bins.map((b) => which(b)).find(Boolean)
     if (!file) throw new Error(`${spec.name} no está instalado`)
     const label = auth.label ? `${spec.name} · ${auth.label}` : spec.name
