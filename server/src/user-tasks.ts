@@ -120,6 +120,8 @@ export class UserTasks {
         body: title,
         projectId: p.id,
         sessionId: from.id,
+        // La tarea se ve en el tablero, no en el chat de quien la pidió.
+        open: "tasks",
       })
     }
     return { task: this.broadcast(task.id), existing: false }
@@ -188,6 +190,7 @@ export class UserTasks {
         title: t.due! <= at ? "Una tarea tuya ya venció" : "Una tarea tuya vence en un rato",
         body: t.title,
         projectId: t.projectId,
+        open: "tasks",
       })
     }
   }

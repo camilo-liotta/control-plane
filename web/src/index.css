@@ -260,13 +260,28 @@
   animation: node-dot 1.2s ease-in-out infinite;
 }
 
+/* Lo que se muestra al llegar desde un aviso (lib/reveal.ts). */
+@keyframes reveal-flash {
+  0%,
+  40% {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--status-attention) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+.reveal-flash {
+  animation: reveal-flash 1.8s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lamp[data-pulse="true"]::after,
   .streaming-caret::after,
   .node-pulse,
   .link-flow,
   .ring-spin,
-  .node-dot {
+  .node-dot,
+  .reveal-flash {
     animation: none;
   }
 }

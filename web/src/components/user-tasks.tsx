@@ -38,7 +38,7 @@ export function UserTasksCard({ project }: { project: Project }) {
   const waiting = open.filter((t) => t.blocking).length
 
   return (
-    <section className="rounded-2xl border bg-card p-4 shadow-xs sm:p-5">
+    <section id="tareas-para-vos" className="scroll-mt-4 rounded-2xl border bg-card p-4 shadow-xs sm:p-5">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <ClipboardList className="size-4.5 shrink-0" />
         <h2 className="font-medium">Tareas para vos</h2>

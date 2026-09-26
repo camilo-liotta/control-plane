@@ -1,5 +1,5 @@
 import { Blocks, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Users } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { useLocation } from "wouter"
 
@@ -24,6 +24,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { shortPath, tokens, totals, usd } from "@/lib/format"
 import { openDrafts, projectReports, projectSessions, useStore } from "@/lib/store"
+import { reveal } from "@/lib/reveal"
 import { useUi } from "@/lib/ui"
 
 function SectionTitle({ children, count, action }: { children: React.ReactNode; count?: number; action?: React.ReactNode }) {
@@ -44,6 +45,19 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const allReports = useStore((s) => s.reports)
   const setUi = useUi((s) => s.set)
   const [sendingAll, setSendingAll] = useState(false)
+  const pendingReveal = useUi((s) => s.reveal)
+
+  // Llegaste desde el aviso de una tarea: la vista va hasta "Tareas para vos".
+  const shown = Boolean(project)
+  useEffect(() => {
+    if (pendingReveal?.kind !== "tasks" || pendingReveal.id !== projectId || !shown) return
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById("tareas-para-vos")
+      if (el) reveal(el)
+      setUi({ reveal: null })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [pendingReveal, projectId, shown, setUi])
 
   const { orchestrator, workers } = projectSessions(sessions, projectId)
   const drafts = useMemo(() => openDrafts(allDrafts, projectId), [allDrafts, projectId])

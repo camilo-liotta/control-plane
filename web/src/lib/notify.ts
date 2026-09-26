@@ -2,7 +2,8 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { navigate } from "wouter/use-browser-location"
 
-import type { ServerMessage } from "@shared/types"
+import { noticeHref, noticeOpen } from "@shared/notice"
+import type { NoticeOpen, ServerMessage } from "@shared/types"
 
 import { playNotice } from "./sounds"
 import { useStore } from "./store"
@@ -11,7 +12,7 @@ import { useUi } from "./ui"
 type ToastMessage = Extract<ServerMessage, { type: "toast" }>
 
 /** A dónde lleva la app de escritorio: un href o los campos del toast tal cual. */
-export type DesktopTarget = string | { projectId?: string; sessionId?: string; open?: "compaction" }
+export type DesktopTarget = string | { projectId?: string; sessionId?: string; open?: NoticeOpen }
 
 declare global {
   interface Window {
@@ -94,16 +95,15 @@ export function useNotifications() {
   return state
 }
 
-function hrefFor(msg: { projectId?: string; sessionId?: string }) {
-  if (msg.projectId && msg.sessionId) return `/p/${msg.projectId}/s/${msg.sessionId}`
-  if (msg.projectId) return `/p/${msg.projectId}`
-  return null
-}
-
+/** Lo que hace tocar un aviso (el "Ver" del toast, la notificación del sistema o la app de escritorio). */
 function open(msg: Pick<ToastMessage, "projectId" | "sessionId" | "open">) {
-  const href = hrefFor(msg)
+  const href = noticeHref(msg)
   if (href) navigate(href)
-  if (msg.open === "compaction" && msg.sessionId) useUi.getState().set({ compactFor: msg.sessionId })
+  const set = useUi.getState().set
+  if (msg.open === "compaction" && msg.sessionId) set({ compactFor: msg.sessionId })
+  // La página de destino baja hasta lo que hay que mirar (ver `reveal` en ui.ts).
+  if (msg.open === "proposals" && msg.sessionId) set({ reveal: { kind: "proposals", id: msg.sessionId, at: Date.now() } })
+  if (msg.open === "tasks" && msg.projectId) set({ reveal: { kind: "tasks", id: msg.projectId, at: Date.now() } })
 }
 
 /**
@@ -127,7 +127,7 @@ export function systemNotification(title: string, body: string | undefined, onCl
 }
 
 export function notify(msg: ToastMessage) {
-  const href = hrefFor(msg)
+  const href = noticeHref(msg)
   const options = {
     description: msg.body,
     action: href || msg.open ? { label: msg.open === "compaction" ? "Elegir" : "Ver", onClick: () => open(msg) } : undefined,
@@ -164,7 +164,7 @@ function openFromDesktop(target: unknown): boolean {
     const sessionId = str(t.sessionId)
     const projectId = str(t.projectId) ?? (sessionId ? useStore.getState().sessions[sessionId]?.projectId : undefined)
     if (!projectId && !sessionId) return false
-    open({ projectId, sessionId, open: t.open === "compaction" ? "compaction" : undefined })
+    open({ projectId, sessionId, open: noticeOpen(t.open) })
     return true
   } catch {
     return false

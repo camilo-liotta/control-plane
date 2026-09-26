@@ -631,6 +631,15 @@ export interface Snapshot {
 
 export type ToastLevel = "info" | "success" | "warn" | "error"
 
+/**
+ * Qué mostrar al tocar un aviso. Viaja como texto por la app de escritorio (que reenvía solo
+ * projectId, sessionId y open), así que un valor desconocido se ignora.
+ * - compaction: el panel de compactación de la sesión.
+ * - proposals: en el chat de la orquestadora, baja hasta la primera propuesta lista.
+ * - tasks: el tablero del proyecto, en "Tareas para vos" (aunque venga la sesión que la pidió).
+ */
+export type NoticeOpen = "compaction" | "proposals" | "tasks"
+
 /** Lo que muestra la app de escritorio en la bandeja: cuántas te necesitan y cuántas trabajan. */
 export interface DesktopSummary {
   /** Sesiones que te necesitan, propuestas listas y tareas que frenan a una sesión (lo mismo que la bandeja de entrada). */
@@ -695,8 +704,8 @@ export type ServerMessage =
       body?: string
       projectId?: string
       sessionId?: string
-      /** Qué abrir al tocar "Ver" (por defecto, la sesión). */
-      open?: "compaction"
+      /** Qué abrir al tocar "Ver", además de ir a la sesión o al proyecto (ver notice.ts). */
+      open?: NoticeOpen
       /** De qué se trata, para elegir el sonido. */
       event?: NoticeEvent
     }
