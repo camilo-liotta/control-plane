@@ -370,10 +370,13 @@ fn newest_nvm_node(versions: &Path) -> Option<PathBuf> {
         .ok()?
         .filter_map(Result::ok)
         .filter_map(|e| {
-            let v = crate::node::parse_version(e.file_name().to_str()?)?;
-            (v.0 >= crate::node::MIN_MAJOR).then(|| (v, e.path().join("bin")))
+            let name = e.file_name().into_string().ok()?;
+            let v = crate::node::parse_version(&name)?;
+            // A igual versión, la estable antes que una nightly o rc.
+            let stable = !name.contains('-');
+            (v.0 >= crate::node::MIN_MAJOR).then(|| ((v, stable, name), e.path().join("bin")))
         })
-        .max_by_key(|(v, _)| *v)
+        .max_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, bin)| bin)
 }
 
@@ -804,6 +807,12 @@ mod tests {
             newest_nvm_node(&versions),
             Some(versions.join("v25.0.0-nightly2026/bin"))
         );
+        std::fs::create_dir_all(versions.join("v25.0.0/bin")).unwrap();
+        assert_eq!(
+            newest_nvm_node(&versions),
+            Some(versions.join("v25.0.0/bin"))
+        );
+        std::fs::remove_dir_all(versions.join("v25.0.0")).unwrap();
         let dirs = fallback_dirs(Some(dir.path()));
         assert!(dirs.contains(&versions.join("v25.0.0-nightly2026/bin")));
         assert_eq!(dirs.last(), Some(&PathBuf::from("/bin")));

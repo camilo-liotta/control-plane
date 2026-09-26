@@ -134,8 +134,15 @@ pub fn find_node(
                 .filter(|s| !s.is_empty())
                 .map(|s| (PathBuf::from(s), NodeSource::EnvVar))
         });
+    // Un nombre suelto en CONTROL_PLANE_NODE (p. ej. `node24`) se busca en el PATH, como CLAUDE_BIN.
+    let chosen = chosen.map(|(p, source)| match source {
+        NodeSource::EnvVar if p.components().count() == 1 && !p.is_absolute() => {
+            (which(&p.to_string_lossy(), path).unwrap_or(p), source)
+        }
+        _ => (p, source),
+    });
     let (bin, source) = match chosen {
-        Some((p, source)) if is_executable(&p) => (p, source),
+        Some((p, source)) if p.is_absolute() && is_executable(&p) => (p, source),
         Some((path, source)) => return Err(NodeError::Missing { path, source }),
         None => match which("node", path) {
             Some(p) => (p, NodeSource::Path),
@@ -295,6 +302,14 @@ mod tests {
 
         let n = find_node(None, chosen.to_str(), &empty, shell).unwrap();
         assert_eq!(n.source, NodeSource::EnvVar);
+
+        let path = OsString::from(dir.path());
+        let n = find_node(None, Some("mi-node"), &path, shell).unwrap();
+        assert_eq!((n.path, n.source), (chosen.clone(), NodeSource::EnvVar));
+        assert!(matches!(
+            find_node(None, Some("otro-node"), &path, shell),
+            Err(NodeError::Missing { .. })
+        ));
 
         let err = find_node(Some(Path::new("/no/existe/node")), None, &empty, shell).unwrap_err();
         assert!(matches!(
