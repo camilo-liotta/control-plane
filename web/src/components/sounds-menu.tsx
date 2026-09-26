@@ -48,7 +48,7 @@ export function SoundsMenu() {
               max={100}
               value={Math.round(s.volume * 100)}
               onChange={(e) => setSoundSettings({ volume: Number(e.target.value) / 100 })}
-              onPointerUp={() => playSound("campana")}
+              onPointerUp={() => playSound(s.byEvent.result)}
               className="w-full accent-[var(--claude)]"
               aria-label="Volumen"
             />

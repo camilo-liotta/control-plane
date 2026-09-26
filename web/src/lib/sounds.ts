@@ -7,16 +7,20 @@ import type { NoticeEvent } from "@shared/types"
  * independientes de las notificaciones del sistema y se configuran en este navegador.
  */
 
-export type SoundId = "campana" | "gota" | "sube" | "arpegio" | "alerta" | "suave" | "grave" | "ninguno"
+export type SoundId = "llamada" | "toc" | "espera" | "duda" | "apagado" | "descenso" | "acorde" | "brillo" | "burbuja" | "arpegio" | "suave" | "ninguno"
 
 export const SOUNDS: { id: SoundId; label: string }[] = [
-  { id: "campana", label: "Campana" },
-  { id: "gota", label: "Gota" },
-  { id: "sube", label: "Dos notas" },
+  { id: "llamada", label: "Llamada" },
+  { id: "toc", label: "Toc toc" },
+  { id: "espera", label: "Espera" },
+  { id: "duda", label: "Duda" },
+  { id: "apagado", label: "Apagado" },
+  { id: "descenso", label: "Descenso" },
+  { id: "acorde", label: "Acorde" },
+  { id: "brillo", label: "Brillo" },
+  { id: "burbuja", label: "Burbuja" },
   { id: "arpegio", label: "Arpegio" },
-  { id: "alerta", label: "Alerta" },
   { id: "suave", label: "Suave" },
-  { id: "grave", label: "Grave" },
   { id: "ninguno", label: "Sin sonido" },
 ]
 
@@ -41,7 +45,7 @@ const DEFAULTS: SoundSettings = {
   enabled: true,
   volume: 0.6,
   onlyAway: false,
-  byEvent: { needs_you: "sube", result: "campana", blocked: "alerta", proposals: "arpegio", compaction: "suave", error: "grave" },
+  byEvent: { needs_you: "llamada", result: "acorde", blocked: "espera", proposals: "arpegio", compaction: "suave", error: "apagado" },
 }
 
 const KEY = "control-plane:sounds"
@@ -51,7 +55,12 @@ let current: SoundSettings = read()
 function read(): SoundSettings {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<SoundSettings> | null
-    return raw ? { ...DEFAULTS, ...raw, byEvent: { ...DEFAULTS.byEvent, ...(raw.byEvent ?? {}) } } : DEFAULTS
+    if (!raw) return DEFAULTS
+    // Un sonido que ya no existe (de una versión anterior) vuelve al de por defecto.
+    const known = new Set(SOUNDS.map((x) => x.id))
+    const byEvent = { ...DEFAULTS.byEvent }
+    for (const [event, id] of Object.entries(raw.byEvent ?? {})) if (known.has(id as SoundId)) byEvent[event as NoticeEvent] = id as SoundId
+    return { ...DEFAULTS, ...raw, byEvent }
   } catch {
     return DEFAULTS
   }
@@ -100,60 +109,71 @@ if (typeof window !== "undefined") {
 }
 
 /** Una nota: frecuencia, cuándo empieza, cuánto dura y con qué forma de onda. */
-function tone(c: AudioContext, out: AudioNode, freq: number, at: number, dur: number, type: OscillatorType = "sine", gain = 1, slideTo?: number) {
+function tone(c: AudioContext, out: AudioNode, freq: number, at: number, dur: number, type: OscillatorType = "sine", gain = 1, slideTo?: number, attack = 0.012) {
   const osc = c.createOscillator()
   const g = c.createGain()
   osc.type = type
   osc.frequency.setValueAtTime(freq, at)
   if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, at + dur)
   g.gain.setValueAtTime(0.0001, at)
-  g.gain.exponentialRampToValueAtTime(gain, at + 0.012)
+  g.gain.exponentialRampToValueAtTime(gain, at + attack)
   g.gain.exponentialRampToValueAtTime(0.0001, at + dur)
   osc.connect(g).connect(out)
   osc.start(at)
   osc.stop(at + dur + 0.05)
 }
 
+/** Madera suave (tipo marimba): la fundamental y un parcial agudo que se apaga rápido. */
+function wood(c: AudioContext, out: AudioNode, freq: number, at: number, dur: number, gain = 0.8) {
+  tone(c, out, freq, at, dur, "sine", gain, undefined, 0.006)
+  tone(c, out, freq * 4, at, dur * 0.25, "sine", gain * 0.12, undefined, 0.004)
+}
+
+type Synth = (c: AudioContext, out: AudioNode, t: number) => void
+
+/** Cada sonido y, si corresponde, el filtro que le redondea los agudos. */
+const SYNTHS: Record<Exclude<SoundId, "ninguno">, { cutoff?: number; play: Synth }> = {
+  llamada: { cutoff: 3200, play: (c, o, t) => (tone(c, o, 587.33, t, 0.5, "sine", 0.7, undefined, 0.03), tone(c, o, 783.99, t + 0.15, 0.7, "sine", 0.7, undefined, 0.03)) },
+  toc: { cutoff: 3200, play: (c, o, t) => (wood(c, o, 659.25, t, 0.45), wood(c, o, 880, t + 0.14, 0.6)) },
+  espera: { cutoff: 3200, play: (c, o, t) => (tone(c, o, 523.25, t, 1.1, "sine", 0.55, undefined, 0.08), tone(c, o, 622.25, t + 0.02, 1.1, "sine", 0.3, undefined, 0.08)) },
+  duda: { cutoff: 3200, play: (c, o, t) => (wood(c, o, 783.99, t, 0.45, 0.75), wood(c, o, 659.25, t + 0.18, 0.7, 0.75)) },
+  apagado: { cutoff: 3200, play: (c, o, t) => (tone(c, o, 293.66, t, 0.9, "sine", 0.7, 261.63, 0.04), tone(c, o, 587.33, t, 0.5, "sine", 0.15, 523.25, 0.04)) },
+  descenso: {
+    cutoff: 3200,
+    play: (c, o, t) => (
+      tone(c, o, 659.25, t, 0.4, "sine", 0.6, undefined, 0.02),
+      tone(c, o, 523.25, t + 0.16, 0.4, "sine", 0.6, undefined, 0.02),
+      tone(c, o, 440, t + 0.32, 0.7, "sine", 0.6, undefined, 0.02)
+    ),
+  },
+  acorde: {
+    cutoff: 3000,
+    play: (c, o, t) => (
+      tone(c, o, 392, t, 0.9, "sine", 0.45, undefined, 0.04),
+      tone(c, o, 493.88, t + 0.01, 0.9, "sine", 0.4, undefined, 0.04),
+      tone(c, o, 587.33, t + 0.02, 0.9, "sine", 0.35, undefined, 0.04)
+    ),
+  },
+  brillo: { cutoff: 3000, play: (c, o, t) => (tone(c, o, 783.99, t, 1.0, "sine", 0.75, undefined, 0.02), tone(c, o, 1567.98, t, 0.5, "sine", 0.12, undefined, 0.02)) },
+  burbuja: { cutoff: 3000, play: (c, o, t) => tone(c, o, 520, t, 0.5, "sine", 0.7, 780, 0.02) },
+  arpegio: { play: (c, o, t) => (tone(c, o, 523.25, t, 0.28, "sine", 0.8), tone(c, o, 659.25, t + 0.11, 0.28, "sine", 0.8), tone(c, o, 783.99, t + 0.22, 0.45, "sine", 0.8)) },
+  suave: { play: (c, o, t) => (tone(c, o, 440, t, 0.7, "sine", 0.6), tone(c, o, 554.37, t + 0.05, 0.7, "sine", 0.35)) },
+}
+
 export function playSound(id: SoundId, volume = current.volume) {
   if (id === "ninguno" || volume <= 0) return
+  const synth = SYNTHS[id]
   const c = audio()
-  if (!c) return
+  if (!c || !synth) return
   const out = c.createGain()
   out.gain.value = 0.35 * volume
-  out.connect(c.destination)
-  const t = c.currentTime + 0.02
-  switch (id) {
-    case "campana":
-      tone(c, out, 880, t, 1.2, "sine", 0.9)
-      tone(c, out, 1760, t, 0.6, "sine", 0.25)
-      tone(c, out, 2640, t, 0.3, "sine", 0.1)
-      break
-    case "gota":
-      tone(c, out, 1400, t, 0.18, "sine", 0.9, 500)
-      break
-    case "sube":
-      tone(c, out, 660, t, 0.22, "triangle", 0.9)
-      tone(c, out, 990, t + 0.16, 0.35, "triangle", 0.9)
-      break
-    case "arpegio":
-      tone(c, out, 523.25, t, 0.28, "sine", 0.8)
-      tone(c, out, 659.25, t + 0.11, 0.28, "sine", 0.8)
-      tone(c, out, 783.99, t + 0.22, 0.45, "sine", 0.8)
-      break
-    case "alerta":
-      tone(c, out, 740, t, 0.12, "square", 0.35)
-      tone(c, out, 740, t + 0.18, 0.12, "square", 0.35)
-      tone(c, out, 740, t + 0.36, 0.2, "square", 0.35)
-      break
-    case "suave":
-      tone(c, out, 440, t, 0.7, "sine", 0.6)
-      tone(c, out, 554.37, t + 0.05, 0.7, "sine", 0.35)
-      break
-    case "grave":
-      tone(c, out, 196, t, 0.35, "sawtooth", 0.35, 147)
-      tone(c, out, 147, t + 0.3, 0.45, "sawtooth", 0.3)
-      break
-  }
+  if (synth.cutoff) {
+    const lp = c.createBiquadFilter()
+    lp.type = "lowpass"
+    lp.frequency.value = synth.cutoff
+    out.connect(lp).connect(c.destination)
+  } else out.connect(c.destination)
+  synth.play(c, out, c.currentTime + 0.02)
 }
 
 /** El sonido de un aviso de la bandeja, según su tipo y tu configuración. */

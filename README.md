@@ -43,7 +43,7 @@ Atajos: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> para saltar a cualquier se
 
 ### Sonidos
 
-El parlante, al lado de la campana, configura los **sonidos de la bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
+El parlante, al lado de la campana, configura los **sonidos de la bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), todos suaves, elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
 
 ### El resumen del proyecto
 
