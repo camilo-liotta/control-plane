@@ -22,6 +22,7 @@ const INBOX: &str = "inbox";
 const NOTIFICATIONS: &str = "notifications";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
+const LOG: &str = "log";
 const PROJECT_PREFIX: &str = "project:";
 const EXIT_OPTIONS: [(OnExit, &str, &str); 3] = [
     (OnExit::Ask, "exit:ask", "Preguntar"),
@@ -126,6 +127,7 @@ pub enum Action {
     ToggleNotifications,
     ToggleAutostart,
     OnExit(OnExit),
+    ShowLog,
     Quit,
     None,
 }
@@ -142,6 +144,7 @@ pub fn action(id: &str) -> Action {
         INBOX => Action::Inbox,
         NOTIFICATIONS => Action::ToggleNotifications,
         AUTOSTART => Action::ToggleAutostart,
+        LOG => Action::ShowLog,
         QUIT => Action::Quit,
         _ => Action::None,
     }
@@ -227,7 +230,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&notifications)
         .item(&autostart)
         .item(&exit_menu)
-        // T3: "Ver log" va acá.
+        .text(LOG, "Ver log del server")
         .separator()
         .text(QUIT, "Salir")
         .build()?;
@@ -384,7 +387,8 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
                 eprintln!("No pude cambiar el inicio automático: {e}");
             }
         }
-        // T3 lo intercepta en RunEvent::ExitRequested para decidir qué hacer con el server.
+        Action::ShowLog => crate::sidecar::open_log(app),
+        // El sidecar lo intercepta en RunEvent::ExitRequested y decide qué hacer con el server.
         Action::Quit => app.exit(0),
         Action::None => {}
     }
@@ -491,6 +495,7 @@ mod tests {
         assert_eq!(action("exit:ask"), Action::OnExit(OnExit::Ask));
         assert_eq!(action("notifications"), Action::ToggleNotifications);
         assert_eq!(action("autostart"), Action::ToggleAutostart);
+        assert_eq!(action("log"), Action::ShowLog);
         assert_eq!(action("quit"), Action::Quit);
         assert_eq!(action("otra"), Action::None);
     }

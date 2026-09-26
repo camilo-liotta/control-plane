@@ -7,7 +7,8 @@
     "tauri": "tauri",
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "build": "tauri build",
-    "test": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+    "test": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+    "stage": "npm run build -w @control-plane/web && npm run bundle -w @control-plane/server -- --out server-bundle --web ../web/dist"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5"

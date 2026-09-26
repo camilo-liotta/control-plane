@@ -1,5 +1,6 @@
 //! Buscar `node` (≥ 24) y `claude` con el PATH que va a ver el server.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt;
 use std::os::unix::fs::PermissionsExt;
@@ -127,6 +128,17 @@ pub fn find_node(
     path: &OsStr,
     shell: &Path,
 ) -> Result<NodeInfo, NodeError> {
+    find_node_with(settings_path, env_node, path, shell, None)
+}
+
+/// Como [`find_node`], corriendo `node --version` solo con `env` (el entorno del server).
+pub fn find_node_with(
+    settings_path: Option<&Path>,
+    env_node: Option<&str>,
+    path: &OsStr,
+    shell: &Path,
+    env: Option<&BTreeMap<String, String>>,
+) -> Result<NodeInfo, NodeError> {
     let chosen = settings_path
         .map(|p| (p.to_path_buf(), NodeSource::Settings))
         .or_else(|| {
@@ -154,7 +166,7 @@ pub fn find_node(
             }
         },
     };
-    let version = node_version(&bin)?;
+    let version = node_version(&bin, env)?;
     if version.0 < MIN_MAJOR {
         return Err(NodeError::TooOld { path: bin, version });
     }
@@ -165,13 +177,16 @@ pub fn find_node(
     })
 }
 
-fn node_version(bin: &Path) -> Result<Version, NodeError> {
+fn node_version(bin: &Path, env: Option<&BTreeMap<String, String>>) -> Result<Version, NodeError> {
     let broken = |detail: String| NodeError::Broken {
         path: bin.to_path_buf(),
         detail,
     };
     let mut cmd = Command::new(bin);
     cmd.arg("--version");
+    if let Some(env) = env {
+        cmd.env_clear().envs(env);
+    }
     let run = run_limited(cmd, VERSION_TIMEOUT, None).map_err(|e| broken(e.to_string()))?;
     if run.timed_out {
         return Err(broken(format!(

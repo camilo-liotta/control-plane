@@ -1,55 +1,66 @@
+// La pantalla local: muestra lo que le pasa la app en la URL y sus botones le piden cosas
+// navegando a /__action/<acción>?t=<token>. La app intercepta esa navegación (no hay IPC).
 const params = new URLSearchParams(location.search)
-const reason = params.get("reason") ?? "loading"
-const port = Number(params.get("port")) || null
-const detail = params.get("detail")
+const token = params.get("t") ?? ""
 const $ = (id) => document.getElementById(id)
 
-const show = (title, message) => {
-  $("title").textContent = title
-  $("message").textContent = message
-  if (detail) {
-    $("detail").textContent = detail
-    $("detail").hidden = false
-  }
+const LABELS = {
+  retry: "Reintentar",
+  launch: "Lanzarlo",
+  "pick-node": "Elegir node…",
+  "get-node": "Descargar Node",
+  "open-anyway": "Abrir igual",
+  cancel: "Cancelar",
+  "set-port": "Usar este puerto",
+  "use-that": "Usar ese",
+  wait: "Esperar",
+  log: "Ver log",
+  stop: "Detener",
+}
+// Los que no son la acción principal van con un estilo más liviano.
+const SECONDARY = new Set(["log", "cancel", "get-node", "wait", "stop"])
+
+function ask(action, extra = {}) {
+  const q = new URLSearchParams({ t: token, ...extra })
+  location.href = `/__action/${action}?${q}`
 }
 
-// Cualquier respuesta alcanza para saber que hay algo escuchando: el server rechaza este
-// origen, pero una respuesta opaca igual resuelve (sin server, la conexión falla).
-async function probe() {
-  if (!port) return false
-  try {
-    await fetch(`http://127.0.0.1:${port}/`, { mode: "no-cors", cache: "no-store" })
-    return true
-  } catch {
-    return false
-  }
+function text(id, value) {
+  const el = $(id)
+  el.textContent = value ?? ""
+  el.hidden = !value
 }
 
-async function retry() {
-  const btn = $("retry")
-  btn.disabled = true
-  $("status").hidden = false
-  $("status").textContent = "Buscando el server…"
-  if (await probe()) {
-    location.replace(`http://127.0.0.1:${port}/`)
-    return
-  }
-  $("status").textContent = "Sigue sin responder. Vuelvo a probar solo cada unos segundos."
-  btn.disabled = false
-}
+document.body.dataset.tone = params.get("tone") ?? "loading"
+$("title").textContent = params.get("title") ?? "Abriendo control-plane…"
+document.title = $("title").textContent
+text("message", params.get("message"))
+text("detail", params.get("detail"))
+text("log", params.get("log"))
+text("notice", params.get("notice"))
 
-if (reason === "no-server" && port) {
-  show(
-    "No hay un server en el puerto " + port,
-    "Levantalo y la app lo toma sola, o tocá Reintentar."
-  )
-  $("retry").hidden = false
-  $("retry").addEventListener("click", retry)
-  setInterval(async () => {
-    if (await probe()) location.replace(`http://127.0.0.1:${port}/`)
-  }, 3000)
-} else if (reason === "port") {
-  show("No puedo usar ese puerto", "Revisá la configuración y volvé a abrir la app.")
-} else if (reason !== "loading") {
-  show("Algo salió mal", "Volvé a abrir la app. Si sigue pasando, mirá el log del server.")
+const actions = (params.get("actions") ?? "").split(",").filter((a) => a in LABELS)
+for (const action of actions) {
+  if (action === "set-port") {
+    const input = document.createElement("input")
+    input.type = "number"
+    input.min = "1024"
+    input.max = "65535"
+    input.value = params.get("port") ?? ""
+    input.setAttribute("aria-label", "Puerto")
+    $("actions").append(input)
+    const btn = document.createElement("button")
+    btn.type = "button"
+    btn.textContent = LABELS[action]
+    btn.addEventListener("click", () => ask(action, { p: input.value }))
+    input.addEventListener("keydown", (e) => e.key === "Enter" && btn.click())
+    $("actions").append(btn)
+    continue
+  }
+  const btn = document.createElement("button")
+  btn.type = "button"
+  btn.textContent = LABELS[action]
+  if (SECONDARY.has(action)) btn.className = "secondary"
+  btn.addEventListener("click", () => ask(action))
+  $("actions").append(btn)
 }

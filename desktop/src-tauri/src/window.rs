@@ -5,10 +5,12 @@
 //! otro link se abre en el navegador del sistema.
 
 use std::fmt;
-use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 
 use tauri::webview::NewWindowResponse;
+
+use crate::screen::{self, Screen};
 use tauri::{AppHandle, Manager, Runtime, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const MAIN: &str = "main";
@@ -107,7 +109,8 @@ pub enum Nav {
 }
 
 pub fn classify(url: &Url, port: u16) -> Nav {
-    let dashboard = url.scheme() == "http"
+    let dashboard = port != 0
+        && url.scheme() == "http"
         && url.host_str() == Some("127.0.0.1")
         && url.port() == Some(port)
         && url.username().is_empty()
@@ -133,42 +136,17 @@ fn init_script<R: Runtime>(app: &AppHandle<R>) -> String {
     format!("window.__CONTROL_PLANE_DESKTOP__ = Object.freeze({info});")
 }
 
-/// La pantalla local de error o de carga, con lo que necesita para reintentar.
-pub fn error_url(port: Option<u16>, reason: &str, detail: Option<&str>) -> WebviewUrl {
-    let mut url = Url::parse("app://local/index.html").expect("URL válida");
-    {
-        let mut q = url.query_pairs_mut();
-        q.append_pair("reason", reason);
-        if let Some(p) = port {
-            q.append_pair("port", &p.to_string());
-        }
-        if let Some(d) = detail {
-            q.append_pair("detail", d);
-        }
-    }
-    let path = format!("index.html?{}", url.query().unwrap_or_default());
-    WebviewUrl::App(path.into())
-}
-
-/// ¿Hay algo escuchando en el puerto? (el chequeo fino con /api/health lo hace el sidecar).
-pub fn port_open(port: u16) -> bool {
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
-}
-
-/// Crea la ventana principal. Con `port = Err`, muestra el error y no navega a ningún server.
+/// Crea la ventana principal con la pantalla local de carga. `port` es el puerto del dashboard
+/// al que se deja navegar: 0 mientras no se sabe (y entonces ningún `127.0.0.1` pasa). Los
+/// pedidos de la pantalla local (`/__action/…` con el token de esta corrida) van a `on_action`.
 pub fn create_main<R: Runtime>(
     app: &AppHandle<R>,
-    port: Result<u16, PortError>,
+    port: Arc<AtomicU16>,
+    token: String,
+    on_action: impl Fn(screen::Request) + Send + Sync + 'static,
 ) -> tauri::Result<WebviewWindow<R>> {
-    let (start, guard_port) = match &port {
-        Ok(p) if port_open(*p) => (WebviewUrl::External(server_url(*p)), Some(*p)),
-        Ok(p) => (error_url(Some(*p), "no-server", None), Some(*p)),
-        Err(e) => (error_url(None, "port", Some(&e.to_string())), None),
-    };
-    // Sin puerto válido no hay dashboard al que navegar: 0 nunca coincide.
-    let guard = guard_port.unwrap_or(0);
-    eprintln!("Ventana: abro {start}");
+    let first = Screen::loading().url(&token);
+    let start = WebviewUrl::App(format!("index.html?{}", first.query().unwrap_or_default()).into());
 
     WebviewWindowBuilder::new(app, MAIN, start)
         .title("control-plane")
@@ -177,13 +155,22 @@ pub fn create_main<R: Runtime>(
         // Al iniciar sesión arranca escondida: solo la bandeja.
         .visible(!crate::startup::started_hidden())
         .initialization_script(init_script(app))
-        .on_navigation(move |url| match classify(url, guard) {
-            Nav::Allow => true,
-            Nav::External => {
-                open_external(url);
-                false
+        .on_navigation(move |url| {
+            // Los botones de la pantalla local: nunca se navega, y solo valen con el token.
+            if screen::is_action_url(url) {
+                if let Some(req) = screen::parse_action(url, &token) {
+                    on_action(req);
+                }
+                return false;
             }
-            Nav::Block => false,
+            match classify(url, port.load(Ordering::SeqCst)) {
+                Nav::Allow => true,
+                Nav::External => {
+                    open_external(url);
+                    false
+                }
+                Nav::Block => false,
+            }
         })
         .on_new_window(|url, _features| {
             // target=_blank y window.open: nunca otra ventana de la app; los links web van al
@@ -194,6 +181,27 @@ pub fn create_main<R: Runtime>(
             NewWindowResponse::Deny
         })
         .build()
+}
+
+/// Lleva la ventana a una pantalla local.
+pub fn show_screen<R: Runtime>(app: &AppHandle<R>, s: &Screen, token: &str) {
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.navigate(s.url(token));
+    }
+}
+
+/// Lleva la ventana al dashboard (la guarda ya tiene que tener este puerto).
+pub fn show_dashboard<R: Runtime>(app: &AppHandle<R>, port: u16) {
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.navigate(server_url(port));
+    }
+}
+
+/// Abre una URL en el navegador del sistema.
+pub fn open_in_browser(url: &str) {
+    if let Ok(u) = Url::parse(url) {
+        open_external(&u);
+    }
 }
 
 /// Muestra la ventana principal y le da foco (desde la bandeja, otra instancia o una notificación).
@@ -358,6 +366,7 @@ mod tests {
     #[test]
     fn no_port_means_no_dashboard() {
         assert_eq!(classify(&url("http://127.0.0.1:4710/"), 0), Nav::External);
+        assert_eq!(classify(&url("http://127.0.0.1:0/"), 0), Nav::External);
     }
 
     #[test]
@@ -375,18 +384,5 @@ mod tests {
         ] {
             assert!(!is_route(s), "{s:?}");
         }
-    }
-
-    #[test]
-    fn error_url_carries_reason_and_port() {
-        let WebviewUrl::App(p) = error_url(Some(4710), "no-server", Some("a b&c")) else {
-            panic!("tiene que ser una URL de la app");
-        };
-        let s = p.to_string_lossy().to_string();
-        assert!(
-            s.starts_with("index.html?reason=no-server&port=4710&detail="),
-            "{s}"
-        );
-        assert!(!s.contains(' ') && !s.contains("&c"), "{s}");
     }
 }
