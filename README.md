@@ -28,7 +28,129 @@ npm start
 
 `npm start` compila la web y levanta el server en **http://127.0.0.1:4700**. Las sesiones viven mientras el server esté corriendo; si lo cerrás, quedan detenidas y se reanudan (con `claude --resume`) cuando les volvés a escribir.
 
+Si preferís una ventana propia con bandeja y avisos nativos, está la [app de escritorio](#app-de-escritorio).
+
 Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga en **http://localhost:4701**). Tests del server: `npm test`.
+
+## App de escritorio
+
+Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la barra de menú (macOS), avisos nativos y arranque al iniciar sesión. Por dentro es el mismo server de siempre: la app lo lanza, o usa el que ya tengas corriendo, y abre su página en `127.0.0.1`.
+
+- Linux (Ubuntu) y macOS. Windows no.
+- Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
+- Por ahora no hay paquetes publicados: se compila (ver abajo).
+
+### Instalar en Linux
+
+Después de [compilar](#compilar-en-linux):
+
+- **`.deb`**: `sudo apt install ./desktop/src-tauri/target/release/bundle/deb/control-plane_0.1.0_amd64.deb`. Para desinstalar: `sudo apt remove control-plane`. Si prendiste "Abrir al iniciar sesión", borrá también `~/.config/autostart/control-plane.desktop`.
+- **AppImage**: queda en `desktop/src-tauri/target/release/bundle/appimage/`. Dale permiso con `chmod +x control-plane_0.1.0_amd64.AppImage` y abrilo. En Ubuntu 24.04 y posteriores necesita `libfuse2t64` (`sudo apt install libfuse2t64`).
+
+### Compilar en Linux
+
+1. Rust con [rustup](https://rustup.rs) y las librerías de Tauri:
+
+   ```bash
+   sudo apt install build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+     libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64
+   ```
+
+   `patchelf` y `libfuse2t64` son para el AppImage (en 26.04 `libfuse2` ya no existe).
+2. En el repo: `npm ci` y `npm run build -w desktop`. El build ya compila la web y empaqueta el server (`npm run stage -w desktop`).
+3. Los paquetes quedan en `desktop/src-tauri/target/release/bundle/` (`deb/` y `appimage/`).
+
+### Compilar e instalar en la Mac
+
+1. `xcode-select --install`
+2. Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` y después `source "$HOME/.cargo/env"`.
+3. Node 24 (nvm, fnm o el instalador de [nodejs.org](https://nodejs.org)).
+4. En el repo: `npm ci` y `npm run build -w desktop`.
+5. Queda `desktop/src-tauri/target/release/bundle/dmg/control-plane_0.1.0_aarch64.dmg` (en Intel, `_x64.dmg`) y la app suelta en `desktop/src-tauri/target/release/bundle/macos/control-plane.app`.
+6. Opcional, una sola app para Apple Silicon e Intel: `rustup target add aarch64-apple-darwin x86_64-apple-darwin` y `npm run tauri -w desktop -- build --target universal-apple-darwin`. El `.dmg` queda en `desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/`.
+
+**La primera vez, sin firma de Apple.** La app tiene firma ad-hoc, sin Developer ID. Si la compilaste en tu Mac, abre directo. Si el `.dmg` viene de otra máquina, arrastrala a Aplicaciones y:
+
+- **macOS 15**: abrila una vez (la va a bloquear) → Configuración del Sistema → Privacidad y seguridad → **Abrir igual** → tu contraseña.
+- **macOS 14**: clic derecho sobre la app → **Abrir** → **Abrir**.
+- Por Terminal, en cualquier versión: `xattr -dr com.apple.quarantine /Applications/control-plane.app`.
+
+### Qué hace al abrir
+
+La ventana aparece enseguida ("Abriendo control-plane…"). Mientras tanto, la app lee el [entorno de tu shell](#el-entorno-de-tu-shell) y busca el server en el puerto: 4700, o el `CONTROL_PLANE_PORT` de tu shell.
+
+- Si hay uno que lanzó la app antes (por ejemplo, porque lo dejaste corriendo al salir), lo adopta.
+- Si hay uno que lanzaste vos (`npm start`), lo usa **sin tocarlo nunca**: ni lo relanza ni lo detiene. Así convive con el dashboard de siempre.
+- Si no hay ninguno, lo lanza con tu Node 24.
+
+Si el server se cae:
+
+- **El que lanzó la app**: avisa siempre. Lo relanza solo si había andado más de un minuto, y como mucho 3 veces cada 5 minutos.
+- **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzarlo** y **Reintentar**. La app no lo relanza sola.
+
+**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde la bandeja.
+
+### Salir
+
+Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde una terminal en Linux: `control-plane-desktop --quit` si la instalaste con el `.deb`, o el propio `.AppImage` con `--quit`:
+
+- Si el server no lo lanzó la app, sale sin tocarlo.
+- Si lo lanzó ella, hace lo que diga **Al salir ▸** en la bandeja:
+  - **Preguntar** (el default): "Hay N sesiones abiertas: detener el server las cierra (se reanudan después)", con **Detener y salir**, **Dejarlo corriendo** y **Cancelar**.
+  - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en la bandeja.
+  - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
+- Al apagar el equipo o cerrar la sesión no pregunta: el sistema le avisa al server y se cierra ordenado.
+- **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o la barra de menú.
+
+### La bandeja
+
+- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va cuántas cosas te necesitan. Cuando algo te necesita, el ícono lleva un punto.
+- El menú: **Abrir**, **Bandeja**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Al salir**, **Ver log del server** y **Salir**.
+- En GNOME hace falta la extensión AppIndicator, que Ubuntu trae activada.
+
+### Avisos y sonidos
+
+- Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en bandeja → **Avisos**.
+- Si tenés el dashboard abierto también en una pestaña, esa pestaña deja de mandar los suyos mientras la app está conectada, así no se duplican.
+- Los [sonidos](#sonidos) siguen saliendo de la página y se configuran con el parlante de la barra lateral. **Avisos** no los apaga. Dentro de la app esa configuración es propia, aparte de la del navegador.
+
+### Pantallas de error
+
+Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
+
+- **Falta Node 24**: no hay `node` en el PATH de tu shell de login, o es viejo. El detalle dice qué versión encontró y dónde buscó. **Elegir node…** (queda guardado en los ajustes), **Reintentar** o **Descargar Node** (nodejs.org).
+- **No encontré Claude Code**: instalalo o definí `CLAUDE_BIN` en tu shell, y **Reintentar**.
+- **El puerto X lo usa otro programa**: lo que escucha ahí no es un control-plane. La app no lo toca: elegí otro puerto en la misma pantalla (**Usar este puerto**, queda guardado) o cerrá ese programa y **Reintentar**.
+- **Hay un control-plane viejo en este puerto**: un server de antes de la app, sin `/api/health`. Reinicialo o actualizalo; si no, **Abrir igual**.
+- **Ya hay un server usando esta carpeta de datos**: otro control-plane usa la misma `CONTROL_PLANE_HOME` en otro puerto. **Usar ese**, o detenelo y **Reintentar**.
+- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**.
+- **El server tarda más de lo normal**: a los 30 s todavía no responde. **Esperar**, **Ver log** o **Detener**.
+- **El server se sigue cayendo**: ya lo relanzó 3 veces en 5 minutos. Mirá el log antes de reintentar.
+- **El server no responde**: está vivo pero no contesta, y la app no puede verificar que sea el suyo, así que no lo toca. Si no se recupera, detenelo a mano y **Reintentar**.
+- **El server se detuvo**: se cayó uno que no había lanzado la app. **Lanzarlo** o **Reintentar**.
+- **Aviso amarillo "No pude leer el entorno de tu shell…"**: la shell de login no respondió en 5 s o falló. La app usa las rutas de siempre (ver abajo).
+
+### Log y ajustes
+
+- **Log del server**: bandeja → **Ver log del server**, o **Ver log** en las pantallas de error. Pasados los 5 MB rota a `.1`.
+  - Linux: `~/.local/share/app.control-plane.desktop/logs/server-<puerto>.log`
+  - Mac: `~/Library/Logs/app.control-plane.desktop/server-<puerto>.log`
+- **Ajustes**: `settings.json`, en `~/.config/app.control-plane.desktop/` (Linux) o `~/Library/Application Support/app.control-plane.desktop/` (Mac). Los campos:
+  - `port`: el puerto, si no es el 4700. Lo guarda **Usar este puerto**.
+  - `onExit`: `ask`, `stop` o `leave` (lo mismo que **Al salir**).
+  - `notifications`: los avisos del sistema (lo mismo que **Avisos**).
+  - `nodePath`: el `node` a usar. Lo guarda **Elegir node…**.
+  - `importEnv`: variables extra que se traen de tu shell (ver abajo).
+
+### El entorno de tu shell
+
+Una app que abrís desde el Finder o el menú no hereda el PATH de la terminal: no vería el `node` de nvm, lo instalado con Homebrew ni `claude`. Por eso la app le pregunta a tu shell de login, con 5 s como máximo. Si falla, usa las rutas de siempre (Homebrew, `/usr/local/bin`, `~/.local/bin`, Volta, Bun y el Node 24 más nuevo de nvm) y lo avisa.
+
+De tu shell se trae solo una lista blanca: `PATH`, `LANG`, `LANGUAGE` y `LC_*`, los proxies (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, también en minúsculas), los certificados (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), `HOMEBREW_PREFIX`, `SSH_AUTH_SOCK` (si la app no lo tiene), `CLAUDE_CONFIG_DIR`, `CLAUDE_BIN` y `CONTROL_PLANE_*`.
+
+Las de autenticación (`ANTHROPIC_*`, `AWS_*`, tokens) no se traen, salvo que las agregues por nombre en `importEnv`. Por ejemplo, `["AWS_PROFILE", "CLAUDE_CODE_USE_BEDROCK"]` para Bedrock o Vertex.
+
+El `node` sale de los ajustes (`nodePath`), si no de `CONTROL_PLANE_NODE`, si no del PATH.
 
 ## Cómo se usa
 
@@ -240,6 +362,9 @@ Variables de entorno (opcionales):
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |
 | `CONTROL_PLANE_COMPACT_HOOK` | `server/src/claude/compact-hook.mjs` | Script del hook de compactación que corren las sesiones (uso interno de la app de escritorio) |
 | `CONTROL_PLANE_LAUNCH_ID` | — | Lo pone la app de escritorio al lanzar el server, para reconocerlo en `/api/health` (uso interno) |
+| `CONTROL_PLANE_NODE` | el `node` del PATH | Para la app de escritorio: el Node 24 con el que lanza el server (los ajustes de la app mandan) |
+| `CONTROL_PLANE_ALLOW_4700` | — | Solo la app de desarrollo: con `1` acepta el puerto 4700 |
+| `CONTROL_PLANE_ALLOW_REAL_HOME` | — | Solo la app de desarrollo: con `1` acepta `~/.control-plane` como carpeta de datos |
 
 Por proyecto (menú del tablero → Configuración): auto-envío, ventana de agrupación, si la orquestadora puede editar, qué hacer cuando Claude va a compactar solo, modelo y esfuerzo por defecto, e instrucciones extra para los workers y para la orquestadora. Las instrucciones aplican al iniciar o reanudar cada sesión.
 
@@ -254,6 +379,8 @@ El estado del dashboard es local de cada máquina: el repo solo tiene el código
 - **Puerto ocupado**: `CONTROL_PLANE_PORT=4800 npm start`.
 - **"Ya hay un control-plane usando esta carpeta de datos"**: cada server toma `server.lock` en `CONTROL_PLANE_HOME` para que no haya dos sobre la misma base. Detené el otro (el mensaje dice su puerto y su pid) o usá otra carpeta. Si el server anterior se cortó de golpe, el lock viejo se toma solo.
 - **Los avisos del sistema no aparecen**: tocá la campana (abajo en la barra lateral). Ahí ves si el navegador los permite, los prendés o apagás y mandás uno de prueba. Si están bloqueados, se habilitan desde el ícono a la izquierda de la dirección → Notificaciones → Permitir. Si igual no llegan, revisá que tu navegador tenga permiso en los ajustes de notificaciones del sistema. Solo aparecen cuando no estás mirando el dashboard (si no, ves el aviso adentro).
+- **La app de escritorio muestra una pantalla de error**: cada una dice qué pasó y qué hacer; están todas en [Pantallas de error](#pantallas-de-error). El log del server está en bandeja → Ver log del server.
+- **`npm ci` falla o se saltea las devDependencies en una terminal abierta desde el dashboard**: las sesiones que lanza el dashboard heredan `NODE_ENV=production` y `npm_config_allow_scripts` del `npm start`. Instalá con `env -u NODE_ENV -u npm_config_allow_scripts npm ci`.
 - **Una cuenta figura "Sin login" pero en la terminal anda**: el directorio tiene que ser exactamente el que usa tu comando. `alias claude-personal` (o `type claude-personal`) te muestra cuál es.
 
 ## Estructura
@@ -277,6 +404,15 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/lock.ts           lock de la carpeta de datos (un server por base)
   src/desktop.ts        resumen para la bandeja de la app de escritorio
 web/      Vite + React + Tailwind + shadcn/ui
+desktop/  Tauri v2: ventana, sidecar del server, bandeja y avisos
+  ui/                   pantallas locales (cargando y errores)
+  src-tauri/src/window.rs, screen.rs     ventana, puerto y pantallas
+  src-tauri/src/sidecar.rs, policy.rs    lanzar, adoptar, supervisar y detener el server
+  src-tauri/src/health.rs, server_state.rs, server_log.rs  reconocer el server, su estado y su log
+  src-tauri/src/login_env.rs, launch_env.rs, node.rs      entorno de la shell de login, node y claude
+  src-tauri/src/desktop_ws.rs, tray.rs, notify.rs         WS de escritorio, bandeja y avisos nativos
+  src-tauri/src/startup.rs, settings.rs  instancia única, inicio automático y ajustes
+  src-tauri/src/app_menu.rs, macos.rs    menú y apagado del sistema en la Mac
 ```
 
 `npm run bundle -w server -- --out <carpeta> [--web web/dist]` empaqueta el server en una carpeta que corre sola con `node <carpeta>/server.mjs` (Node 24), sin `node_modules`: es lo que lleva adentro la app de escritorio. Si no le pasás `CONTROL_PLANE_WEB_DIST` ni `CONTROL_PLANE_COMPACT_HOOK`, usa `web/` y `compact-hook.mjs` de esa misma carpeta.
@@ -287,7 +423,7 @@ Es un proyecto personal, pero si lo usás y querés mejorarlo, bienvenido:
 
 - **Bugs**: abrí un [issue](../../issues) con la plantilla **Reportar un bug** (versiones, pasos y logs).
 - **Mejoras**: un issue con la plantilla **Pedir una mejora**. Para algo grande, charlalo antes de escribir código.
-- **Pull requests**: un cambio por PR, con `npm run typecheck` y `npm test` en verde. Los detalles, incluido cómo probar sin tocar tu configuración de Claude Code, están en [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Pull requests**: un cambio por PR, con `npm run typecheck` y `npm test` en verde (y `npm run test -w desktop` si tocás la app). Los detalles, incluido cómo probar sin tocar tu configuración de Claude Code, están en [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Seguridad**: no abras un issue público; seguí [SECURITY.md](SECURITY.md).
 
 Todo el que participa sigue el [código de conducta](CODE_OF_CONDUCT.md).
