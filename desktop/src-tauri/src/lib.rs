@@ -2,6 +2,7 @@
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod app_menu;
+pub mod bundle_copy;
 pub mod desktop_ws;
 pub mod health;
 pub mod launch_env;
