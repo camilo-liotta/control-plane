@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 
+import { childEnv } from "./claude/env.ts"
 import { config } from "./config.ts"
 import type { AccountRecord, Db } from "./db.ts"
 import type { Account, AccountAuth, UsageInfo } from "./shared/types.ts"
@@ -127,7 +128,7 @@ export class Accounts {
     let value: AccountAuth
     try {
       const { stdout } = await run(this.bin(a), ["auth", "status"], {
-        env: { ...process.env, ...this.env(a) },
+        env: childEnv(this.env(a)),
         timeout: 20_000,
       })
       const s = JSON.parse(stdout) as {

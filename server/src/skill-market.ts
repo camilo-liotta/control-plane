@@ -4,6 +4,7 @@ import path from "node:path"
 import { promisify } from "node:util"
 
 import type { Accounts } from "./accounts.ts"
+import { childEnv } from "./claude/env.ts"
 import { parseFrontmatter } from "./claude/tool-parsers.ts"
 import type { AccountRecord, Db, ProjectRecord } from "./db.ts"
 import type { CatalogSkill, SkillMarketView, SkillSourceView } from "./shared/types.ts"
@@ -389,7 +390,7 @@ export class SkillMarket {
     return new Promise((resolve, reject) => {
       const child = spawn(this.deps.accounts.bin(account), args, {
         cwd: opts.cwd,
-        env: { ...process.env, ...this.deps.accounts.env(account) },
+        env: childEnv(this.deps.accounts.env(account)),
         stdio: ["pipe", "pipe", "pipe"],
       })
       let out = ""

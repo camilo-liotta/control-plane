@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
+import { childEnv } from "./claude/env.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
@@ -316,7 +317,7 @@ export class Compaction {
       JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false }),
       ...(model ? ["--model", model] : []),
     ]
-    const { stdout } = await run(bin, args, { cwd: rec.cwd, env: { ...process.env, ...env }, timeout: 300_000, maxBuffer: 32 * 1024 * 1024 })
+    const { stdout } = await run(bin, args, { cwd: rec.cwd, env: childEnv(env), timeout: 300_000, maxBuffer: 32 * 1024 * 1024 })
     const out = JSON.parse(stdout) as { result?: string; is_error?: boolean }
     if (out.is_error || !out.result) throw new Error(oneLine(out.result || "No se pudo leer la conversación para armar el borrador", 300))
     return out.result

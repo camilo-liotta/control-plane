@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
+import { childEnv } from "./claude/env.ts"
 import type { CliUsage } from "./cli-usage.ts"
 import type { CliAuthState, CliCredential, CliInfo, CliJob, CliView, UsedProgram } from "./shared/types.ts"
 import { now, oneLine, shortId } from "./util.ts"
@@ -562,7 +563,7 @@ function runCommand(file: string, args: string[], timeoutMs = 10_000): Promise<R
   return new Promise((resolve) => {
     let out = ""
     let done = false
-    const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1", CI: "1" } })
+    const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"], env: childEnv({ NO_COLOR: "1", CI: "1" }) })
     const finish = (code: number | null) => {
       if (done) return
       done = true
@@ -749,7 +750,7 @@ export class Clis {
     }
     const rt: JobRuntime = { job, child: null }
     this.jobs.set(job.id, rt)
-    const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } })
+    const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"], env: childEnv({ NO_COLOR: "1" }) })
     rt.child = child
     const append = (d: Buffer | string) => {
       job.output = scrubSecrets((job.output + String(d)).slice(-16_000))
