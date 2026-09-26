@@ -5,6 +5,7 @@ import { promisify } from "node:util"
 
 import type { Accounts } from "./accounts.ts"
 import { readSettingsFile, updateSettingsFile } from "./claude/config-settings.ts"
+import { childEnv } from "./claude/env.ts"
 import { parseCommands } from "./claude/normalize.ts"
 import { ClaudeProcess } from "./claude/process.ts"
 import { lastJsonLine, parseFrontmatter, parsePluginDetails, SKILL_STATES, toMcpInfo } from "./claude/tool-parsers.ts"
@@ -103,7 +104,7 @@ export class Tools {
     try {
       return await run(this.deps.accounts.bin(account), args, {
         cwd,
-        env: { ...process.env, ...this.deps.accounts.env(account) },
+        env: childEnv(this.deps.accounts.env(account)),
         timeout,
         maxBuffer: 32 * 1024 * 1024,
       })
@@ -218,7 +219,7 @@ export class Tools {
       "--settings",
       JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false }),
     ]
-    const proc = new ClaudeProcess(this.deps.accounts.bin(account), args, cwd, { ...process.env, ...this.deps.accounts.env(account) })
+    const proc = new ClaudeProcess(this.deps.accounts.bin(account), args, cwd, childEnv(this.deps.accounts.env(account)))
     proc.start()
     try {
       return await fn(proc, await proc.request("initialize", {}, 60_000))
@@ -466,7 +467,7 @@ export class Tools {
     return new Promise<void>((resolve, reject) => {
       const child = spawn(this.deps.accounts.bin(account), ["mcp", "login", name], {
         cwd: this.inspectDir(),
-        env: { ...process.env, ...this.deps.accounts.env(account) },
+        env: childEnv(this.deps.accounts.env(account)),
         stdio: ["ignore", "pipe", "pipe"],
       })
       let out = ""

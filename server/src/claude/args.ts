@@ -1,4 +1,5 @@
 import { config } from "../config.ts"
+import { childEnv } from "./env.ts"
 import type { SessionRecord } from "../db.ts"
 
 /** Tiempo máximo del hook (segundos): el modo "esperarme" responde antes (compactWaitMin ≤ 45). */
@@ -60,10 +61,7 @@ export function buildLaunch(
   if (session.kind === "worker" && session.worktree && !session.startedOnce) {
     args.push("--worktree", session.name.toLowerCase())
   }
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
-  }
+  const env = childEnv({ CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1" })
   // Nunca heredar el socket de mensajería de otra sesión (por si el server corre dentro de una).
   delete env.CLAUDE_CODE_MESSAGING_SOCKET
   delete env.CLAUDE_CODE_MESSAGING_TOKEN

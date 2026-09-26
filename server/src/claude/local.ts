@@ -7,6 +7,7 @@ import { promisify } from "node:util"
 import { config } from "../config.ts"
 import type { TimelineEvent, TokenUsage } from "../shared/types.ts"
 import { oneLine } from "../util.ts"
+import { childEnv } from "./env.ts"
 import { sessionTokens, StreamNormalizer } from "./normalize.ts"
 
 const run = promisify(execFile)
@@ -35,7 +36,7 @@ export async function listLiveSessions(target?: ClaudeTarget): Promise<LiveSessi
     const { stdout } = await run(target?.bin ?? config.claudeBin, ["agents", "--json"], {
       timeout: 10_000,
       maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, ...(target?.env ?? {}) },
+      env: childEnv(target?.env ?? {}),
     })
     const list = JSON.parse(stdout) as LiveSession[]
     return Array.isArray(list) ? list.filter((s) => s.pid) : []
