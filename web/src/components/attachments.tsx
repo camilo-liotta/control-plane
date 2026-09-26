@@ -91,23 +91,29 @@ export function Lightbox() {
             <div className="flex items-center gap-2 pr-8">
               <DialogTitle className="truncate text-sm">{lightbox.name}</DialogTitle>
               <DialogDescription className="sr-only">Imagen adjunta</DialogDescription>
-              <div className="ml-auto flex gap-1">
-                <Button asChild size="sm" variant="ghost">
-                  <a href={attachmentUrl(lightbox.id)} target="_blank" rel="noreferrer">
-                    <ExternalLink />
-                    Abrir
-                  </a>
-                </Button>
-                <Button asChild size="sm" variant="ghost">
-                  <a href={attachmentUrl(lightbox.id, true)}>
-                    <Download />
-                    Descargar
-                  </a>
-                </Button>
-              </div>
+              {lightbox.id && (
+                <div className="ml-auto flex gap-1">
+                  <Button asChild size="sm" variant="ghost">
+                    <a href={attachmentUrl(lightbox.id)} target="_blank" rel="noreferrer">
+                      <ExternalLink />
+                      Abrir
+                    </a>
+                  </Button>
+                  <Button asChild size="sm" variant="ghost">
+                    <a href={attachmentUrl(lightbox.id, true)}>
+                      <Download />
+                      Descargar
+                    </a>
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="flex min-h-0 items-center justify-center overflow-auto rounded-lg bg-muted/40">
-              <img src={attachmentUrl(lightbox.id)} alt={lightbox.name} className="max-h-[78svh] w-auto object-contain" />
+              <img
+                src={lightbox.src ?? (lightbox.id ? attachmentUrl(lightbox.id) : undefined)}
+                alt={lightbox.name}
+                className="max-h-[78svh] w-auto object-contain"
+              />
             </div>
           </>
         )}
