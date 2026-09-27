@@ -37,15 +37,25 @@ import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
-/** Marca: una orquestadora arriba y sus sesiones abajo. */
+/** Marca: la orquestadora (un punto adentro de un aro) y sus 6 sesiones, en la versión simplificada del ícono (se lee a 18–24 px). */
 export function Mark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
-      <path d="M8 5.2 3.2 11.4M8 5.2v6.2M8 5.2l4.8 6.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity=".55" />
-      <circle cx="8" cy="3.6" r="2.1" fill="currentColor" />
-      <circle cx="3" cy="12.6" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="8" cy="12.6" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="13" cy="12.6" r="1.6" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M8 5.25 8 4.25M10.38 6.62l.87-.5M10.38 9.38l.87.5M8 10.75v1M5.62 9.38l-.87.5M5.62 6.62l-.87-.5"
+        stroke="currentColor"
+        strokeWidth=".75"
+        strokeLinecap="round"
+        opacity=".6"
+      />
+      <circle cx="8" cy="2.8" r="1.45" fill="currentColor" />
+      <circle cx="12.5" cy="5.4" r="1.45" fill="currentColor" />
+      <circle cx="12.5" cy="10.6" r="1.45" fill="currentColor" />
+      <circle cx="8" cy="13.2" r="1.45" fill="currentColor" />
+      <circle cx="3.5" cy="10.6" r="1.45" fill="currentColor" />
+      <circle cx="3.5" cy="5.4" r="1.45" fill="currentColor" />
+      <circle cx="8" cy="8" r="2.3" stroke="currentColor" strokeWidth=".9" />
+      <circle cx="8" cy="8" r="1.05" fill="currentColor" />
     </svg>
   )
 }
