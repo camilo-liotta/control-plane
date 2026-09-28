@@ -36,6 +36,9 @@ const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// Al arrancar, un rato después (que primero levante el server).
 const FIRST_CHECK: Duration = Duration::from_secs(20);
 const MAX_RESPONSE: usize = 1 << 20;
+/// Por su ruta, no por el PATH (en Linux y en la Mac están ahí).
+const CURL: &str = "/usr/bin/curl";
+const BASH: &str = "/bin/bash";
 
 // ---- Modelo (se prueba solo) ----
 
@@ -100,16 +103,20 @@ pub fn should_announce(already: Option<&str>, v: Version) -> bool {
     already.and_then(Version::parse) != Some(v)
 }
 
-/// A qué URL preguntar, o `None` si no se busca. En release, la API de GitHub; en desarrollo,
-/// solo si se define `CONTROL_PLANE_UPDATE_URL` (https, o http a esta máquina para probar).
+/// A qué URL preguntar, o `None` si no se busca. En release, siempre la API de GitHub (la
+/// variable no cuenta); en desarrollo, solo si se define `CONTROL_PLANE_UPDATE_URL` (https, o
+/// http a esta máquina para probar).
 pub fn check_url(debug: bool, env_url: Option<&str>) -> Option<String> {
-    if let Some(u) = env_url.map(str::trim).filter(|u| !u.is_empty()) {
-        let local = ["http://127.0.0.1:", "http://localhost:"]
-            .iter()
-            .any(|p| u.starts_with(p));
-        return (u.starts_with("https://") || local).then(|| u.to_string());
+    if !debug {
+        return Some(format!(
+            "https://api.github.com/repos/{OWNER}/{REPO}/releases/latest"
+        ));
     }
-    (!debug).then(|| format!("https://api.github.com/repos/{OWNER}/{REPO}/releases/latest"))
+    let u = env_url.map(str::trim).filter(|u| !u.is_empty())?;
+    let local = ["http://127.0.0.1:", "http://localhost:"]
+        .iter()
+        .any(|p| u.starts_with(p));
+    (u.starts_with("https://") || local).then(|| u.to_string())
 }
 
 /// La consulta de este ciclo, o `None` si no toca: con "Buscar actualizaciones" apagado no se
@@ -269,7 +276,7 @@ fn check<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
         return;
     };
     let current = current_version(app);
-    let out = Command::new("curl")
+    let out = Command::new(CURL)
         .args(curl_args(&url, &current.to_string()))
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -431,7 +438,7 @@ fn spawn_installer<R: Runtime>(
         args,
         log.display()
     );
-    let mut cmd = Command::new("bash");
+    let mut cmd = Command::new(BASH);
     cmd.args(&args)
         .stdin(Stdio::null())
         .stdout(out)
@@ -530,14 +537,24 @@ mod tests {
             check_url(true, Some("http://127.0.0.1:4739/latest")).as_deref(),
             Some("http://127.0.0.1:4739/latest")
         );
+        // En release la variable no cuenta: siempre GitHub.
+        assert_eq!(
+            check_url(false, Some("https://otro.example/latest")).as_deref(),
+            Some(api)
+        );
+        assert_eq!(
+            check_url(false, Some("http://127.0.0.1:1/x")).as_deref(),
+            Some(api)
+        );
         // http solo a esta máquina.
-        assert_eq!(check_url(false, Some("http://evil.example/latest")), None);
+        assert_eq!(check_url(true, Some("http://evil.example/latest")), None);
         assert_eq!(check_url(true, Some("file:///etc/passwd")), None);
     }
 
     #[test]
     fn nothing_is_asked_with_the_setting_off() {
         assert_eq!(request_url(false, false, None), None);
+        assert_eq!(request_url(false, false, Some("https://x.example/y")), None);
         assert_eq!(
             request_url(false, true, Some("http://127.0.0.1:4739/x")),
             None
@@ -624,7 +641,7 @@ mod tests {
             req
         });
         let url = check_url(true, Some(&format!("http://127.0.0.1:{port}/latest"))).unwrap();
-        let out = Command::new("curl")
+        let out = Command::new(CURL)
             .args(curl_args(&url, "0.1.0"))
             .output()
             .unwrap();

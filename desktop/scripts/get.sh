@@ -331,8 +331,12 @@ install_linux() {
   # revisar con grep (está comprimido).
   local open=0 knows=0
   if [[ -n "$APP_PID" ]]; then
-    open=1
-    knows=1
+    # Se vuelve a mirar ahora (después de bajar y verificar): si la app ya no está, no hay nada
+    # que cerrar ni reabrir.
+    if kill -0 "$APP_PID" 2>/dev/null; then
+      open=1
+      knows=1
+    fi
   elif app_pids "$bin" >/dev/null; then
     open=1
     knows_keep_server "$bin" && knows=1
@@ -344,10 +348,11 @@ install_linux() {
     if [[ -t 0 ]]; then
       say "Instalo el paquete (te va a pedir la contraseña)…"
       run sudo apt install -y "$pkg"
-    elif command -v pkexec >/dev/null; then
-      # Sin terminal (la lanzó la app): el sistema muestra su diálogo para la contraseña.
+    elif command -v pkexec >/dev/null && [[ -x /usr/bin/apt ]]; then
+      # Sin terminal (la lanzó la app): el sistema muestra su diálogo para la contraseña. apt por
+      # su ruta: corre como root, no puede ser el primero que aparezca en el PATH.
       say "Instalo el paquete (el sistema te va a pedir la contraseña)…"
-      run pkexec "$(command -v apt)" install -y "$pkg"
+      run pkexec /usr/bin/apt install -y "$pkg"
     else
       die "Para instalar el .deb hace falta pkexec o correr esto desde una terminal."
     fi
