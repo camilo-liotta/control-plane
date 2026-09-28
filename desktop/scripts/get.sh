@@ -192,7 +192,7 @@ main() {
     [[ -f "$from/$file" ]] || die "En $from no está $file."
     cp "$from/SHA256SUMS" "$from/$file" "$TMP/"
   else
-    say "Bajo ${file}…"
+    say "Bajo $file…"
     fetch "$base/SHA256SUMS" "$TMP/SHA256SUMS" ||
       die "No encontré la versión $version en https://github.com/$REPO/releases (¿está publicada?)."
     fetch "$base/$file" "$TMP/$file" || die "No pude bajar $base/$file."
