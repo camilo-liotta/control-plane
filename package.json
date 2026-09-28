@@ -15,8 +15,10 @@
     "start": "npm run build && npm run start -w server",
     "serve": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
-    "test": "npm test -w server",
-    "app:install": "bash desktop/scripts/install.sh"
+    "test": "node scripts/version.mjs --check && npm test -w server",
+    "app:install": "bash desktop/scripts/install.sh",
+    "version:set": "node scripts/version.mjs",
+    "version:check": "node scripts/version.mjs --check"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

@@ -100,6 +100,12 @@ Cuidados:
 - No muevas `desktop/src-tauri/target/` de cargo entre worktrees.
 - Si trabajás desde una sesión o una terminal lanzada por el propio dashboard, heredás `NODE_ENV=production` y `npm_config_allow_scripts`: instalá con `env -u NODE_ENV -u npm_config_allow_scripts npm ci` y corré los tests con `env -u NODE_ENV`.
 
+## Sacar una versión
+
+1. `npm run version:set X.Y.Z` (la cambia en todos lados; `npm test` falla si quedan desparejas) y commiteá en `main`.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`: el workflow [release](.github/workflows/release.yml) corre los tests, arma el `.dmg`, el `.deb` y el `.AppImage`, y deja un release **en borrador** con `SHA256SUMS`.
+3. Revisalo en GitHub → Releases y publicalo a mano: recién ahí lo ve `get.sh`.
+
 ## Pull requests
 
 - Un cambio por PR, desde una rama propia, contra `main`.
