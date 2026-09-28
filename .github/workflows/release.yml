@@ -236,5 +236,12 @@ jobs:
 
           Hace falta Node 24 o más nuevo (la app corre el server con el tuyo). Verificá lo bajado con \`SHA256SUMS\`.
           EOF
+          # Con un tag push el tag ya existe; a mano, el borrador apunta a este commit y GitHub crea el
+          # tag recién al publicarlo.
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            extra+=(--verify-tag)
+          else
+            extra+=(--target "$GITHUB_SHA")
+          fi
           # --draft siempre: publicarlo es una decisión a mano, desde GitHub.
-          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$title" --notes-file notes.md "${extra[@]}" dist/*
+          gh release create "$TAG" --draft --title "$title" --notes-file notes.md "${extra[@]}" dist/*
