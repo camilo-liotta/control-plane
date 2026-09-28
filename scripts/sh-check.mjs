@@ -1,7 +1,7 @@
 // Falla si un .sh del repo tiene `$var` pegado a un carácter que no es ASCII (`"Bajo $file…"`).
-// El bash 3.2 de la Mac, con un locale que no es UTF-8 (por SSH, o la app abierta desde el
-// Finder), lee esos bytes como parte del nombre de la variable y, con set -u, el script se corta.
-// Con llaves no pasa: `${file}…`.
+// El bash 3.2 de la Mac, con un locale UTF-8, lee esos bytes como parte del nombre de la variable
+// (la libc los toma como letras Latin-1) y, con set -u, el script se corta. Con llaves no pasa:
+// `${file}…`.
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
