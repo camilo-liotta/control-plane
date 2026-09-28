@@ -254,7 +254,8 @@ fn bundle_dir(app: &AppHandle) -> PathBuf {
         .map(|d| d.join("app"))
         .unwrap_or_else(|_| PathBuf::from("app"));
     // Desde un AppImage, una copia fuera del montaje: si el server queda corriendo al salir, su
-    // web y su hook siguen ahí (ver bundle_copy).
+    // web y su hook siguen ahí (ver bundle_copy). `Env::appimage` solo existe en Linux.
+    #[cfg(target_os = "linux")]
     if app.env().appimage.is_some() {
         if let Ok(data) = app.path().app_local_data_dir() {
             let version = app.package_info().version.to_string();
