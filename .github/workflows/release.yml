@@ -3,6 +3,8 @@
 # - Tag v* (o a mano, con un tag): tests → builds de macOS y Linux en paralelo → release en BORRADOR
 #   con los archivos y SHA256SUMS. Nunca lo publica: eso se hace a mano desde GitHub.
 # - Pull request que toque la app o este workflow: los mismos builds, subidos como artifacts del run.
+# - Push a main con esos mismos cambios: tests y builds, sin release. Así queda en main la caché de
+#   cargo de cada job, que es la única que un PR nuevo puede leer (sin eso, cada PR compila en frío).
 #
 # Pasos a mano en lugar de tauri-apps/tauri-action: esa action crea el release desde el mismo job que
 # compila, así que necesita contents: write mientras corre el build (npm ci, build.rs, etc.). Así, los
@@ -12,22 +14,27 @@ name: release
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    # Solo filtra los push a main: GitHub no mira los paths en los push de tags.
+    paths: &paths
+      - "desktop/**"
+      - ".github/workflows/release.yml"
+      - "scripts/version.mjs"
   workflow_dispatch:
     inputs:
       tag:
         description: "Tag del release en borrador (vX.Y.Z tiene que coincidir con la versión del repo; otro nombre = prueba)"
         required: true
   pull_request:
-    paths:
-      - "desktop/**"
-      - ".github/workflows/release.yml"
-      - "scripts/version.mjs"
+    paths: *paths
 
 permissions:
   contents: read
 
+# Un PR cancela su run anterior. Los de main, los tags y los manuales van cada uno en su grupo (por
+# commit), así nunca se cancelan ni se descartan mientras esperan.
 concurrency:
-  group: release-${{ github.ref }}-${{ inputs.tag }}
+  group: release-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}-${{ inputs.tag }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -56,8 +63,9 @@ jobs:
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          if [[ "$EVENT" == pull_request ]]; then
+          if [[ "$EVENT" == pull_request || "$REF_TYPE" == branch && "$EVENT" == push ]]; then
             node scripts/version.mjs --check
           elif [[ ! "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
             echo "::error::Tag inválido: $TAG"
@@ -191,6 +199,8 @@ jobs:
 
   # Que las dependencias del .deb se resuelvan en las versiones de Ubuntu que soportamos.
   deb-check:
+    # En los push a main solo hacen falta los builds (por la caché).
+    if: github.event_name != 'push' || github.ref_type == 'tag'
     needs: [test, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -216,7 +226,8 @@ jobs:
           if ldd /usr/bin/control-plane-desktop | grep 'not found'; then exit 1; fi
 
   release:
-    if: github.event_name != 'pull_request'
+    # Solo con un tag o a mano: nunca en un PR ni en un push a main.
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     needs: [test, macos, linux, deb-check]
     runs-on: ubuntu-latest
     timeout-minutes: 10
