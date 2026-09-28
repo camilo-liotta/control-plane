@@ -182,6 +182,34 @@ pub fn installer_args(script: &Path, v: Version, pid: u32, install: &Install) ->
     args
 }
 
+/// Un locale UTF-8 que existe siempre en cada sistema.
+#[cfg(target_os = "macos")]
+const UTF8_LOCALE: &str = "en_US.UTF-8";
+#[cfg(not(target_os = "macos"))]
+const UTF8_LOCALE: &str = "C.UTF-8";
+
+/// Qué cambiar del entorno para que el instalador corra con un locale UTF-8. Con uno que no lo es
+/// (una app abierta desde el Finder no trae `LANG`), el bash 3.2 de la Mac lee los bytes de "…"
+/// pegados a `$var` como parte del nombre y `get.sh` se corta. Devuelve si hay que sacar `LC_ALL`
+/// y el `LC_CTYPE` a poner; `(false, None)` si el que hay ya es UTF-8.
+pub fn installer_locale(get: impl Fn(&str) -> Option<String>) -> (bool, Option<&'static str>) {
+    let set = |k: &str| get(k).filter(|v| !v.is_empty());
+    let all = set("LC_ALL");
+    let ctype = all
+        .clone()
+        .or_else(|| set("LC_CTYPE"))
+        .or_else(|| set("LANG"));
+    let utf8 = ctype.is_some_and(|c| {
+        let c = c.to_ascii_lowercase();
+        c.contains("utf-8") || c.contains("utf8")
+    });
+    if utf8 {
+        (false, None)
+    } else {
+        (all.is_some(), Some(UTF8_LOCALE))
+    }
+}
+
 /// La `.app` que contiene al ejecutable (`…/X.app/Contents/MacOS/bin`).
 pub fn mac_app_of(exe: &Path) -> Option<PathBuf> {
     let app = exe.parent()?.parent()?.parent()?;
@@ -444,6 +472,13 @@ fn spawn_installer<R: Runtime>(
         .stdout(out)
         .stderr(err)
         .env_remove("NODE_ENV");
+    let (drop_all, ctype) = installer_locale(|k| std::env::var(k).ok());
+    if drop_all {
+        cmd.env_remove("LC_ALL");
+    }
+    if let Some(ctype) = ctype {
+        cmd.env("LC_CTYPE", ctype);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -465,6 +500,42 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn installer_gets_a_utf8_locale() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        // Sin nada (la app desde el Finder) o con C: LC_CTYPE UTF-8.
+        assert_eq!(installer_locale(env(&[])), (false, Some(UTF8_LOCALE)));
+        assert_eq!(
+            installer_locale(env(&[("LANG", "C")])),
+            (false, Some(UTF8_LOCALE))
+        );
+        // LC_ALL manda sobre todo: si no es UTF-8, se saca.
+        assert_eq!(
+            installer_locale(env(&[("LC_ALL", "C"), ("LANG", "es_AR.UTF-8")])),
+            (true, Some(UTF8_LOCALE))
+        );
+        // Si ya es UTF-8, no se toca.
+        assert_eq!(
+            installer_locale(env(&[("LANG", "es_AR.UTF-8")])),
+            (false, None)
+        );
+        assert_eq!(
+            installer_locale(env(&[("LC_CTYPE", "en_US.utf8")])),
+            (false, None)
+        );
+        assert_eq!(
+            installer_locale(env(&[("LC_ALL", ""), ("LANG", "C.UTF-8")])),
+            (false, None)
+        );
+    }
 
     #[test]
     fn versions_parse_strictly_and_compare() {

@@ -120,6 +120,17 @@ jobs:
           lipo -info "$B/macos/control-plane.app/Contents/MacOS/control-plane-desktop"
           codesign -dv "$B/macos/control-plane.app" 2>&1 | grep -E 'Identifier|Signature|Format'
           ls -l dist
+      # Los scripts con el /bin/bash 3.2 de la Mac y un locale que no es UTF-8 (por SSH, o la app
+      # abierta desde el Finder): así se rompió get.sh en la 0.2.0.
+      - name: get.sh e install.sh con bash 3.2 (LC_ALL=C)
+        run: |
+          /bin/bash --version | head -n 1
+          T="$RUNNER_TEMP/get-sh"
+          mkdir -p "$T"
+          cp dist/*.app.tar.gz "$T/"
+          (cd "$T" && shasum -a 256 -- * >SHA256SUMS)
+          LC_ALL=C /bin/bash desktop/scripts/get.sh --dry-run --from "$T"
+          LC_ALL=C /bin/bash desktop/scripts/install.sh --dry-run
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos
