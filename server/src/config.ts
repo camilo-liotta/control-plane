@@ -2,6 +2,8 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import pkg from "../package.json" with { type: "json" }
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 /** Lo define scripts/bundle.mjs: en el bundle, la web y el hook quedan al lado de server.mjs. */
@@ -30,4 +32,5 @@ export const config = {
   launchId: process.env.CONTROL_PLANE_LAUNCH_ID || null,
 }
 
-export const version = "0.1.0"
+/** La de server/package.json (la pone `npm run version:set`). */
+export const version: string = pkg.version

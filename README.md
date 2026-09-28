@@ -38,7 +38,21 @@ Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la b
 
 - Linux (Ubuntu) y macOS. Windows no.
 - Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
-- Por ahora no hay paquetes publicados: se compila desde este repo, con un solo comando.
+- Hay instaladores listos en [Releases](https://github.com/camilo-liotta/control-plane/releases), o se compila desde el repo con un solo comando (ver abajo).
+
+### Instalar sin compilar
+
+En Mac (Apple Silicon o Intel, macOS 11 o más nuevo) o Linux (x86_64, Ubuntu 22.04 o más nuevo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/camilo-liotta/control-plane/main/desktop/scripts/get.sh | bash
+```
+
+- Baja la última versión publicada y la verifica contra `SHA256SUMS` antes de tocar nada. Para otra versión: `… | bash -s -- --version 0.2.0`. Para ver lo que haría sin instalar: `… | bash -s -- --dry-run`.
+- Instala igual que [`npm run app:install`](#instalar-o-actualizar): en la Mac, en `/Applications` (o `~/Applications`); en Linux, el `.deb` con `sudo apt install` o, si no hay apt, el AppImage en `~/.local/bin/control-plane.AppImage`.
+- Correrlo de nuevo actualiza, sin cortar las sesiones: si la app está abierta, la cierra dejando el server corriendo y la vuelve a abrir (con la misma salvedad de la primera vez en Linux que `npm run app:install`, abajo).
+
+A mano: bajá de [Releases](https://github.com/camilo-liotta/control-plane/releases) el `.dmg` (Mac), el `.deb` o el `.AppImage` (Linux), y comparalo con `SHA256SUMS` (`shasum -a 256 <archivo>` en la Mac, `sha256sum <archivo>` en Linux). Para el `.deb` y el AppImage, seguí [Instalar en Linux](#instalar-en-linux). La app de la Mac no tiene firma de Apple: si la bajaste con el navegador, la primera vez mirá "La primera vez, sin firma de Apple" en [Compilar e instalar en la Mac](#compilar-e-instalar-en-la-mac). Con `get.sh` no hace falta.
 
 ### Instalar o actualizar
 

@@ -1,0 +1,247 @@
+# Arma los instaladores de la app de escritorio.
+#
+# - Tag v* (o a mano, con un tag): tests → builds de macOS y Linux en paralelo → release en BORRADOR
+#   con los archivos y SHA256SUMS. Nunca lo publica: eso se hace a mano desde GitHub.
+# - Pull request que toque la app o este workflow: los mismos builds, subidos como artifacts del run.
+#
+# Pasos a mano en lugar de tauri-apps/tauri-action: esa action crea el release desde el mismo job que
+# compila, así que necesita contents: write mientras corre el build (npm ci, build.rs, etc.). Así, los
+# builds solo leen, y un job aparte, sin compilar nada, es el único que puede escribir.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag del release en borrador (vX.Y.Z tiene que coincidir con la versión del repo; otro nombre = prueba)"
+        required: true
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/release.yml"
+      - "scripts/version.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Las librerías para compilar Tauri en Ubuntu (las del README).
+  LINUX_DEPS: >-
+    build-essential curl wget file patchelf libwebkit2gtk-4.1-dev libxdo-dev libssl-dev
+    libayatana-appindicator3-dev librsvg2-dev
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Versión (y que coincida con el tag)
+        id: version
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT" == pull_request ]]; then
+            node scripts/version.mjs --check
+          elif [[ ! "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::Tag inválido: $TAG"
+            exit 1
+          elif [[ "$TAG" == v* ]]; then
+            node scripts/version.mjs --check --tag "$TAG"
+          else
+            node scripts/version.mjs --check
+            echo "::warning::El tag $TAG no es vX.Y.Z: el borrador queda como prueba (prerelease)."
+          fi
+          echo "version=$(node -p 'require("./package.json").version')" >>"$GITHUB_OUTPUT"
+      - name: Librerías de Tauri
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # una palabra por paquete
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal -c clippy,rustfmt && rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # clippy y cargo test necesitan server-bundle/ (es un recurso de la app): lo arma el stage.
+      - run: npm run stage -w desktop
+      - run: npm run test -w desktop
+
+  macos:
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Rust (Apple Silicon e Intel)
+        run: |
+          rustup toolchain install stable --profile minimal -t aarch64-apple-darwin,x86_64-apple-darwin
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm ci
+      - name: Build universal (.app y .dmg)
+        run: npm run tauri -w desktop -- build --target universal-apple-darwin --bundles app,dmg
+      - name: Juntar los archivos
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          B=desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          mkdir dist
+          cp "$B/dmg/control-plane_${VERSION}_universal.dmg" dist/
+          # El .app suelto, para que get.sh no tenga que montar el dmg. Sin los ._ de macOS.
+          COPYFILE_DISABLE=1 tar -czf "dist/control-plane_${VERSION}_universal.app.tar.gz" -C "$B/macos" control-plane.app
+          lipo -info "$B/macos/control-plane.app/Contents/MacOS/control-plane-desktop"
+          codesign -dv "$B/macos/control-plane.app" 2>&1 | grep -E 'Identifier|Signature|Format'
+          ls -l dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    needs: test
+    # La glibc de 22.04 es la más vieja que soportamos: lo que compila acá anda en 22.04, 24.04 y 26.04.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Librerías de Tauri
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # una palabra por paquete
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm ci
+      - name: Build (.deb y .AppImage)
+        # linuxdeploy es un AppImage y el runner no tiene FUSE: que se extraiga y corra.
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: npm run tauri -w desktop -- build --bundles deb,appimage
+      - name: Juntar los archivos
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          B=desktop/src-tauri/target/release/bundle
+          mkdir dist
+          cp "$B/deb/control-plane_${VERSION}_amd64.deb" "$B/appimage/control-plane_${VERSION}_amd64.AppImage" dist/
+          dpkg-deb -f "dist/control-plane_${VERSION}_amd64.deb" Depends
+          ls -l dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # Que las dependencias del .deb se resuelvan en las versiones de Ubuntu que soportamos.
+  deb-check:
+    needs: [test, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04", "ubuntu:26.04"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux
+      - name: apt install del .deb
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends "./control-plane_${VERSION}_amd64.deb"
+          test -x /usr/bin/control-plane-desktop
+          test -f /usr/lib/control-plane/app/server.mjs
+          # Que el binario encuentre todas sus librerías.
+          if ldd /usr/bin/control-plane-desktop | grep 'not found'; then exit 1; fi
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: [test, macos, linux, deb-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # El único job que escribe: crea el borrador y sube los archivos. No hace checkout ni compila.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        working-directory: dist
+        run: sha256sum -- * | tee SHA256SUMS
+      - name: Release en borrador
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          extra=()
+          title="control-plane $VERSION"
+          if [[ "$TAG" != v* ]]; then
+            extra+=(--prerelease)
+            title="PRUEBA $TAG (control-plane $VERSION)"
+          fi
+          cat >notes.md <<EOF
+          App de escritorio de control-plane $VERSION.
+
+          - **macOS** (Apple Silicon e Intel, 11 o más nuevo): \`control-plane_${VERSION}_universal.dmg\`. No tiene firma de Apple: la primera vez, ver "La primera vez, sin firma de Apple" en el README.
+          - **Linux** (Ubuntu 22.04 o más nuevo, x86_64): \`control-plane_${VERSION}_amd64.deb\` o el \`.AppImage\`.
+          - O con un comando: \`curl -fsSL https://raw.githubusercontent.com/${GH_REPO}/main/desktop/scripts/get.sh | bash\`
+
+          Hace falta Node 24 o más nuevo (la app corre el server con el tuyo). Verificá lo bajado con \`SHA256SUMS\`.
+          EOF
+          # Con un tag push el tag ya existe; a mano, el borrador apunta a este commit y GitHub crea el
+          # tag recién al publicarlo.
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            extra+=(--verify-tag)
+          else
+            extra+=(--target "$GITHUB_SHA")
+          fi
+          # --draft siempre: publicarlo es una decisión a mano, desde GitHub.
+          gh release create "$TAG" --draft --title "$title" --notes-file notes.md "${extra[@]}" dist/*
