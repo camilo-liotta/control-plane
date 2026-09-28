@@ -5,6 +5,9 @@
 #   npm run app:install -- --dry-run      muestra lo que haría, sin compilar ni instalar nada
 #   npm run app:install -- --no-install   compila y deja el paquete, sin instalarlo
 #
+# Solo para probar (ver CONTRIBUTING): CONTROL_PLANE_INSTALL_BIN=<binario> reinicia ese binario
+# como si actualizara (--quit --keep-server y volver a abrirlo), sin compilar ni instalar nada.
+#
 # Correrlo de nuevo actualiza: compila lo que haya en el repo (después de un `git pull`) y reemplaza
 # la app instalada. Las sesiones no se cortan: el server sigue corriendo y la app lo adopta al abrir.
 set -euo pipefail
@@ -60,25 +63,41 @@ case "$OS" in
 esac
 ((DRY)) && say "Modo prueba (--dry-run): no compilo ni instalo nada."
 
+# Modo prueba: reiniciar otro binario (uno de release, dentro de un dbus-run-session), sin
+# compilar ni instalar. Solo Linux.
+TEST_BIN="${CONTROL_PLANE_INSTALL_BIN:-}"
+if [[ -n "$TEST_BIN" ]]; then
+  [[ "$OS" == Linux ]] || die "CONTROL_PLANE_INSTALL_BIN es solo para probar en Linux."
+  [[ -x "$TEST_BIN" ]] || die "CONTROL_PLANE_INSTALL_BIN=$TEST_BIN no es un ejecutable."
+  # Un binario de release comparte la instancia única con la app instalada: en el bus de siempre,
+  # el --quit le llegaría a ella.
+  [[ "${DBUS_SESSION_BUS_ADDRESS:-}" != "unix:path=/run/user/$(id -u)/bus" ]] ||
+    die "El modo prueba va dentro de dbus-run-session (si no, le llega a la app instalada)."
+  say "Modo prueba: reinicio $TEST_BIN sin compilar ni instalar."
+  NO_INSTALL=0
+fi
+
 # ---- 1. Lo que hace falta ----
 
 command -v node >/dev/null || die "No encuentro Node. Instalá Node 24 (nvm, fnm o nodejs.org) y volvé a probar."
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 ((NODE_MAJOR >= 24)) || die "Tenés Node $(node --version) y hace falta el 24 o más nuevo."
-VERSION="$(node -p "require('$TAURI_DIR/tauri.conf.json').version")"
+VERSION="$(node -p "require('$ROOT/desktop/package.json').version")"
 say "Node $(node --version) · control-plane $VERSION"
 
-if [[ "$OS" == Darwin ]] && ! xcode-select -p >/dev/null 2>&1; then
+if [[ -n "$TEST_BIN" ]]; then
+  : # modo prueba: no se compila, no hacen falta las herramientas
+elif [[ "$OS" == Darwin ]] && ! xcode-select -p >/dev/null 2>&1; then
   say "Faltan las herramientas de línea de comandos de Xcode: abro el instalador del sistema."
   run xcode-select --install || true
   die "Cuando termine la instalación, volvé a correr \`npm run app:install\`."
 fi
 
-if ! command -v cargo >/dev/null && [[ -f "$HOME/.cargo/env" ]]; then
+if [[ -z "$TEST_BIN" ]] && ! command -v cargo >/dev/null && [[ -f "$HOME/.cargo/env" ]]; then
   # shellcheck source=/dev/null
   . "$HOME/.cargo/env"
 fi
-if ! command -v cargo >/dev/null; then
+if [[ -z "$TEST_BIN" ]] && ! command -v cargo >/dev/null; then
   say "Falta Rust, que hace falta para compilar la app. Se instala con rustup en ~/.cargo (sin sudo)."
   if ((DRY)); then
     printf '  (preguntaría e instalaría rustup con --profile minimal)\n'
@@ -90,9 +109,9 @@ if ! command -v cargo >/dev/null; then
     die "Sin Rust no se puede compilar. Instalalo desde https://rustup.rs y volvé a probar."
   fi
 fi
-command -v cargo >/dev/null && say "$(cargo --version)"
+[[ -z "$TEST_BIN" ]] && say "$(cargo --version)"
 
-if [[ "$OS" == Linux ]]; then
+if [[ "$OS" == Linux && -z "$TEST_BIN" ]]; then
   command -v dpkg-query >/dev/null || die "En Linux, por ahora, solo Ubuntu y Debian (hace falta apt)."
   # Las librerías para compilar Tauri (las del README, sin las del AppImage).
   PKGS=(build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev
@@ -130,7 +149,9 @@ cd "$ROOT"
 # npm de adentro lee tu configuración como siempre.
 npm_() { env -u NODE_ENV -u npm_config_allow_scripts npm "$@"; }
 
-if ((DRY)); then
+if [[ -n "$TEST_BIN" ]]; then
+  :
+elif ((DRY)); then
   run npm ci
   run npm run tauri -w desktop -- build --bundles "$BUNDLE"
 else
@@ -159,6 +180,12 @@ fi
 
 # ---- 3. Instalar ----
 
+# ¿El binario instalado entiende `--quit --keep-server` (salir dejando el server, sin preguntar)?
+# Se busca el texto en el binario, sin ejecutarlo: correrlo con un flag que no conoce le llegaría
+# a la app abierta como una segunda apertura.
+knows_keep_server() { grep -qaF -- "--quit --keep-server" "$1" 2>/dev/null; }
+WAIT_SECS=15
+
 if [[ "$OS" == Darwin ]]; then
   DEST=/Applications
   if [[ ! -w "$DEST" ]]; then
@@ -167,15 +194,26 @@ if [[ "$OS" == Darwin ]]; then
     run mkdir -p "$DEST"
   fi
   TARGET="$DEST/control-plane.app"
-  if [[ "$(osascript -e 'application "control-plane" is running' 2>/dev/null)" == true ]]; then
-    # Salir así (como desde el Dock) no pregunta y deja el server corriendo: al reabrir, lo adopta.
-    say "Cierro la app abierta (el server y las sesiones siguen)…"
-    run osascript -e 'quit app "control-plane"'
+  is_running() { [[ "$(osascript -e 'application "control-plane" is running' 2>/dev/null)" == true ]]; }
+  if is_running; then
+    EXE=""
+    if [[ -d "$TARGET" ]]; then
+      EXE="$TARGET/Contents/MacOS/$(defaults read "$TARGET/Contents/Info" CFBundleExecutable 2>/dev/null)"
+    fi
+    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
+    if [[ -x "$EXE" ]] && knows_keep_server "$EXE"; then
+      run "$EXE" --quit --keep-server
+    else
+      # Una app vieja no conoce --keep-server: salir como desde el Dock tampoco pregunta y deja
+      # el server corriendo.
+      run osascript -e 'quit app "control-plane"'
+    fi
     if ((!DRY)); then
-      for _ in $(seq 30); do
-        [[ "$(osascript -e 'application "control-plane" is running')" == true ]] || break
+      for _ in $(seq $((WAIT_SECS * 2))); do
+        is_running || break
         sleep 0.5
       done
+      is_running && warn "La app no se cerró en ${WAIT_SECS} s: la reemplazo igual; si queda la vieja, cerrala y abrila."
     fi
   fi
   # Copia aparte y después el cambio, así nunca queda una app a medias.
@@ -187,14 +225,60 @@ if [[ "$OS" == Darwin ]]; then
   run open "$TARGET"
   WHERE="$TARGET"
 else
-  RUNNING=0
-  pgrep -f '^/usr/bin/control-plane-desktop' >/dev/null && RUNNING=1
-  say "Instalo el paquete (te va a pedir la contraseña)…"
-  run sudo apt install -y "$PKG"
-  WHERE=/usr/bin/control-plane-desktop
-  if ((RUNNING)); then
-    say "La app está abierta y sigue con la versión anterior hasta que la reinicies. Para pasar a la"
-    say "nueva sin cortar las sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a"
+  BIN="${TEST_BIN:-/usr/bin/control-plane-desktop}"
+  # La app (no sus procesos de WebKit): el binario como primer argumento de la línea de comando.
+  app_pids() { pgrep -f "^$(printf '%s' "$BIN" | sed 's/[.[\*^$]/\\&/g')( |$)"; }
+  RESTART=0
+  if app_pids >/dev/null; then
+    if knows_keep_server "$BIN"; then
+      say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
+      run "$BIN" --quit --keep-server
+      RESTART=1
+      if ((!DRY)); then
+        for _ in $(seq $((WAIT_SECS * 2))); do
+          app_pids >/dev/null || break
+          sleep 0.5
+        done
+        if app_pids >/dev/null; then
+          warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
+          RESTART=0
+        fi
+      fi
+    else
+      say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
+    fi
+  fi
+  if [[ -n "$TEST_BIN" ]]; then
+    say "Modo prueba: no instalo ningún paquete."
+  else
+    say "Instalo el paquete (te va a pedir la contraseña)…"
+    run sudo apt install -y "$PKG"
+  fi
+  WHERE="$BIN"
+  if ((RESTART)); then
+    if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+      say "No veo una sesión gráfica en esta terminal: abrí control-plane desde el lanzador."
+    else
+      # Sin atarla a esta terminal y sin lo que la app no tiene que heredar de ella: NODE_ENV,
+      # lo de npm y, si esto corre desde una sesión del dashboard, las CONTROL_PLANE_* del server.
+      # (En modo prueba se conservan las CONTROL_PLANE_*: son el puerto y las carpetas de prueba.)
+      UNSET=(-u NODE_ENV)
+      while IFS= read -r v; do
+        case "$v" in
+          npm_* | npm_config_*) UNSET+=(-u "$v") ;;
+          CONTROL_PLANE_*) [[ -n "$TEST_BIN" ]] || UNSET+=(-u "$v") ;;
+        esac
+      done < <(compgen -e)
+      say "Vuelvo a abrir la app."
+      if ((DRY)); then
+        printf '  (haría) env %s setsid %s\n' "${UNSET[*]}" "$BIN"
+      else
+        env "${UNSET[@]}" setsid "$BIN" </dev/null >/dev/null 2>&1 &
+      fi
+    fi
+  elif app_pids >/dev/null 2>&1; then
+    say "La app sigue abierta con la versión anterior hasta que la reinicies. Para pasar a la nueva"
+    say "sin cortar las sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a"
     say "abrirla desde el lanzador (adopta el mismo server)."
   fi
 fi
@@ -204,6 +288,8 @@ fi
 echo
 if ((DRY)); then
   say "Eso es lo que haría. Para hacerlo de verdad: npm run app:install"
+elif [[ -n "$TEST_BIN" ]]; then
+  say "Modo prueba terminado: no se instaló nada."
 else
   say "control-plane $VERSION instalada en $WHERE."
   say "Si algo falla, el detalle de la compilación está en $LOG; el de la app, en \"Ver log del server\" de la bandeja."

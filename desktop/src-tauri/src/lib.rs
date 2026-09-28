@@ -115,6 +115,11 @@ fn test_action(argv: &[String]) -> Option<screen::Request> {
 }
 
 pub fn run() {
+    // `--help`: el uso, sin abrir nada ni avisarle a una app abierta.
+    if std::env::args().skip(1).any(|a| a == "--help" || a == "-h") {
+        print!("{}", startup::USAGE);
+        return;
+    }
     let context = tauri::generate_context!();
     // Linux: una segunda apertura con token de activación se lo pasa a la primera y termina.
     #[cfg(target_os = "linux")]
@@ -130,8 +135,12 @@ pub fn run() {
         // Primero: una segunda apertura enfoca la ventana que ya está y termina.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // `control-plane --quit` desde una terminal: salir como con "Salir" (pasa por la
-            // decisión sobre el server).
+            // decisión sobre el server). Con `--keep-server` (el instalador, al actualizar) sale
+            // dejando el server corriendo, sin preguntar y sin cambiar "Al salir".
             if argv.iter().any(|a| a == "--quit") {
+                if argv.iter().any(|a| a == startup::KEEP_SERVER_ARG) {
+                    app.state::<Sidecar>().keep_server_on_exit();
+                }
                 app.exit(0);
                 return;
             }

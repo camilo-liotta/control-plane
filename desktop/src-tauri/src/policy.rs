@@ -97,14 +97,17 @@ pub enum ExitAction {
 
 /// La salida: un server ajeno nunca se toca; uno propio según "Al salir" o la respuesta.
 /// Si el sistema se está apagando o cerrando la sesión, no se pregunta (el sistema ya le manda
-/// SIGTERM al server, que se cierra ordenado).
+/// SIGTERM al server, que se cierra ordenado). `keep_server` es un pedido explícito de salir
+/// dejándolo (`--quit --keep-server`, lo usa el instalador al actualizar): no pregunta ni lo
+/// detiene, diga lo que diga "Al salir", y no cambia el ajuste.
 pub fn exit_action(
     kind: ServerKind,
     on_exit: OnExit,
     answer: Option<Answer>,
     system_ending: bool,
+    keep_server: bool,
 ) -> ExitAction {
-    if kind != ServerKind::Own || system_ending {
+    if kind != ServerKind::Own || system_ending || keep_server {
         return ExitAction::Exit;
     }
     let choice = match (on_exit, answer) {
@@ -189,22 +192,36 @@ mod tests {
         use ServerKind::{Foreign, None as NoServer, Own};
         for on_exit in [OnExit::Ask, OnExit::Stop, OnExit::Leave] {
             for answer in [None, Some(Stop), Some(Leave), Some(Cancel)] {
-                // Ajeno o sin server: salir sin tocar nada, diga lo que diga.
-                assert_eq!(exit_action(Foreign, on_exit, answer, false), Exit);
-                assert_eq!(exit_action(NoServer, on_exit, answer, false), Exit);
-                // Apagado o cierre de sesión: nunca se pregunta.
-                assert_eq!(exit_action(Own, on_exit, answer, true), Exit);
+                for keep in [false, true] {
+                    // Ajeno o sin server: salir sin tocar nada, diga lo que diga.
+                    assert_eq!(exit_action(Foreign, on_exit, answer, false, keep), Exit);
+                    assert_eq!(exit_action(NoServer, on_exit, answer, false, keep), Exit);
+                    // Apagado o cierre de sesión: nunca se pregunta.
+                    assert_eq!(exit_action(Own, on_exit, answer, true, keep), Exit);
+                }
+                // --quit --keep-server: sale dejando el server, sin preguntar ni detenerlo.
+                assert_eq!(exit_action(Own, on_exit, answer, false, true), Exit);
             }
         }
-        assert_eq!(exit_action(Own, OnExit::Ask, None, false), Ask);
-        assert_eq!(exit_action(Own, OnExit::Stop, None, false), StopThenExit);
-        assert_eq!(exit_action(Own, OnExit::Leave, None, false), Exit);
+        // Un --quit a secas (o "Salir") sigue respetando "Al salir".
+        assert_eq!(exit_action(Own, OnExit::Ask, None, false, false), Ask);
         assert_eq!(
-            exit_action(Own, OnExit::Ask, Some(Stop), false),
+            exit_action(Own, OnExit::Stop, None, false, false),
             StopThenExit
         );
-        assert_eq!(exit_action(Own, OnExit::Ask, Some(Leave), false), Exit);
-        assert_eq!(exit_action(Own, OnExit::Ask, Some(Cancel), false), Stay);
+        assert_eq!(exit_action(Own, OnExit::Leave, None, false, false), Exit);
+        assert_eq!(
+            exit_action(Own, OnExit::Ask, Some(Stop), false, false),
+            StopThenExit
+        );
+        assert_eq!(
+            exit_action(Own, OnExit::Ask, Some(Leave), false, false),
+            Exit
+        );
+        assert_eq!(
+            exit_action(Own, OnExit::Ask, Some(Cancel), false, false),
+            Stay
+        );
     }
 
     #[test]
