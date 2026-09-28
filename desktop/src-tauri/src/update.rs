@@ -182,6 +182,14 @@ pub fn installer_args(script: &Path, v: Version, pid: u32, install: &Install) ->
     args
 }
 
+/// El locale con el que corre el instalador: en la Mac, `LC_ALL=C`. Con un locale UTF-8, la libc
+/// de la Mac toma los bytes 0x80–0xFF como letras (Latin-1) y el bash 3.2 suma los de "…" al
+/// nombre de una `$var` pegada (`"Bajo $file…"` cortó `get.sh` en la 0.2.0). Con C no pasa. En
+/// Linux no hace falta, y no conviene: `get.sh` reabre la app con su mismo entorno.
+pub fn installer_locale() -> Option<(&'static str, &'static str)> {
+    cfg!(target_os = "macos").then_some(("LC_ALL", "C"))
+}
+
 /// La `.app` que contiene al ejecutable (`…/X.app/Contents/MacOS/bin`).
 pub fn mac_app_of(exe: &Path) -> Option<PathBuf> {
     let app = exe.parent()?.parent()?.parent()?;
@@ -444,6 +452,9 @@ fn spawn_installer<R: Runtime>(
         .stdout(out)
         .stderr(err)
         .env_remove("NODE_ENV");
+    if let Some((k, v)) = installer_locale() {
+        cmd.env(k, v);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -465,6 +476,15 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn installer_runs_with_c_locale_on_the_mac() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(installer_locale(), Some(("LC_ALL", "C")));
+        } else {
+            assert_eq!(installer_locale(), None);
+        }
+    }
 
     #[test]
     fn versions_parse_strictly_and_compare() {
