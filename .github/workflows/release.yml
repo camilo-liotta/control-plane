@@ -120,19 +120,23 @@ jobs:
           lipo -info "$B/macos/control-plane.app/Contents/MacOS/control-plane-desktop"
           codesign -dv "$B/macos/control-plane.app" 2>&1 | grep -E 'Identifier|Signature|Format'
           ls -l dist
-      # Los scripts con el /bin/bash 3.2 de la Mac y un locale que no es UTF-8 (por SSH, o la app
-      # abierta desde el Finder): así se rompió get.sh en la 0.2.0.
-      - name: get.sh e install.sh con bash 3.2 (LC_ALL=C)
+      # Los scripts con el /bin/bash 3.2 de la Mac: así se rompió get.sh en la 0.2.0 ("file…:
+      # unbound variable"). Con un locale UTF-8, la libc de la Mac toma los bytes de "…" como letras
+      # (Latin-1) y bash 3.2 los suma al nombre de la variable. Con C no pasa: se prueban los dos.
+      - name: get.sh e install.sh con bash 3.2
         run: |
           /bin/bash --version | head -n 1
           T="$RUNNER_TEMP/get-sh"
           mkdir -p "$T"
           cp dist/*.app.tar.gz "$T/"
           (cd "$T" && shasum -a 256 -- * >SHA256SUMS)
-          LC_ALL=C /bin/bash desktop/scripts/get.sh --dry-run --from "$T"
-          # Y bajando de verdad el último release publicado (el camino de `curl … | bash`).
-          LC_ALL=C /bin/bash desktop/scripts/get.sh --dry-run
-          LC_ALL=C /bin/bash desktop/scripts/install.sh --dry-run
+          for loc in en_US.UTF-8 C; do
+            echo "== LC_ALL=$loc"
+            LC_ALL=$loc /bin/bash desktop/scripts/get.sh --dry-run --from "$T"
+            # Y bajando de verdad el último release publicado (el camino de `curl … | bash`).
+            LC_ALL=$loc /bin/bash desktop/scripts/get.sh --dry-run
+            LC_ALL=$loc /bin/bash desktop/scripts/install.sh --dry-run
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos
