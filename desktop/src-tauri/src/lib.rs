@@ -21,6 +21,7 @@ pub mod settings;
 pub mod sidecar;
 pub mod startup;
 pub mod tray;
+pub mod update;
 pub mod window;
 
 use std::path::PathBuf;
@@ -192,6 +193,7 @@ pub fn run() {
             tray::init(handle)?;
             notify::init(handle);
             app.manage(launcher::Launcher::start());
+            update::start(handle);
             let events = handle.clone();
             app.manage(DesktopWs::start(None, move |e| on_ws_event(&events, e)));
             sidecar::start(handle.clone(), inbox, hooks());

@@ -155,6 +155,12 @@ pub fn create_main<R: Runtime>(
         // Al iniciar sesión arranca escondida: solo la bandeja.
         .visible(!crate::startup::started_hidden())
         .initialization_script(init_script(app))
+        // Si hay una versión nueva, el cartel de la web se vuelve a mandar con cada carga.
+        .on_page_load(|w, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                crate::update::on_page_load(w.app_handle());
+            }
+        })
         .on_navigation(move |url| {
             // Los botones de la pantalla local: nunca se navega, y solo valen con el token.
             if screen::is_action_url(url) {

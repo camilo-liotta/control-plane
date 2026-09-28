@@ -44,14 +44,21 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../server-bundle/": "app/"
+      "../server-bundle/": "app/",
+      "../scripts/get.sh": "get.sh"
     },
     "longDescription": "Una ventana propia para el dashboard local de control-plane: bandeja con lo que te necesita, avisos del sistema e inicio junto con la sesión.",
     "linux": {
       "deb": {
         "section": "devel",
         "priority": "optional",
-        "desktopTemplate": "control-plane.desktop"
+        "desktopTemplate": "control-plane.desktop",
+        "depends": [
+          "curl"
+        ],
+        "recommends": [
+          "pkexec | policykit-1"
+        ]
       },
       "appimage": {
         "bundleMediaFramework": false

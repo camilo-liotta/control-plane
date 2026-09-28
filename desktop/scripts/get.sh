@@ -26,6 +26,11 @@ Opciones:
                     sirve para probar los artifacts de un build
   -h, --help        esta ayuda
 
+Las que usa la app cuando se actualiza sola ("Actualizar a vX.Y.Z" en la bandeja):
+  --app-pid <pid>     el pid de la app abierta: se la cierra dejando el server y se la reabre
+  --appimage <ruta>   reemplaza ese AppImage (el que está corriendo), aunque haya apt
+  --mac-app <ruta>    en la Mac, reemplaza esa control-plane.app (la que está corriendo)
+
 Baja el paquete de https://github.com/$REPO/releases y lo verifica contra SHA256SUMS antes de
 tocar nada. Si la app está abierta, la cierra sin cortar las sesiones (el server sigue corriendo)
 y la versión nueva lo adopta al abrir.
@@ -40,6 +45,11 @@ die() {
 }
 
 DRY=0
+APP_PID=""
+APPIMAGE_TARGET=""
+MAC_APP=""
+# Si hay que reabrir la app vieja cuando algo falla después de cerrarla (Mac).
+REOPEN_ON_FAIL=""
 # Corre un comando, o solo lo muestra con --dry-run.
 run() {
   if ((DRY)); then
@@ -80,6 +90,22 @@ main() {
         from="$2"
         shift
         ;;
+      --app-pid)
+        [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || die "--app-pid necesita un número."
+        kill -0 "$2" 2>/dev/null || die "No hay ningún proceso con el pid $2."
+        APP_PID="$2"
+        shift
+        ;;
+      --appimage)
+        [[ $# -ge 2 && "$2" == /* && -f "$2" ]] || die "--appimage necesita la ruta completa de un AppImage que exista."
+        APPIMAGE_TARGET="$2"
+        shift
+        ;;
+      --mac-app)
+        [[ $# -ge 2 && "$2" == /*.app && -d "$2" ]] || die "--mac-app necesita la ruta completa de una .app que exista."
+        MAC_APP="$2"
+        shift
+        ;;
       -h | --help)
         usage
         exit 0
@@ -99,6 +125,8 @@ main() {
     Darwin | Linux) ;;
     *) die "Esta app es para macOS y Linux; $os no está soportado." ;;
   esac
+  [[ -z "$MAC_APP" || "$os" == Darwin ]] || die "--mac-app es solo para la Mac."
+  [[ -z "$APPIMAGE_TARGET" || "$os" == Linux ]] || die "--appimage es solo para Linux."
   if [[ "$os" == Linux && "$arch" != x86_64 ]]; then
     die "En Linux, por ahora, solo hay paquetes para x86_64 (esta máquina es $arch). Con el repo clonado podés compilarla: npm run app:install."
   fi
@@ -142,6 +170,9 @@ main() {
   if [[ "$os" == Darwin ]]; then
     mode=mac
     file="${APP}_${version}_universal.app.tar.gz"
+  elif [[ -n "$APPIMAGE_TARGET" ]]; then
+    mode=appimage
+    file="${APP}_${version}_amd64.AppImage"
   elif command -v apt-get >/dev/null && command -v dpkg >/dev/null; then
     mode=deb
     file="${APP}_${version}_amd64.deb"
@@ -154,7 +185,7 @@ main() {
   # ---- 3. Bajar y verificar ----
 
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/control-plane-get.XXXXXX")"
-  trap 'rm -rf "$TMP"' EXIT
+  trap on_exit EXIT
   # apt lee el .deb con su propio usuario: que pueda entrar a la carpeta.
   chmod 755 "$TMP"
   if [[ -n "$from" ]]; then
@@ -196,47 +227,89 @@ main() {
   fi
 }
 
+# Al salir: borrar lo bajado y, si algo falló después de cerrar la app (Mac), reabrir la que quede.
+on_exit() {
+  local code=$?
+  if ((code != 0)) && [[ -n "$REOPEN_ON_FAIL" && -d "$REOPEN_ON_FAIL" ]]; then
+    warn "Algo falló después de cerrar la app: vuelvo a abrir la que estaba."
+    open "$REOPEN_ON_FAIL" || true
+  fi
+  rm -rf "${TMP:-}"
+}
+
+# ¿Sigue abierta la app? Con --app-pid, ese proceso; si no, la búsqueda de cada sistema.
+still_open() {
+  if [[ -n "$APP_PID" ]]; then
+    kill -0 "$APP_PID" 2>/dev/null
+  else
+    "$@"
+  fi
+}
+
+# Espera hasta WAIT_SECS a que la app se cierre. Devuelve 1 si sigue abierta.
+wait_closed() {
+  ((DRY)) && return 0
+  local i=0
+  while ((i < WAIT_SECS * 2)) && still_open "$@"; do
+    sleep 0.5
+    i=$((i + 1))
+  done
+  ! still_open "$@"
+}
+
 install_mac() {
   local tarball="$1" pkg dest target
   tar -xzf "$tarball" -C "$TMP"
   pkg="$TMP/$APP.app"
   [[ -d "$pkg" ]] || die "El paquete no trae $APP.app."
 
-  dest=/Applications
-  if [[ ! -w "$dest" ]]; then
-    dest="$HOME/Applications"
-    say "No puedo escribir en /Applications: la instalo en $dest."
-    run mkdir -p "$dest"
+  if [[ -n "$MAC_APP" ]]; then
+    target="$MAC_APP"
+  else
+    dest=/Applications
+    if [[ ! -w "$dest" ]]; then
+      dest="$HOME/Applications"
+      say "No puedo escribir en /Applications: la instalo en $dest."
+      run mkdir -p "$dest"
+    fi
+    target="$dest/$APP.app"
   fi
-  target="$dest/$APP.app"
-  if mac_running; then
+  # 1. Preparar la nueva al lado, con la app todavía abierta.
+  run rm -rf "$target.nueva"
+  run ditto "$pkg" "$target.nueva"
+  run xattr -dr com.apple.quarantine "$target.nueva" || true
+
+  # 2. Cerrarla (si está abierta), sin cortar las sesiones.
+  if still_open mac_running; then
     local exe=""
     if [[ -d "$target" ]]; then
       exe="$target/Contents/MacOS/$(defaults read "$target/Contents/Info" CFBundleExecutable 2>/dev/null)"
     fi
     say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-    if [[ -x "$exe" ]] && knows_keep_server "$exe"; then
+    # Con --app-pid, la que llama ya sabe --keep-server.
+    if [[ -n "$APP_PID" ]] || { [[ -x "$exe" ]] && knows_keep_server "$exe"; }; then
       run "$exe" --quit --keep-server
     else
       # Una app vieja no conoce --keep-server: salir como desde el Dock tampoco pregunta y deja
       # el server corriendo.
       run osascript -e "quit app \"$APP\""
     fi
-    if ((!DRY)); then
-      local i=0
-      while ((i < WAIT_SECS * 2)) && mac_running; do
-        sleep 0.5
-        i=$((i + 1))
-      done
-      mac_running && warn "La app no se cerró en ${WAIT_SECS} s: la reemplazo igual; si queda la vieja, cerrala y abrila."
-    fi
+    ((DRY)) || REOPEN_ON_FAIL="$target"
+    wait_closed mac_running ||
+      warn "La app no se cerró en ${WAIT_SECS} s: la reemplazo igual; si queda la vieja, cerrala y abrila."
   fi
-  # Copia aparte y después el cambio, así nunca queda una app a medias.
-  run rm -rf "$target.nueva"
-  run ditto "$pkg" "$target.nueva"
-  run rm -rf "$target"
-  run mv "$target.nueva" "$target"
-  run xattr -dr com.apple.quarantine "$target" || true
+
+  # 3. Cambiar: la vieja a un costado, la nueva en su lugar; si algo falla, vuelve la vieja.
+  run rm -rf "$target.vieja"
+  if [[ -e "$target" ]]; then
+    run mv "$target" "$target.vieja"
+  fi
+  if ! run mv "$target.nueva" "$target"; then
+    [[ -e "$target.vieja" ]] && mv "$target.vieja" "$target"
+    die "No pude poner la versión nueva en $target."
+  fi
+  run rm -rf "$target.vieja"
+  REOPEN_ON_FAIL=""
   run open "$target"
   WHERE="$target"
 }
@@ -245,51 +318,68 @@ mac_running() { [[ "$(osascript -e "application \"$APP\" is running" 2>/dev/null
 
 install_linux() {
   local mode="$1" pkg="$2" bin
-  if [[ "$mode" == deb ]]; then
+  if [[ -n "$APPIMAGE_TARGET" ]]; then
+    bin="$APPIMAGE_TARGET"
+  elif [[ "$mode" == deb ]]; then
     bin=/usr/bin/control-plane-desktop
   else
     bin="$HOME/.local/bin/$APP.AppImage"
   fi
-  local restart=0
-  if app_pids "$bin" >/dev/null; then
-    if knows_keep_server "$bin"; then
-      say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-      run "$bin" --quit --keep-server
-      restart=1
-      if ((!DRY)); then
-        local i=0
-        while ((i < WAIT_SECS * 2)) && app_pids "$bin" >/dev/null; do
-          sleep 0.5
-          i=$((i + 1))
-        done
-        if app_pids "$bin" >/dev/null; then
-          warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
-          restart=0
-        fi
-      fi
-    else
-      say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
+
+  # Antes de instalar: ¿está abierta, y sabe salir dejando el server? Después del apt, el binario
+  # ya es el nuevo. Con --app-pid la llama la propia app, que sabe; un .AppImage no se puede
+  # revisar con grep (está comprimido).
+  local open=0 knows=0
+  if [[ -n "$APP_PID" ]]; then
+    # Se vuelve a mirar ahora (después de bajar y verificar): si la app ya no está, no hay nada
+    # que cerrar ni reabrir.
+    if kill -0 "$APP_PID" 2>/dev/null; then
+      open=1
+      knows=1
     fi
+  elif app_pids "$bin" >/dev/null; then
+    open=1
+    knows_keep_server "$bin" && knows=1
   fi
 
+  # 1. Instalar, con la app todavía abierta (sigue con su archivo hasta que se cierre). Si esto
+  #    falla o se cancela, la app nunca se cerró.
   if [[ "$mode" == deb ]]; then
-    say "Instalo el paquete (te va a pedir la contraseña)…"
-    run sudo apt install -y "$pkg"
+    if [[ -t 0 ]]; then
+      say "Instalo el paquete (te va a pedir la contraseña)…"
+      run sudo apt install -y "$pkg"
+    elif command -v pkexec >/dev/null && [[ -x /usr/bin/apt ]]; then
+      # Sin terminal (la lanzó la app): el sistema muestra su diálogo para la contraseña. apt por
+      # su ruta: corre como root, no puede ser el primero que aparezca en el PATH.
+      say "Instalo el paquete (el sistema te va a pedir la contraseña)…"
+      run pkexec /usr/bin/apt install -y "$pkg"
+    else
+      die "Para instalar el .deb hace falta pkexec o correr esto desde una terminal."
+    fi
   else
-    say "No hay apt: dejo el AppImage en $bin."
+    say "Dejo el AppImage en $bin."
     run mkdir -p "$(dirname "$bin")"
     # Copia aparte y después el cambio: la app abierta sigue con su archivo hasta que la cierres.
     run cp "$pkg" "$bin.nueva"
     run chmod 755 "$bin.nueva"
     run mv -f "$bin.nueva" "$bin"
-    case ":$PATH:" in
-      *":$(dirname "$bin"):"*) ;;
-      *) say "Ojo: $(dirname "$bin") no está en tu PATH; abrila con la ruta completa." ;;
-    esac
+    if [[ -z "$APPIMAGE_TARGET" ]]; then
+      case ":$PATH:" in
+        *":$(dirname "$bin"):"*) ;;
+        *) say "Ojo: $(dirname "$bin") no está en tu PATH; abrila con la ruta completa." ;;
+      esac
+    fi
   fi
   WHERE="$bin"
 
-  if ((restart)); then
+  # 2. Cerrar la vieja dejando el server y abrir la nueva, que lo adopta.
+  if ((open && knows)); then
+    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
+    run "$bin" --quit --keep-server
+    if ! wait_closed app_pids "$bin"; then
+      warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
+      return 0
+    fi
     if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
       say "No veo una sesión gráfica en esta terminal: abrí control-plane desde el lanzador."
     else
@@ -308,10 +398,11 @@ install_linux() {
         env "${unset_[@]}" setsid "$bin" </dev/null >/dev/null 2>&1 &
       fi
     fi
-  elif app_pids "$bin" >/dev/null 2>&1; then
-    say "La app sigue abierta con la versión anterior hasta que la reinicies. Para pasar a la nueva"
-    say "sin cortar las sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a"
-    say "abrirla desde el lanzador (adopta el mismo server)."
+  elif ((open)); then
+    say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
+    say "Sigue con la versión anterior hasta que la reinicies. Para pasar a la nueva sin cortar las"
+    say "sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a abrirla desde el"
+    say "lanzador (adopta el mismo server)."
   fi
 }
 

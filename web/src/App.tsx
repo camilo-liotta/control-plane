@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Redirect, Route, Switch, useLocation } from "wouter"
+import { X } from "lucide-react"
 
 import { AccountsDialog } from "@/components/accounts"
 import { AppSidebar, useInboxCount } from "@/components/app-sidebar"
@@ -95,6 +96,42 @@ function ConnectionBanner() {
   )
 }
 
+const UPDATE_DISMISSED_KEY = "control-plane:update-dismissed"
+
+/** La app de escritorio avisa que hay una versión nueva. Solo informa: se actualiza desde la bandeja. */
+function UpdateBanner() {
+  const update = useUi((s) => s.desktopUpdate)
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(UPDATE_DISMISSED_KEY)
+    } catch {
+      return null
+    }
+  })
+  if (!update || dismissed === update.version) return null
+  const hide = () => {
+    try {
+      localStorage.setItem(UPDATE_DISMISSED_KEY, update.version)
+    } catch {
+      // sin almacenamiento local: vale para esta pestaña
+    }
+    setDismissed(update.version)
+  }
+  return (
+    <div className="flex items-center justify-center gap-3 border-b border-status-working/30 bg-status-working/10 px-4 py-1.5 text-xs">
+      <span>
+        Hay una versión nueva (v{update.version}). Actualizala desde la bandeja → Actualizar.{" "}
+        <a href={update.notesUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+          Qué trae
+        </a>
+      </span>
+      <button type="button" onClick={hide} aria-label="Ocultar este aviso" className="rounded p-0.5 text-muted-foreground hover:text-foreground">
+        <X className="size-3.5" />
+      </button>
+    </div>
+  )
+}
+
 export default function App() {
   const loaded = useStore((s) => s.loaded)
   const pending = useInboxCount()
@@ -111,6 +148,7 @@ export default function App() {
       <LeaveOtherAccount />
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <ConnectionBanner />
+        <UpdateBanner />
         {!loaded ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Spinner />

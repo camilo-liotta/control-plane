@@ -26,6 +26,8 @@ declare global {
       /** Archivos soltados en la ventana, ya leídos por la app (nunca las rutas). */
       dropFiles: (files: unknown, errors: unknown) => boolean
       dragging: (on: unknown) => void
+      /** Hay una versión nueva de la app: solo para mostrar el cartel (no actualiza nada). */
+      update: (info: unknown) => boolean
     }
   }
 }
@@ -175,6 +177,16 @@ function openFromDesktop(target: unknown): boolean {
   }
 }
 
+/** El cartel de versión nueva: acepta solo una versión X.Y.Z y las notas en los releases de GitHub. */
+export function updateFromDesktop(info: unknown): boolean {
+  if (!info || typeof info !== "object") return false
+  const { version, notesUrl } = info as Record<string, unknown>
+  if (typeof version !== "string" || !/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(version)) return false
+  if (typeof notesUrl !== "string" || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/releases\/tag\/v[\d.]+$/.test(notesUrl)) return false
+  useUi.getState().set({ desktopUpdate: { version, notesUrl } })
+  return true
+}
+
 /** Registra window.__cpDesktop, solo dentro de la app de escritorio. */
 export function installDesktopApi() {
   if (!inDesktop()) return
@@ -183,5 +195,6 @@ export function installDesktopApi() {
     inbox: () => useUi.getState().set({ inbox: true }),
     dropFiles: dropFromDesktop,
     dragging: draggingFromDesktop,
+    update: updateFromDesktop,
   }
 }

@@ -65,6 +65,18 @@ pub struct Toast {
     /// Qué abrir al tocarlo (`compaction`); por defecto, la sesión.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open: Option<String>,
+    /// Avisos de la propia app (no del server): nunca sale de un mensaje del WS.
+    #[serde(skip)]
+    pub local: Option<Local>,
+}
+
+/// Qué hace tocar un aviso de la app misma.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Local {
+    /// Hay una versión nueva: actualizar.
+    Update,
+    /// Falló la actualización: abrir su log.
+    OpenLog(std::path::PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

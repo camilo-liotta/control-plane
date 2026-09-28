@@ -26,6 +26,8 @@ interface UiState {
    * La página lo limpia cuando lo muestra.
    */
   reveal: { kind: "proposals" | "tasks"; id: string; at: number } | null
+  /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde su bandeja). */
+  desktopUpdate: { version: string; notesUrl: string } | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
   selectAccount: (id: string) => void
 }
@@ -55,6 +57,7 @@ export const useUi = create<UiState>((set) => ({
   compactFor: null,
   toolsFor: null,
   reveal: null,
+  desktopUpdate: null,
   set: (patch) => set(patch),
   selectAccount: (id) => {
     try {

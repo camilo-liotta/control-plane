@@ -289,13 +289,17 @@ mod tests {
         );
         assert!(matches!(probe(serve_once(reply)), Probe::ControlPlane(_)));
 
-        // Un puerto sin nadie: conexión rechazada.
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        assert_eq!(probe(port), Probe::Refused);
+        // Un puerto sin nadie: conexión rechazada. El puerto se suelta antes de probar, y otro test
+        // en paralelo lo puede tomar justo en el medio: si pasa, se prueba con otro.
+        let refused = (0..10).any(|_| {
+            let port = TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            probe(port) == Probe::Refused
+        });
+        assert!(refused);
     }
 
     #[test]
