@@ -106,6 +106,8 @@ Cuidados:
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`: el workflow [release](.github/workflows/release.yml) corre los tests, arma el `.dmg`, el `.deb` y el `.AppImage`, y deja un release **en borrador** con `SHA256SUMS`.
 3. Revisalo en GitHub → Releases y publicalo a mano: recién ahí lo ve `get.sh`.
 
+Taggeá un commit de `main` con los mismos `.github/workflows/` que `main` tiene en ese momento: si difieren, GitHub no le deja al `GITHUB_TOKEN` crear el release (403). Para probar el workflow sin sacar una versión: Actions → release → Run workflow sobre `main`, con un tag que no empiece con `v` (por ejemplo `prueba-1`). Queda un borrador marcado como prerelease: borralo después.
+
 ## Pull requests
 
 - Un cambio por PR, desde una rama propia, contra `main`.
