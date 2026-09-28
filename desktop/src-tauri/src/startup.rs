@@ -15,6 +15,21 @@
 use tauri::{AppHandle, Runtime};
 
 pub const HIDDEN_ARG: &str = "--hidden";
+/// Con `--quit`: salir dejando el server corriendo.
+pub const KEEP_SERVER_ARG: &str = "--keep-server";
+
+/// Lo que muestra `--help`. `install.sh` busca "--quit --keep-server" en el binario instalado para
+/// saber si lo entiende, sin ejecutarlo: este texto es lo que lo deja ahí (una comparación de
+/// strings cortos el compilador la hace con números). No lo saques sin cambiar el script.
+pub const USAGE: &str = "\
+control-plane: el dashboard de control-plane en una ventana propia.
+
+  control-plane-desktop                       abre la app (o trae al frente la que está abierta)
+  control-plane-desktop --hidden              la abre escondida, solo en la bandeja
+  control-plane-desktop --quit                sale como con \"Salir\" (según \"Al salir\")
+  control-plane-desktop --quit --keep-server  sale sin preguntar y deja el server corriendo
+  control-plane-desktop --help                esta ayuda
+";
 pub const TOKEN_ARG: &str = "--activation-token=";
 
 /// Con qué nombre queda el inicio automático (el de desarrollo, aparte).
@@ -198,6 +213,12 @@ pub fn forward_to_running(identifier: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_names_the_flags_the_installer_looks_for() {
+        assert!(USAGE.contains(&format!("--quit {KEEP_SERVER_ARG}")));
+        assert!(USAGE.contains(HIDDEN_ARG));
+    }
 
     #[test]
     fn hidden_flag() {

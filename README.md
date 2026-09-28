@@ -38,7 +38,26 @@ Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la b
 
 - Linux (Ubuntu) y macOS. Windows no.
 - Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
-- Por ahora no hay paquetes publicados: se compila (ver abajo).
+- Por ahora no hay paquetes publicados: se compila desde este repo, con un solo comando.
+
+### Instalar o actualizar
+
+En Mac o Linux, desde el repo clonado:
+
+```bash
+git pull && npm run app:install
+```
+
+- Compila la app y la instala; correrlo de nuevo la actualiza.
+  - En la Mac queda en `/Applications/control-plane.app`, o en `~/Applications` si no podés escribir en `/Applications`.
+  - En Linux se instala el `.deb` con `sudo apt install`.
+- Antes revisa lo que hace falta (Node 24, Rust, y las herramientas de Xcode en la Mac o las librerías de Tauri en Linux). Si falta algo, te dice cómo instalarlo o te pregunta si lo instala.
+- **Actualizar no corta las sesiones**: si la app está abierta, la cierra dejando el server corriendo (`--quit --keep-server`, sin preguntar y sin tocar tu ajuste de **Al salir**), instala la nueva y la vuelve a abrir, y esa adopta el mismo server.
+  - La primera vez que actualizás en Linux una app instalada antes de este cambio, no la cierra, porque esa versión no sabe salir dejando el server. Reiniciala vos una vez: bandeja → Al salir ▸ "Dejarlo corriendo" → Salir, y abrila de nuevo. En la Mac, esa primera vez la cierra como desde el Dock, que también deja el server.
+- `npm run app:install -- --dry-run` muestra lo que haría sin tocar nada. `-- --no-install` compila y deja el paquete sin instalarlo.
+- Si falla, el detalle de la compilación queda en `/tmp/control-plane-install.log` (o en `$TMPDIR` en la Mac).
+
+Si preferís hacerlo a mano, los pasos siguen abajo.
 
 ### Instalar en Linux
 
@@ -109,6 +128,7 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
   - **Preguntar** (el default): "Hay N sesiones abiertas: detener el server las cierra (se reanudan después)", con **Detener y salir**, **Dejarlo corriendo** y **Cancelar**.
   - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en la bandeja.
   - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
+- `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia). Es lo que usa `npm run app:install` para actualizar sin cortar las sesiones.
 - Al apagar el equipo o cerrar la sesión no pregunta: el sistema le avisa al server y se cierra ordenado.
 - **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o la barra de menú.
 

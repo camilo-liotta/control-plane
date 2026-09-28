@@ -82,6 +82,8 @@ pub struct Sidecar {
     exit_ok: AtomicBool,
     /// El sistema se está apagando o cerrando la sesión (macOS): salir sin preguntar.
     system_ending: Arc<AtomicBool>,
+    /// La próxima salida deja el server corriendo (`--quit --keep-server`). Se consume al salir.
+    keep_server: AtomicBool,
     log: Mutex<Option<PathBuf>>,
 }
 
@@ -112,6 +114,12 @@ impl Sidecar {
         self.tx.lock().expect("sidecar").send(Cmd::Exit).is_ok()
     }
 
+    /// `--quit --keep-server`: la próxima salida no pregunta ni detiene el server, sin cambiar
+    /// "Al salir". Después hay que pedir la salida (`app.exit`).
+    pub fn keep_server_on_exit(&self) {
+        self.keep_server.store(true, Ordering::SeqCst);
+    }
+
     pub fn log_path(&self) -> Option<PathBuf> {
         self.log.lock().expect("sidecar").clone()
     }
@@ -130,6 +138,7 @@ pub fn create(app: &AppHandle) -> Inbox {
         token: screen::random_hex(),
         exit_ok: AtomicBool::new(false),
         system_ending: Arc::new(AtomicBool::new(false)),
+        keep_server: AtomicBool::new(false),
         log: Mutex::new(None),
     });
     Inbox(rx)
@@ -997,10 +1006,11 @@ impl Worker {
     fn on_exit(&mut self) {
         let on_exit = self.settings().on_exit;
         let ending = self.state().system_ending.load(Ordering::SeqCst);
-        let mut action = policy::exit_action(self.kind(), on_exit, None, ending);
+        let keep = self.state().keep_server.swap(false, Ordering::SeqCst);
+        let mut action = policy::exit_action(self.kind(), on_exit, None, ending, keep);
         if action == ExitAction::Ask {
             let answer = self.ask_exit();
-            action = policy::exit_action(self.kind(), on_exit, Some(answer), ending);
+            action = policy::exit_action(self.kind(), on_exit, Some(answer), ending, keep);
         }
         match action {
             ExitAction::Stay | ExitAction::Ask => {}
