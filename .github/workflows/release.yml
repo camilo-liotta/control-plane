@@ -1,4 +1,4 @@
-# Arma los instaladores de la app de escritorio.
+# Arma los instaladores de la app de escritorio. (PRUEBA de caché: este PR se cierra sin mergear.)
 #
 # - Tag v* (o a mano, con un tag): tests → builds de macOS y Linux en paralelo → release en BORRADOR
 #   con los archivos y SHA256SUMS. Nunca lo publica: eso se hace a mano desde GitHub.
