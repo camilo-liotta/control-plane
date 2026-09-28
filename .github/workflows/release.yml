@@ -130,6 +130,8 @@ jobs:
           cp dist/*.app.tar.gz "$T/"
           (cd "$T" && shasum -a 256 -- * >SHA256SUMS)
           LC_ALL=C /bin/bash desktop/scripts/get.sh --dry-run --from "$T"
+          # Y bajando de verdad el último release publicado (el camino de `curl … | bash`).
+          LC_ALL=C /bin/bash desktop/scripts/get.sh --dry-run
           LC_ALL=C /bin/bash desktop/scripts/install.sh --dry-run
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
