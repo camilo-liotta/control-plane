@@ -64,6 +64,7 @@ Puertos y datos en la app de desarrollo:
 - El puerto sale de `CONTROL_PLANE_PORT` del entorno de la app, si no del de tu shell de login, si no de los ajustes, si no el default: 4710. El 4700 se rechaza salvo con `CONTROL_PLANE_ALLOW_4700=1`, también en **Usar este puerto** y **Usar ese**.
 - Sin `CONTROL_PLANE_HOME` usa `$TMPDIR/control-plane-dev-<puerto>`, y `~/.control-plane` se rechaza salvo con `CONTROL_PLANE_ALLOW_REAL_HOME=1`.
 - **El build de release no tiene estas guardas.** Si probás un `.AppImage` o un binario de release, pasale siempre un puerto y carpetas temporales.
+- `npm run app:install` (`desktop/scripts/install.sh`) instala en tu máquina. Para probar el script sin instalar, usá `-- --dry-run` o `-- --no-install`.
 
 Para tener sesiones sin una cuenta de Claude, usá el Claude falso de los tests:
 

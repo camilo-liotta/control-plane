@@ -38,7 +38,25 @@ Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la b
 
 - Linux (Ubuntu) y macOS. Windows no.
 - Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
-- Por ahora no hay paquetes publicados: se compila (ver abajo).
+- Por ahora no hay paquetes publicados: se compila desde este repo, con un solo comando.
+
+### Instalar o actualizar
+
+En Mac o Linux, desde el repo clonado:
+
+```bash
+git pull && npm run app:install
+```
+
+- Compila la app y la instala; correrlo de nuevo la actualiza.
+  - En la Mac queda en `/Applications/control-plane.app`, o en `~/Applications` si no podés escribir en `/Applications`.
+  - En Linux se instala el `.deb` con `sudo apt install`.
+- Antes revisa lo que hace falta (Node 24, Rust, y las herramientas de Xcode en la Mac o las librerías de Tauri en Linux). Si falta algo, te dice cómo instalarlo o te pregunta si lo instala.
+- No corta las sesiones. En la Mac cierra la app abierta y la vuelve a abrir con la versión nueva, que adopta el server que quedó corriendo. En Linux, la app abierta sigue con la versión anterior hasta que la reinicies: bandeja → Al salir ▸ "Dejarlo corriendo" → Salir, y abrila de nuevo.
+- `npm run app:install -- --dry-run` muestra lo que haría sin tocar nada. `-- --no-install` compila y deja el paquete sin instalarlo.
+- Si falla, el detalle de la compilación queda en `/tmp/control-plane-install.log` (o en `$TMPDIR` en la Mac).
+
+Si preferís hacerlo a mano, los pasos siguen abajo.
 
 ### Instalar en Linux
 
