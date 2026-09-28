@@ -23,6 +23,8 @@ const NOTIFICATIONS: &str = "notifications";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
 const LOG: &str = "log";
+const CHECK_UPDATES: &str = "check-updates";
+const UPDATE: &str = "update";
 const PROJECT_PREFIX: &str = "project:";
 const EXIT_OPTIONS: [(OnExit, &str, &str); 3] = [
     (OnExit::Ask, "exit:ask", "Preguntar"),
@@ -128,8 +130,20 @@ pub enum Action {
     ToggleAutostart,
     OnExit(OnExit),
     ShowLog,
+    ToggleCheckUpdates,
+    Update,
     Quit,
     None,
+}
+
+/// El ítem de actualizar: su texto y si se puede tocar, o `None` si no hay versión nueva.
+pub fn update_item(st: crate::update::Status) -> Option<(String, bool)> {
+    use crate::update::Status;
+    match st {
+        Status::Idle => None,
+        Status::Available(v) => Some((format!("Actualizar a v{v}"), true)),
+        Status::Updating(_) => Some(("Actualizando…".into(), false)),
+    }
 }
 
 pub fn action(id: &str) -> Action {
@@ -145,6 +159,8 @@ pub fn action(id: &str) -> Action {
         NOTIFICATIONS => Action::ToggleNotifications,
         AUTOSTART => Action::ToggleAutostart,
         LOG => Action::ShowLog,
+        CHECK_UPDATES => Action::ToggleCheckUpdates,
+        UPDATE => Action::Update,
         QUIT => Action::Quit,
         _ => Action::None,
     }
@@ -178,7 +194,11 @@ pub struct Tray<R: Runtime> {
     projects: Submenu<R>,
     notifications: CheckMenuItem<R>,
     autostart: CheckMenuItem<R>,
+    check_updates: CheckMenuItem<R>,
     on_exit: Vec<(OnExit, CheckMenuItem<R>)>,
+    menu: Menu<R>,
+    /// "Actualizar a vX.Y.Z" / "Actualizando…", solo cuando hay una versión nueva.
+    update: Mutex<Option<MenuItem<R>>>,
     shown: Mutex<Shown<R>>,
 }
 
@@ -201,6 +221,14 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         "Abrir al iniciar sesión",
         true,
         autostart_on,
+        None::<&str>,
+    )?;
+    let check_updates = CheckMenuItem::with_id(
+        app,
+        CHECK_UPDATES,
+        "Buscar actualizaciones",
+        true,
+        settings.check_updates,
         None::<&str>,
     )?;
     let on_exit = EXIT_OPTIONS
@@ -229,6 +257,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .separator()
         .item(&notifications)
         .item(&autostart)
+        .item(&check_updates)
         .item(&exit_menu)
         .text(LOG, "Ver log del server")
         .separator()
@@ -250,7 +279,10 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         projects,
         notifications,
         autostart,
+        check_updates,
         on_exit,
+        menu,
+        update: Mutex::new(None),
         // El builder ya puso el ícono tranquilo: no se vuelve a escribir.
         shown: Mutex::new(Shown {
             status: String::new(),
@@ -344,9 +376,33 @@ impl<R: Runtime> Tray<R> {
         }
     }
 
+    /// El ítem de actualizar, justo abajo de la línea de estado (aparece y desaparece).
+    pub fn set_update(&self, st: crate::update::Status) {
+        let mut slot = self.update.lock().unwrap();
+        match (update_item(st), slot.as_ref()) {
+            (None, Some(item)) => {
+                let _ = self.menu.remove(item);
+                *slot = None;
+            }
+            (Some((text, enabled)), Some(item)) => {
+                let _ = item.set_text(text);
+                let _ = item.set_enabled(enabled);
+            }
+            (Some((text, enabled)), None) => {
+                let app = self.menu.app_handle();
+                if let Ok(item) = MenuItem::with_id(app, UPDATE, text, enabled, None::<&str>) {
+                    let _ = self.menu.insert(&item, 1);
+                    *slot = Some(item);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
     fn sync_toggles(&self, app: &AppHandle<R>) {
         let settings = app.state::<AppState>().settings();
         let _ = self.notifications.set_checked(settings.notifications);
+        let _ = self.check_updates.set_checked(settings.check_updates);
         for (mode, item) in &self.on_exit {
             let _ = item.set_checked(*mode == settings.on_exit);
         }
@@ -381,6 +437,20 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
             }
         }
         Action::ShowLog => crate::sidecar::open_log(app),
+        Action::ToggleCheckUpdates => {
+            let state = app.state::<AppState>();
+            state.update_settings(|s| s.check_updates = !s.check_updates);
+            if state.settings().check_updates {
+                if let Some(u) = app.try_state::<crate::update::Updater>() {
+                    u.check_now();
+                }
+            }
+        }
+        Action::Update => {
+            if let Some(u) = app.try_state::<crate::update::Updater>() {
+                u.update();
+            }
+        }
         // El sidecar lo intercepta en RunEvent::ExitRequested y decide qué hacer con el server.
         Action::Quit => app.exit(0),
         Action::None => {}
@@ -489,7 +559,23 @@ mod tests {
         assert_eq!(action("notifications"), Action::ToggleNotifications);
         assert_eq!(action("autostart"), Action::ToggleAutostart);
         assert_eq!(action("log"), Action::ShowLog);
+        assert_eq!(action("check-updates"), Action::ToggleCheckUpdates);
+        assert_eq!(action("update"), Action::Update);
         assert_eq!(action("quit"), Action::Quit);
         assert_eq!(action("otra"), Action::None);
+    }
+
+    #[test]
+    fn update_item_follows_the_status() {
+        use crate::update::{Status, Version};
+        assert_eq!(update_item(Status::Idle), None);
+        assert_eq!(
+            update_item(Status::Available(Version(0, 3, 0))),
+            Some(("Actualizar a v0.3.0".into(), true))
+        );
+        assert_eq!(
+            update_item(Status::Updating(Version(0, 3, 0))),
+            Some(("Actualizando…".into(), false))
+        );
     }
 }

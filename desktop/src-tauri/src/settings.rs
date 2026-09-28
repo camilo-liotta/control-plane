@@ -39,6 +39,10 @@ pub struct Settings {
     pub node_path: Option<PathBuf>,
     /// Variables extra de la shell de login que se le pasan al server (además de la lista blanca).
     pub import_env: Vec<String>,
+    /// Buscar versiones nuevas en los releases de GitHub (una vez por día).
+    pub check_updates: bool,
+    /// La última versión nueva de la que ya se avisó (un solo aviso por versión).
+    pub update_notified: Option<String>,
 }
 
 impl Default for Settings {
@@ -49,6 +53,8 @@ impl Default for Settings {
             notifications: true,
             node_path: None,
             import_env: Vec::new(),
+            check_updates: true,
+            update_notified: None,
         }
     }
 }
@@ -66,6 +72,8 @@ impl Settings {
             notifications: field(&map, "notifications", d.notifications),
             node_path: field(&map, "nodePath", d.node_path),
             import_env: field(&map, "importEnv", d.import_env),
+            check_updates: field(&map, "checkUpdates", d.check_updates),
+            update_notified: field(&map, "updateNotified", d.update_notified),
         }
     }
 
@@ -144,6 +152,19 @@ mod tests {
     }
 
     #[test]
+    fn updates_are_checked_by_default() {
+        assert!(Settings::default().check_updates);
+        assert!(Settings::from_json("{}").check_updates);
+        assert!(!Settings::from_json(r#"{"checkUpdates":false}"#).check_updates);
+        assert_eq!(
+            Settings::from_json(r#"{"updateNotified":"0.3.0"}"#)
+                .update_notified
+                .as_deref(),
+            Some("0.3.0")
+        );
+    }
+
+    #[test]
     fn roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("sub").join(FILE_NAME);
@@ -153,6 +174,8 @@ mod tests {
             notifications: false,
             node_path: Some(PathBuf::from("/opt/node/bin/node")),
             import_env: vec!["AWS_PROFILE".into()],
+            check_updates: false,
+            update_notified: Some("0.2.0".into()),
         };
         s.save_to(&file).unwrap();
         assert_eq!(Settings::load_from(&file), s);

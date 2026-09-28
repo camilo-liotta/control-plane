@@ -14,7 +14,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::desktop_ws::Toast;
+use crate::desktop_ws::{Local, Toast};
 use crate::window;
 use crate::AppState;
 
@@ -25,6 +25,9 @@ pub fn should_notify(enabled: bool, visible: bool, focused: bool) -> bool {
 
 /// Los avisos de una misma sesión (o proyecto) se reemplazan entre sí.
 pub fn group_key(t: &Toast) -> String {
+    if t.local.is_some() {
+        return "app".into();
+    }
     match (&t.session_id, &t.project_id) {
         (Some(s), _) => format!("session:{s}"),
         (None, Some(p)) => format!("project:{p}"),
@@ -80,6 +83,24 @@ fn on_click<R: Runtime>(app: &AppHandle<R>, toast: Toast, token: Option<String>)
         "Clic en un aviso ({} token de activación).",
         if token.is_some() { "con" } else { "sin" }
     );
+    // Los avisos de la app misma (hay versión nueva, falló la actualización).
+    match toast.local.clone() {
+        Some(Local::Update) => {
+            if let Some(u) = app.try_state::<crate::update::Updater>() {
+                u.update();
+            }
+            dismiss_all(app);
+            return;
+        }
+        Some(Local::OpenLog(path)) => {
+            if let Err(e) = tauri_plugin_opener::open_path(&path, None::<&str>) {
+                eprintln!("No pude abrir {}: {e}", path.display());
+            }
+            dismiss_all(app);
+            return;
+        }
+        None => {}
+    }
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         window::show_main_with(&handle, token.as_deref());

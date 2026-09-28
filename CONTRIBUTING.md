@@ -75,6 +75,11 @@ Puertos y datos en la app de desarrollo:
   ```
 
   Con un `HOME` temporal, la shell de login no ve tu nvm: poné en ese `HOME` un `.bash_profile` que lo cargue (o usá el Claude falso y un Node del sistema). Al final, cerrá la app con `--quit --keep-server` dentro del mismo bus y cortá el server por su pid.
+- Para probar las actualizaciones sin GitHub, la app de desarrollo acepta dos variables, solo para pruebas:
+  - `CONTROL_PLANE_UPDATE_URL`: a dónde preguntar por el último release, en lugar de la API de GitHub (https, o `http://127.0.0.1:<puerto>`). Sin ella, la app de desarrollo no busca nada. Por ejemplo, un server local que conteste `{"tag_name":"v9.9.9","draft":false,"prerelease":false}`.
+  - `CONTROL_PLANE_UPDATE_SCRIPT`: el instalador que lanza **Actualizar**, en lugar de `desktop/scripts/get.sh`. Lo recibe como `--version X.Y.Z --app-pid <pid> [--appimage <ruta> | --mac-app <ruta>]`, en su propia sesión.
+  - `get.sh --from <carpeta> --dry-run` prueba los pasos del instalador con archivos locales y su `SHA256SUMS`.
+  - Dentro de `dbus-run-session` no hay demonio de avisos ni bandeja de GNOME. El menú se puede manejar igual por D-Bus (`com.canonical.dbusmenu`). Para ver los avisos, levantá un demonio de prueba en ese bus que anote los `Notify`.
 
 Para tener sesiones sin una cuenta de Claude, usá el Claude falso de los tests:
 
@@ -117,6 +122,7 @@ Taggeá un commit de `main` con los mismos `.github/workflows/` que `main` tiene
 - Seguí el estilo del código que tocás: mismos nombres, mismos patrones, comentarios solo donde hacen falta. Nada de frameworks nuevos sin charlarlo antes.
 - Los textos de la UI van en castellano rioplatense (voseo), con el mismo tono del resto.
 - El dashboard es 100% local: nada de telemetría, servicios externos ni cuentas propias. Solo habla con Claude Code y con tu navegador.
+  - La única excepción: la app de escritorio consulta una vez al día los releases de este repo en GitHub para avisarte si hay una versión nueva. No manda ningún dato tuyo (solo un User-Agent con su versión) y se apaga en bandeja → **Buscar actualizaciones**. El server y la web no salen a internet.
 - Si el cambio se ve desde afuera, actualizá el README.
 
 Al contribuir aceptás que tu código se publique con la [licencia MIT](LICENSE) del proyecto y que seguís el [código de conducta](CODE_OF_CONDUCT.md).

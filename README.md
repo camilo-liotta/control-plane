@@ -6,7 +6,7 @@ Reemplaza el copy-paste entre terminales y el chat que orquesta: los workers le 
 
 No reinventa nada: cada sesión es el `claude` que ya tenés instalado, con tu login, corriendo en modo headless. El dashboard le da una UI y un poco de estructura.
 
-Es 100% local: corre en tu máquina, escucha solo en `127.0.0.1` y no tiene cuentas propias, servicios externos ni telemetría. Lo único que sale a internet es lo que ya hace Claude Code (y `git clone` cuando agregás un marketplace de skills).
+Es 100% local: corre en tu máquina, escucha solo en `127.0.0.1` y no tiene cuentas propias, servicios externos ni telemetría. Lo único que sale a internet es lo que ya hace Claude Code (y `git clone` cuando agregás un marketplace de skills). La [app de escritorio](#actualizaciones) además consulta una vez por día si hay una versión nueva, y eso se apaga.
 
 > *A local dashboard to run several Claude Code sessions in parallel, coordinated by an orchestrator session that drafts their prompts for your approval. The docs are in Spanish; issues and PRs in English are welcome.*
 
@@ -149,7 +149,7 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
 ### La bandeja
 
 - La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va cuántas cosas te necesitan. Cuando algo te necesita, el ícono lleva un punto.
-- El menú: **Abrir**, **Bandeja**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Al salir**, **Ver log del server** y **Salir**.
+- El menú: **Abrir**, **Bandeja**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
 - En GNOME hace falta la extensión AppIndicator, que Ubuntu trae activada.
 
 ### Avisos y sonidos
@@ -158,6 +158,23 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
 - Si tenés el dashboard abierto también en una pestaña, esa pestaña deja de mandar los suyos mientras la app está conectada, así no se duplican.
 - En Linux los avisos nativos piden no sonar (`suppress-sound`): el sonido lo pone la página, así no suenan dos.
 - Los [sonidos](#sonidos) siguen saliendo de la página y se configuran con el parlante de la barra lateral. **Avisos** no los apaga. Dentro de la app esa configuración es propia, aparte de la del navegador.
+
+### Actualizaciones
+
+- **Cómo busca**: al abrir y después una vez por día, la app le pregunta a GitHub cuál es el último release publicado de este repo (no mira borradores ni prereleases) y lo compara con su versión. Usa el `curl` del sistema, no manda ningún dato tuyo (solo un User-Agent con la versión) y, si no hay red o GitHub no contesta, no dice nada y prueba al día siguiente.
+- **Se apaga** en bandeja → **Buscar actualizaciones**. Apagado, no consulta nada.
+- **Cuando hay una versión nueva**:
+  - En la bandeja aparece **Actualizar a vX.Y.Z**.
+  - Llega un solo aviso del sistema por versión, y tocarlo actualiza.
+  - En el dashboard aparece un cartel con un link a las notas. Solo informa: desde la página no se puede actualizar.
+- **Al actualizar**, la app lanza el instalador que vino con ella (`get.sh`), aparte de sí misma:
+  1. Baja el paquete del release y lo verifica contra `SHA256SUMS`. Si no coincide, no instala nada.
+  2. Instala.
+  3. Cierra la app sin cortar las sesiones (`--quit --keep-server`) y la vuelve a abrir. La nueva adopta el mismo server.
+  - En Linux, el `.deb` necesita permisos de administrador: **el sistema te pide la contraseña** con su diálogo (`pkexec`). Si lo cancelás, no se instala nada y la app sigue como estaba.
+  - Un AppImage se reemplaza en su lugar, sin contraseña.
+  - En la Mac se reemplaza la `.app` que tenés abierta.
+- Si algo falla, llega un aviso con el motivo (tocalo para ver el log, `update.log` en la carpeta de logs), y la app vieja sigue andando. Mientras actualiza, la bandeja dice **Actualizando…**.
 
 ### Pantallas de error
 
@@ -184,6 +201,7 @@ Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
   - `port`: el puerto, si no es el 4700. Lo guarda **Usar este puerto**.
   - `onExit`: `ask`, `stop` o `leave` (lo mismo que **Al salir**).
   - `notifications`: los avisos del sistema (lo mismo que **Avisos**).
+  - `checkUpdates`: buscar versiones nuevas (lo mismo que **Buscar actualizaciones**). `updateNotified`: la última de la que ya avisó.
   - `nodePath`: el `node` a usar. Lo guarda **Elegir node…**.
   - `importEnv`: variables extra que se traen de tu shell (ver abajo).
 
