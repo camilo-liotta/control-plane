@@ -589,6 +589,12 @@ export class Compaction {
     this.deps.sessions.addEvent(id, { kind: "notice", level, text })
   }
 
+  /** La sesión se borró: nadie queda esperando y se olvida su estado. */
+  forget(id: string) {
+    this.finishWait(id, "", "closed")
+    this.entries.delete(id)
+  }
+
   /** Al apagar el server: nadie queda esperando (las sesiones compactan como siempre). */
   dispose() {
     for (const id of this.entries.keys()) this.finishWait(id, "", "closed")

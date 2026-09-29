@@ -1,4 +1,4 @@
-import { Blocks, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Users } from "lucide-react"
+import { Blocks, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Trash2, Users } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { useLocation } from "wouter"
@@ -73,7 +73,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
       <Empty className="h-full">
         <EmptyHeader>
           <EmptyTitle>Este proyecto no existe</EmptyTitle>
-          <EmptyDescription>Puede que lo hayas archivado. Elegí otro en la barra lateral.</EmptyDescription>
+          <EmptyDescription>Puede que lo hayas archivado o borrado. Elegí otro en la barra lateral.</EmptyDescription>
         </EmptyHeader>
       </Empty>
     )
@@ -155,6 +155,11 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
                   <Settings2 />
                   Configuración del proyecto
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={() => setUi({ deleteFor: project.id })}>
+                  <Trash2 />
+                  Borrar proyecto…
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

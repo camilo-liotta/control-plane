@@ -33,6 +33,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import { useUi } from "@/lib/ui"
 
 export function ProjectSettingsDialog({
   project,
@@ -44,6 +45,7 @@ export function ProjectSettingsDialog({
   onOpenChange: (v: boolean) => void
 }) {
   const [, navigate] = useLocation()
+  const setUi = useUi((s) => s.set)
   const [name, setName] = useState(project.name)
   const [settings, setSettings] = useState<ProjectSettings>(project.settings)
   const [saving, setSaving] = useState(false)
@@ -214,24 +216,36 @@ export function ProjectSettingsDialog({
           </Field>
         </FieldGroup>
         <DialogFooter className="sm:justify-between">
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive">Archivar proyecto</Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>¿Archivar {project.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Se detienen todas sus sesiones y desaparece del dashboard. No se borra nada del repo ni de las
-                  conversaciones de Claude Code.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction onClick={archive}>Archivar</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <div className="flex gap-2">
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive">Archivar proyecto</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Archivar {project.name}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se detienen todas sus sesiones y desaparece del dashboard. No se borra nada del repo ni de las
+                    conversaciones de Claude Code.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={archive}>Archivar</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => {
+                onOpenChange(false)
+                setUi({ deleteFor: project.id })
+              }}
+            >
+              Borrar…
+            </Button>
+          </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar

@@ -669,6 +669,8 @@ export interface Health {
 export type ServerMessage =
   | { type: "hello"; snapshot: Snapshot }
   | { type: "project"; project: Project }
+  /** Se borró un proyecto (con todo lo suyo). */
+  | { type: "project_removed"; id: string }
   | { type: "session"; session: Session }
   | { type: "event"; event: StoredEvent }
   | { type: "event_update"; event: StoredEvent }

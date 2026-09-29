@@ -268,6 +268,8 @@ El tablero de cada proyecto tiene un **mapa en vivo**: la orquestadora en el cen
 
 La conversación de Claude Code no se borra nunca: queda en disco y se retoma desde una terminal con `claude --resume <id>`.
 
+Con un proyecto entero pasa lo mismo: **Archivar proyecto** (en su configuración) detiene sus sesiones y lo saca del dashboard, pero guarda todo; **Borrar proyecto…** (en el menú ⋮ del tablero) detiene sus sesiones y borra del dashboard el proyecto con sus sesiones, historial, propuestas, resultados, tareas y adjuntos, y no se puede deshacer. Pide escribir su nombre para confirmar. Ninguno de los dos toca el repo, sus worktrees ni las conversaciones de Claude Code.
+
 ### En el chat de cada sesión
 
 - **Mientras trabaja**, al pie del chat aparece la línea de la terminal: `✻ Maquinando… (1m 12s · ↓ 3,4k tokens)`, con el tiempo y los tokens del turno, y debajo qué está haciendo (la herramienta que corre, "pensando…" o "escribiendo la respuesta…").

@@ -31,9 +31,9 @@ export class AttachmentStore {
   private db: Db
   readonly root: string
 
-  constructor(db: Db) {
+  constructor(db: Db, root = path.join(config.home, "attachments")) {
     this.db = db
-    this.root = path.join(config.home, "attachments")
+    this.root = root
   }
 
   save(sessionId: string, input: { name: string; mime: string; data: Buffer; source: "user" | "tool" }): AttachmentRecord {

@@ -15,6 +15,7 @@ import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
+import { deleteProject } from "./project-delete.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
 import type { SkillMarket } from "./skill-market.ts"
@@ -296,6 +297,16 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       const view = orchestration.projectView(db.getProject(p.id)!)
       deps.hub.broadcast({ type: "project", project: view })
       return view
+    })
+  )
+
+  // Borrar del todo (también uno archivado): pide el nombre del proyecto en el body, para que un pedido suelto no borre nada.
+  app.post<{ Params: { id: string }; Body: { confirm?: string } }>("/api/projects/:id/delete", (req, reply) =>
+    guard(reply, async () => {
+      const p = db.getProject(req.params.id)
+      const result = await deleteProject(deps, req.params.id, req.body?.confirm)
+      if (p?.accountId) broadcastAccount(p.accountId)
+      return result
     })
   )
 
