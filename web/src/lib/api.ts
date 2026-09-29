@@ -114,6 +114,8 @@ export const api = {
   updateProject: (id: string, body: { name?: string; settings?: Partial<ProjectSettings> }) =>
     request<Project>("PATCH", `/api/projects/${id}`, body),
   archiveProject: (id: string) => request<Project>("DELETE", `/api/projects/${id}`),
+  deleteProject: (id: string, confirm: string) =>
+    request<{ ok: true; stopped: number }>("POST", `/api/projects/${id}/delete`, { confirm }),
   reviewNow: (id: string) => request("POST", `/api/projects/${id}/review-now`),
   importable: (id: string) => request<Importable[]>("GET", `/api/projects/${id}/importable`),
   importSession: (id: string, body: { claudeSessionId: string; name: string; role?: string; allowLive?: boolean }) =>

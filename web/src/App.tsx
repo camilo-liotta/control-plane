@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { Redirect, Route, Switch, useLocation } from "wouter"
 import { X } from "lucide-react"
 
@@ -6,6 +7,7 @@ import { AccountsDialog } from "@/components/accounts"
 import { AppSidebar, useInboxCount } from "@/components/app-sidebar"
 import { Lightbox } from "@/components/attachments"
 import { ClaudeSettingsDialog } from "@/components/claude-settings-dialog"
+import { DeleteProjectDialog } from "@/components/delete-project-dialog"
 import { CommandPalette } from "@/components/command-palette"
 import { ImportSessionDialog } from "@/components/import-session-dialog"
 import { InboxSheet } from "@/components/inbox-sheet"
@@ -31,6 +33,7 @@ function Dialogs() {
   const sessionProject = ui.newSessionFor ? (projects[ui.newSessionFor] ?? null) : null
   const settingsProject = ui.settingsFor ? projects[ui.settingsFor] : undefined
   const importProject = ui.importFor ? (projects[ui.importFor] ?? null) : null
+  const deleteProject = ui.deleteFor ? projects[ui.deleteFor] : undefined
   return (
     <>
       <NewProjectDialog open={ui.newProject} onOpenChange={(v) => ui.set({ newProject: v })} />
@@ -44,6 +47,13 @@ function Dialogs() {
           project={settingsProject}
           open={Boolean(settingsProject)}
           onOpenChange={(v) => !v && ui.set({ settingsFor: null })}
+        />
+      )}
+      {deleteProject && (
+        <DeleteProjectDialog
+          project={deleteProject}
+          open={Boolean(deleteProject)}
+          onOpenChange={(v) => !v && ui.set({ deleteFor: null })}
         />
       )}
       <ImportSessionDialog
@@ -82,6 +92,20 @@ function LeaveOtherAccount() {
     if (!mine) navigate("/")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.id])
+  return null
+}
+
+/** Si se borró el proyecto que estás mirando (desde esta pestaña o desde otra), volvés al inicio. */
+function LeaveDeletedProject() {
+  const [location, navigate] = useLocation()
+  const removed = useStore((s) => s.removedProject)
+  useEffect(() => {
+    if (!removed) return
+    if (location !== `/p/${removed.id}` && !location.startsWith(`/p/${removed.id}/`)) return
+    navigate("/")
+    toast.success(`Borré el proyecto ${removed.name}`, { id: `deleted-${removed.id}` })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [removed])
   return null
 }
 
@@ -146,6 +170,7 @@ export default function App() {
     <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
       <LeaveOtherAccount />
+      <LeaveDeletedProject />
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <ConnectionBanner />
         <UpdateBanner />

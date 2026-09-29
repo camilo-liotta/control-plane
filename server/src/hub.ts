@@ -6,7 +6,7 @@ import type { DesktopSummary, ServerMessage } from "./shared/types.ts"
 export type ClientKind = "web" | "desktop"
 
 /** Cambios que mueven el resumen de la bandeja. */
-const SUMMARY_TRIGGERS = new Set<ServerMessage["type"]>(["session", "draft", "project", "task"])
+const SUMMARY_TRIGGERS = new Set<ServerMessage["type"]>(["session", "draft", "project", "project_removed", "task"])
 /** Lo único que le llega a la app de escritorio de lo que se difunde. */
 const DESKTOP_TYPES = new Set<ServerMessage["type"]>(["toast"])
 const SUMMARY_DEBOUNCE_MS = 300

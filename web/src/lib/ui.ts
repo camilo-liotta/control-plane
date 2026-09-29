@@ -8,6 +8,8 @@ interface UiState {
   palette: boolean
   settingsFor: string | null
   importFor: string | null
+  /** Proyecto cuyo diálogo de borrar está abierto. */
+  deleteFor: string | null
   /** Subagente abierto en el panel lateral. */
   subagent: { sessionId: string; toolUseId: string } | null
   /** Imagen abierta en grande: un adjunto (`id`) o, mientras se sube, su vista previa local (`src`). */
@@ -49,6 +51,7 @@ export const useUi = create<UiState>((set) => ({
   palette: false,
   settingsFor: null,
   importFor: null,
+  deleteFor: null,
   subagent: null,
   lightbox: null,
   account: storedAccount(),

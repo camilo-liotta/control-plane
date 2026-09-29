@@ -198,6 +198,8 @@ export class SessionManager extends EventEmitter<{
   private liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
   /** Conversaciones del dashboard que hoy están abiertas en otro lado (se refresca periódicamente). */
   private external = new Map<string, ExternalSession>()
+  /** Proyectos que se están borrando: sus sesiones no arrancan. */
+  private deleting = new Set<string>()
 
   constructor(opts: SessionManagerOptions) {
     super()
@@ -410,6 +412,7 @@ export class SessionManager extends EventEmitter<{
     const rec = this.db.getSession(id)
     if (!rec) throw new Error("Sesión inexistente")
     if (rec.archivedAt) throw new Error("La sesión está archivada")
+    if (this.deleting.has(rec.projectId)) throw new Error("El proyecto se está borrando")
     // Dos procesos sobre la misma conversación la rompen: si está abierta en otro lado, no se reanuda.
     if (rec.startedOnce && this.liveElsewhere) {
       const live = await this.liveElsewhere(rec).catch(() => null)
@@ -1162,6 +1165,33 @@ export class SessionManager extends EventEmitter<{
   async archive(id: string) {
     await this.stop(id)
     this.update(id, { archivedAt: now(), status: "stopped" })
+  }
+
+  /** Mientras se borra un proyecto, ninguna de sus sesiones arranca (ni por un prompt ni por un reintento). */
+  setDeleting(projectId: string, on: boolean) {
+    if (on) this.deleting.add(projectId)
+    else this.deleting.delete(projectId)
+  }
+
+  /** Detiene las sesiones con el apagado de siempre; devuelve las que siguen corriendo después de `timeoutMs`. */
+  async stopAll(ids: string[], timeoutMs: number): Promise<string[]> {
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
+    })
+    await Promise.race([Promise.allSettled(ids.map((id) => this.stop(id))), timeout])
+    clearTimeout(timer)
+    return ids.filter((id) => this.isRunning(id))
+  }
+
+  /** Olvida lo que se guarda en memoria de sesiones que ya no existen. */
+  forget(ids: string[]) {
+    for (const id of ids) {
+      this.stoppedDetail.delete(id)
+      this.lastTexts.delete(id)
+      this.commands.delete(id)
+      this.external.delete(id)
+    }
   }
 
   async shutdown() {

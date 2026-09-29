@@ -232,6 +232,15 @@ export class Orchestration {
     this.deliverAt.clear()
   }
 
+  /** El proyecto se borró: cancela sus entregas y olvida su estado. */
+  forgetProject(projectId: string) {
+    this.clearTimer(projectId)
+    this.clearFollowUp(projectId)
+    this.firstQueuedAt.delete(projectId)
+    this.decisions.delete(projectId)
+    this.paused.delete(projectId)
+  }
+
   private clearTimer(projectId: string) {
     const t = this.timers.get(projectId)
     if (t) clearTimeout(t)

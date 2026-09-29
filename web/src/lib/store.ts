@@ -51,6 +51,8 @@ interface State {
   meta: Meta | null
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
+  /** El último proyecto borrado (para sacarte de sus pantallas si estabas ahí). */
+  removedProject: { id: string; name: string } | null
 
   setConnected: (v: boolean) => void
   apply: (msg: ServerMessage) => void
@@ -87,6 +89,7 @@ export const useStore = create<State>((set, get) => ({
   desktopConnected: false,
   meta: null,
   focused: null,
+  removedProject: null,
 
   setConnected: (v) => set({ connected: v }),
 
@@ -120,6 +123,31 @@ export const useStore = create<State>((set, get) => ({
           if (msg.project.archivedAt) delete projects[msg.project.id]
           else projects[msg.project.id] = msg.project
           return { projects }
+        })
+        break
+      case "project_removed":
+        set((s) => {
+          const gone = new Set(Object.values(s.sessions).filter((x) => x.projectId === msg.id).map((x) => x.id))
+          const keep = <T extends { projectId: string }>(rec: Record<string, T>) =>
+            Object.fromEntries(Object.entries(rec).filter(([, v]) => v.projectId !== msg.id))
+          const bySession = <T,>(rec: Record<string, T>) => Object.fromEntries(Object.entries(rec).filter(([k]) => !gone.has(k)))
+          const projects = { ...s.projects }
+          const name = projects[msg.id]?.name ?? ""
+          delete projects[msg.id]
+          return {
+            projects,
+            removedProject: { id: msg.id, name },
+            sessions: keep(s.sessions),
+            drafts: keep(s.drafts),
+            tasks: keep(s.tasks),
+            reports: keep(s.reports),
+            events: bySession(s.events),
+            hasMore: bySession(s.hasMore),
+            partials: bySession(s.partials),
+            unread: bySession(s.unread),
+            compactions: bySession(s.compactions),
+            turns: bySession(s.turns),
+          }
         })
         break
       case "session":

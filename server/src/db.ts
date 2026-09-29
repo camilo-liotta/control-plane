@@ -615,6 +615,35 @@ export class Db {
     }
   }
 
+  /** Todas las sesiones de un proyecto, también las archivadas. */
+  listProjectSessions(projectId: string): SessionRecord[] {
+    return (
+      this.db.prepare("SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at").all(projectId) as Row[]
+    ).map(toSession)
+  }
+
+  /**
+   * Borra un proyecto con todo lo suyo en la base, en una transacción: o todo o nada. Solo la base:
+   * el repo, los worktrees y las conversaciones de Claude Code quedan como están.
+   */
+  purgeProject(id: string) {
+    const sessionIds = `SELECT id FROM sessions WHERE project_id = ?`
+    this.db.exec("BEGIN")
+    try {
+      this.db.prepare(`DELETE FROM events WHERE session_id IN (${sessionIds})`).run(id)
+      this.db.prepare(`DELETE FROM attachments WHERE session_id IN (${sessionIds})`).run(id)
+      this.db.prepare("DELETE FROM reports WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM drafts WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM sessions WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM projects WHERE id = ?").run(id)
+      this.db.exec("COMMIT")
+    } catch (err) {
+      this.db.exec("ROLLBACK")
+      throw err
+    }
+  }
+
   listSessions(): SessionRecord[] {
     return (
       this.db
