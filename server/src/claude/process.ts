@@ -132,9 +132,15 @@ export class ClaudeProcess extends EventEmitter<{
     else pending.reject(new Error(response.error ?? "control request failed"))
   }
 
+  /** true si el mensaje quedó en camino al proceso; false solo si el proceso ya no puede recibirlo. */
   send(obj: unknown): boolean {
-    if (!this.child || this.exited || this.child.stdin.destroyed) return false
-    return this.child.stdin.write(JSON.stringify(obj) + "\n")
+    const stdin = this.child?.stdin
+    if (!stdin || this.exited || stdin.destroyed || !stdin.writable) return false
+    // write() devuelve false cuando se pasa del buffer (64 KB: cualquier imagen en base64), pero el
+    // dato queda en la cola y sale igual. No es un error: tomarlo como tal daba "No se pudo escribir"
+    // con mensajes que la sesión sí recibía.
+    stdin.write(JSON.stringify(obj) + "\n")
+    return true
   }
 
   /** content: texto, o bloques (texto + imágenes) cuando hay adjuntos. */

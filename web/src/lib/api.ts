@@ -28,13 +28,20 @@ import type {
   SubagentSpec,
   ToolsView,
 } from "@shared/types"
+import { NetworkError } from "@shared/deliver"
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method,
-    headers: body !== undefined ? { "content-type": "application/json" } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch (err) {
+    // Sin respuesta: el server puede haberlo recibido igual (ver deliver).
+    throw new NetworkError(err)
+  }
   const data = (await res.json().catch(() => null)) as { error?: string } | null
   if (!res.ok) throw new Error(data?.error ?? `Error ${res.status}`)
   return data as T
@@ -141,8 +148,8 @@ export const api = {
     request<{ diff: boolean }>("POST", `/api/sessions/${id}/open-file`, { path, side }),
   editor: () => request<EditorSettings>("GET", "/api/editor"),
   saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
-  send: (id: string, text: string, attachmentIds: string[] = []) =>
-    request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds }),
+  send: (id: string, text: string, attachmentIds: string[] = [], clientId?: string) =>
+    request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds, clientId }),
   upload: (id: string, file: { name: string; mime: string; data: string }) =>
     request<Attachment>("POST", `/api/sessions/${id}/attachments`, file),
   attachments: (id: string) => request<Attachment[]>("GET", `/api/sessions/${id}/attachments`),

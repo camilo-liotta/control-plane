@@ -435,7 +435,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   app.put<{ Body: Partial<EditorSettings> }>("/api/editor", (req, reply) => guard(reply, () => editor.save(req.body ?? {})))
 
-  app.post<{ Params: { id: string }; Body: { text: string; attachmentIds?: string[] } }>("/api/sessions/:id/messages", (req, reply) =>
+  app.post<{ Params: { id: string }; Body: { text: string; attachmentIds?: string[]; clientId?: string } }>("/api/sessions/:id/messages", (req, reply) =>
     guard(reply, async () => {
       const s = requireSession(req.params.id)
       const text = req.body.text?.trim() ?? ""
@@ -448,7 +448,8 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       // Si la sesión no tenía tarea, tu primer mensaje directo pasa a ser su tarea.
       if (s.kind === "worker" && s.taskState === "none" && text)
         sessions.update(s.id, { taskTitle: text.split("\n")[0]!.slice(0, 80), taskState: "assigned" })
-      return sessions.send(s.id, text, { origin: "user", attachments: files })
+      const clientId = typeof req.body.clientId === "string" && req.body.clientId.length <= 100 ? req.body.clientId : undefined
+      return sessions.send(s.id, text, { origin: "user", attachments: files, clientId })
     })
   )
 
