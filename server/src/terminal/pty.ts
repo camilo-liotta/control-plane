@@ -117,7 +117,8 @@ export function spawnPty(opts: PtyOptions, platform: NodeJS.Platform = process.p
       for (const pid of [...pids, child.pid!]) signal(pid, "SIGHUP")
       await waitFor(() => exited && pids.every((p) => !alive(p)), 1500)
       for (const pid of [...pids, child.pid!]) if (alive(pid)) signal(pid, "SIGKILL")
-      await waitFor(() => exited, 1500)
+      // Hasta que los cosechen (un zombi todavía responde a kill 0).
+      await waitFor(() => exited && pids.every((p) => !alive(p)), 3000)
     },
     onData: (cb) => {
       child.stdout.on("data", cb)

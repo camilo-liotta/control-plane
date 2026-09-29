@@ -22,6 +22,8 @@ import { acquireLock, LockError } from "./lock.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
+import { Terminals } from "./terminal/manager.ts"
+import { registerTerminal } from "./terminal/routes.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
 import { SessionManager } from "./sessions.ts"
@@ -227,6 +229,9 @@ async function main() {
 
   registerApi(app, deps)
   registerMcp(app, deps)
+  // La terminal de cada sesión (ver terminal/routes.ts: solo desde el dashboard, con token).
+  const terminals = new Terminals({ sessionAlive: (id) => !!db.getSession(id) && !db.getSession(id)!.archivedAt })
+  registerTerminal(app, { db, terminals, port: config.port, extraOrigins: config.production ? [] : config.devOrigins })
 
   // Hooks de compactación de las sesiones (los llama compact-hook.mjs, desde esta máquina).
   app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/compact", async (req, reply) => {
@@ -265,6 +270,7 @@ async function main() {
     clis.dispose()
     tasks.dispose()
     hub.dispose()
+    await terminals.closeAll().catch(() => {})
     await sessions.shutdown().catch(() => {})
     await app.close().catch(() => {})
     db.close()
