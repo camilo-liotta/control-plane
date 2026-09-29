@@ -180,6 +180,10 @@ export interface RepoInfo {
   behind: number | null
   /** Otros worktrees del repo (donde suelen trabajar las sesiones en sus ramas). */
   worktrees: { path: string; branch: string | null }[]
+  /** El repo al que pertenece (su carpeta .git común): los worktrees de un mismo repo comparten `group`. */
+  group: string
+  /** Es un worktree agregado (no el checkout principal del repo). */
+  worktree: boolean
 }
 
 export interface ProjectOverview {

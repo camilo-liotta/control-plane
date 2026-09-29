@@ -12,6 +12,8 @@ export type PanelSection =
   | "attachments"
   | "tools"
   | "details"
+  /** El resumen de git de la vista del proyecto (igual para todos los proyectos). */
+  | "project-repos"
 
 const KEY = "session-panel-open"
 
