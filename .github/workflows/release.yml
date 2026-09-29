@@ -20,6 +20,8 @@ on:
       - "desktop/**"
       - ".github/workflows/release.yml"
       - "scripts/version.mjs"
+      - "server/src/terminal/**"
+      - "server/test/terminal-*.test.ts"
   workflow_dispatch:
     inputs:
       tag:
@@ -114,6 +116,9 @@ jobs:
         with:
           workspaces: desktop/src-tauri
       - run: npm ci
+      # La terminal integrada usa el script(1) de BSD: se prueba acá, con la Mac de verdad.
+      - name: Terminal (PTY con script de BSD)
+        run: node --test server/test/terminal-*.test.ts
       - name: Build universal (.app y .dmg)
         run: npm run tauri -w desktop -- build --target universal-apple-darwin --bundles app,dmg
       - name: Juntar los archivos
