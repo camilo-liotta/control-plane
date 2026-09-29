@@ -46,6 +46,12 @@ async function repoInfo(dir: string, root: string): Promise<RepoInfo> {
     git(dir, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]),
     git(dir, ["worktree", "list", "--porcelain"]),
   ])
+  const [gitDir, commonDir] = await Promise.all([
+    git(dir, ["rev-parse", "--absolute-git-dir"]),
+    git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+  ])
+  const group = real(commonDir ?? gitDir ?? dir)
+  const inside = path.relative(root, dir)
   const worktrees = parseWorktrees(wt ?? "").filter((w) => path.resolve(w.path) !== path.resolve(dir))
   const gh = githubOf(remote)
   const [hash, subject, at, author] = (head ?? "").split("\x1f")
@@ -54,7 +60,7 @@ async function repoInfo(dir: string, root: string): Promise<RepoInfo> {
   const url = gh ? `https://github.com/${gh.owner}/${gh.repo}` : null
   return {
     path: dir,
-    name: path.relative(root, dir) || path.basename(dir),
+    name: inside && !inside.startsWith("..") && !path.isAbsolute(inside) ? inside : path.basename(dir),
     isRoot: dir === root,
     branch: branch && branch !== "HEAD" ? branch : null,
     remote: remote ? remote.replace(/\/\/[^@/]+@/, "//") : null,
@@ -64,7 +70,41 @@ async function repoInfo(dir: string, root: string): Promise<RepoInfo> {
     ahead: Number.isFinite(ahead) ? ahead! : null,
     behind: Number.isFinite(behind) ? behind! : null,
     worktrees,
+    group,
+    worktree: gitDir !== null && commonDir !== null && real(gitDir) !== group,
   }
+}
+
+const real = (p: string) => {
+  try {
+    return fs.realpathSync(p)
+  } catch {
+    return path.resolve(p)
+  }
+}
+
+/** Como mucho, cuántos worktrees de un mismo repo se leen además de los que están en la carpeta. */
+const MAX_WORKTREES = 12
+
+/**
+ * Los repos de la carpeta y también sus worktrees aunque estén afuera (o en carpetas ocultas, como
+ * `.claude/worktrees`): cada uno con su rama y su estado, agrupados por repo (`group`).
+ */
+export async function readRepos(root: string): Promise<RepoInfo[]> {
+  const found = await Promise.all(findRepos(root).map((dir) => repoInfo(dir, root)))
+  const seen = new Set(found.map((r) => real(r.path)))
+  const extra: string[] = []
+  for (const r of found) {
+    let n = 0
+    for (const w of r.worktrees) {
+      const p = real(w.path)
+      if (seen.has(p) || !fs.existsSync(p) || n >= MAX_WORKTREES) continue
+      seen.add(p)
+      extra.push(w.path)
+      n++
+    }
+  }
+  return [...found, ...(await Promise.all(extra.map((dir) => repoInfo(dir, root))))]
 }
 
 /** Salida de `git worktree list --porcelain`: bloques "worktree <ruta>" con su "branch refs/heads/<rama>". */
@@ -91,7 +131,7 @@ export class Overview {
   private repos(projectId: string, root: string, refresh: boolean): Promise<RepoInfo[]> {
     const hit = this.cache.get(projectId)
     if (hit && !refresh && now() - hit.at < 30_000) return hit.value
-    const value = Promise.all(findRepos(root).map((dir) => repoInfo(dir, root)))
+    const value = readRepos(root)
     this.cache.set(projectId, { at: now(), value })
     return value
   }
