@@ -139,7 +139,12 @@ export interface SendOptions {
   /** Lo que se muestra en el chat si es distinto de lo que se envía (ej. sin las instrucciones de subagentes). */
   display?: string
   subagents?: SubagentSpec[]
+  /** Id del envío que puso la web: si llega dos veces (reintentó porque se cortó la respuesta), sale una sola. */
+  clientId?: string
 }
+
+/** Cuántos envíos recientes se recuerdan para no duplicar un reintento. */
+const CLIENT_IDS_KEPT = 200
 
 /** Todo lo que hace falta para lanzar una sesión: protocolo, modelo y la cuenta con la que corre. */
 export interface LaunchContext {
@@ -198,6 +203,8 @@ export class SessionManager extends EventEmitter<{
   private liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
   /** Conversaciones del dashboard que hoy están abiertas en otro lado (se refresca periódicamente). */
   private external = new Map<string, ExternalSession>()
+  /** Envíos recientes por id de cliente (sesión + id): el evento que ya se guardó. */
+  private byClientId = new Map<string, StoredEvent>()
   /** Proyectos que se están borrando: sus sesiones no arrancan. */
   private deleting = new Set<string>()
 
@@ -876,31 +883,41 @@ export class SessionManager extends EventEmitter<{
 
   /** Manda un mensaje como si lo escribieras vos. Si la sesión estaba detenida, la reanuda. */
   async send(id: string, text: string, opts: SendOptions): Promise<StoredEvent> {
+    const clientKey = opts.clientId ? `${id}:${opts.clientId}` : null
+    const already = clientKey ? this.byClientId.get(clientKey) : undefined
+    if (already) return already
     await this.start(id)
+    const again = clientKey ? this.byClientId.get(clientKey) : undefined
+    if (again) return again
     const rt = this.runtimes.get(id)
     const rec = this.db.getSession(id)
     if (!rt || !rec) throw new Error("La sesión no está corriendo")
     const u = uuid()
-    rt.ownUuids.add(u)
-    if (rt.ownUuids.size > 500) rt.ownUuids.delete(rt.ownUuids.values().next().value!)
-    rt.queued.add(u)
     const files = opts.attachments ?? []
     const event: TimelineEvent = opts.event ?? {
       kind: "user",
       text: opts.display ?? text,
       origin: opts.origin,
       uuid: u,
+      ...(opts.clientId ? { clientId: opts.clientId } : {}),
       ...(opts.draftId ? { draftId: opts.draftId } : {}),
       ...(opts.draftTitle ? { draftTitle: opts.draftTitle } : {}),
       ...(files.length ? { attachments: files.map(toRef) } : {}),
       ...(opts.subagents?.length ? { subagents: opts.subagents } : {}),
     }
+    // Primero sale al proceso y después se guarda: si no sale, no queda en el chat como enviado.
+    // (La salida del proceso se lee en otro tick, así que el eco nunca llega antes que el evento.)
+    if (!rt.proc.sendUser(files.length ? contentWithFiles(text, files) : text, u, rec.claudeSessionId))
+      throw new Error("La sesión se cerró antes de recibir el mensaje")
+    rt.ownUuids.add(u)
+    if (rt.ownUuids.size > 500) rt.ownUuids.delete(rt.ownUuids.values().next().value!)
+    rt.queued.add(u)
     const stored = this.addEvent(id, event)
-    rt.turnInputs.push({ text, opts })
-    if (!rt.proc.sendUser(files.length ? contentWithFiles(text, files) : text, u, rec.claudeSessionId)) {
-      rt.queued.delete(u)
-      throw new Error("No se pudo escribir en la sesión")
+    if (clientKey) {
+      this.byClientId.set(clientKey, stored)
+      if (this.byClientId.size > CLIENT_IDS_KEPT) this.byClientId.delete(this.byClientId.keys().next().value!)
     }
+    rt.turnInputs.push({ text, opts })
     // Hasta que el CLI avise, la mostramos trabajando.
     if (rt.status === "idle") this.setStatus(id, rt, "working")
     this.broadcastSession(id)

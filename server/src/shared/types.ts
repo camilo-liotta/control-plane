@@ -533,6 +533,8 @@ export type TimelineEvent =
       text: string
       origin: UserOrigin
       uuid: string
+      /** El id que le puso la web al envío (para reconocer su eco y no duplicarlo si reintenta). */
+      clientId?: string
       draftId?: string
       draftTitle?: string
       attachments?: AttachmentRef[]

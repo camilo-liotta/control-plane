@@ -2,6 +2,7 @@ import { ArrowUp, File as FileIcon, Paperclip, Square, TerminalSquare, X } from 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
+import { deliver } from "@shared/deliver"
 import type { Session, SlashCommand } from "@shared/types"
 
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,7 @@ import { api } from "@/lib/api"
 import { freshFiles, registerDropTarget } from "@/lib/desktop-drop"
 import { clipboardImages, formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
 import { inDesktop } from "@/lib/notify"
+import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
@@ -192,15 +194,18 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     update("")
     setPending([])
     setSending(true)
+    // Un id por envío: si la respuesta se pierde, el reintento no lo duplica y el eco del WS lo confirma.
+    const clientId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    const ids = ready.map((p) => p.id!)
     try {
-      await api.send(
-        session.id,
-        message,
-        ready.map((p) => p.id!)
-      )
+      await deliver({
+        send: () => api.send(session.id, message, ids, clientId),
+        echoed: () =>
+          (useStore.getState().events[session.id] ?? []).some((e) => e.event.kind === "user" && e.event.clientId === clientId),
+      })
       for (const p of attached) if (p.preview) URL.revokeObjectURL(p.preview)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo enviar el mensaje", { description: err instanceof Error ? err.message : String(err) })
       // No salió: vuelve a la caja, salvo que ya hayas empezado a escribir otro.
       if (!drafts.get(session.id)) update(message)
       setPending((current) => (current.length ? current : attached))
