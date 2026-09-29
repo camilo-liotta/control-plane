@@ -193,6 +193,46 @@ export interface ProjectOverview {
   at: number
 }
 
+/** Un archivo cambiado en el repo de una sesión. */
+export interface FileChange {
+  /** Relativa a la carpeta de la sesión. */
+  path: string
+  /** Líneas agregadas y sacadas; null en los binarios (y en un archivo nuevo muy grande). */
+  added: number | null
+  deleted: number | null
+  binary: boolean
+  /** Archivo nuevo que git todavía no sigue. */
+  untracked: boolean
+  /** Ya no está en la carpeta (lo borraron). */
+  removed: boolean
+}
+
+export interface ChangeGroup {
+  files: FileChange[]
+  /** Archivos que no entraron en la lista por el tope. */
+  more: number
+  added: number
+  deleted: number
+}
+
+/** Lo que cambió en la carpeta de una sesión: lo que no se commiteó y lo commiteado en su rama. */
+export interface SessionChanges {
+  branch: string | null
+  uncommitted: ChangeGroup
+  /** Lo commiteado desde que la rama se separó de la principal; null en la principal (o si no hay). */
+  committed: (ChangeGroup & { base: string; commits: number }) | null
+  at: number
+}
+
+export type EditorKind = "code" | "cursor" | "custom"
+
+/** Con qué editor se abren los archivos de "Cambios". */
+export interface EditorSettings {
+  kind: EditorKind
+  /** Comando propio: `{file}`, `{base}` (la versión anterior) y `{dir}` se reemplazan. */
+  command: string
+}
+
 export interface TurnProgress {
   startedAt: number
   /** Tokens que devolvió el modelo en este turno (estimados mientras llegan). */
@@ -611,6 +651,8 @@ export interface ModelOption {
 
 export interface Meta {
   version: string
+  /** El repo del proyecto (campo `repository` del package.json raíz). */
+  repoUrl?: string | null
   claudeVersion: string | null
   models: ModelOption[]
   account: { email?: string; organization?: string; subscription?: string } | null

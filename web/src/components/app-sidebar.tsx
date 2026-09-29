@@ -6,6 +6,8 @@ import { Link, useLocation } from "wouter"
 import type { Project, Session } from "@shared/types"
 
 import { AccountSwitcher } from "@/components/accounts"
+import { GithubMark } from "@/components/github-mark"
+import { SettingsMenu } from "@/components/settings-menu"
 import { SoundsMenu } from "@/components/sounds-menu"
 import { SessionLamp } from "@/components/status"
 import { useTheme } from "@/components/theme-provider"
@@ -316,6 +318,8 @@ export function AppSidebar() {
   const projects = useProjects()
   const connected = useStore((s) => s.connected)
   const claudeVersion = useStore((s) => s.meta?.claudeVersion)
+  const version = useStore((s) => s.meta?.version)
+  const repoUrl = useStore((s) => s.meta?.repoUrl)
   const setUi = useUi((s) => s.set)
   const inbox = useInboxCount()
   const [location] = useLocation()
@@ -388,12 +392,39 @@ export function AppSidebar() {
           <ThemeToggle />
           <NotificationsMenu />
           <SoundsMenu />
-          {claudeVersion && (
-            <span className="ml-auto truncate font-mono text-[0.68rem] text-muted-foreground" title="Versión de Claude Code">
-              claude {claudeVersion}
-            </span>
+          <SettingsMenu />
+          {repoUrl && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href={repoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                  aria-label="control-plane en GitHub"
+                >
+                  <GithubMark className="size-4" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent>control-plane en GitHub</TooltipContent>
+            </Tooltip>
           )}
         </div>
+        {(version || claudeVersion) && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <p className="-mt-2 truncate px-2 font-mono text-[0.68rem] text-muted-foreground">
+                {version && <span className="text-foreground/80">control-plane v{version}</span>}
+                {version && claudeVersion && " · "}
+                {claudeVersion && <span>claude {claudeVersion}</span>}
+              </p>
+            </TooltipTrigger>
+            <TooltipContent side="top" align="start">
+              {version && <p>control-plane v{version}</p>}
+              {claudeVersion && <p>Claude Code {claudeVersion}</p>}
+            </TooltipContent>
+          </Tooltip>
+        )}
       </SidebarFooter>
     </Sidebar>
   )

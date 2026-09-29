@@ -3,6 +3,10 @@
   "version": "0.2.3",
   "private": true,
   "description": "Dashboard local para orquestar varias sesiones de Claude Code sobre un mismo repo.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/camilo-liotta/control-plane.git"
+  },
   "type": "module",
   "workspaces": [
     "server",

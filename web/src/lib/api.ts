@@ -12,12 +12,14 @@ import type {
   CompactionState,
   ContextUsage,
   Draft,
+  EditorSettings,
   Marketplace,
   Project,
   ProjectOverview,
   ProjectSettings,
   Report,
   Session,
+  SessionChanges,
   SkillMarketView,
   SkillSourceView,
   SkillState,
@@ -134,6 +136,11 @@ export const api = {
   events: (id: string, before?: number, limit = 300) =>
     request<StoredEvent[]>("GET", `/api/sessions/${id}/events?limit=${limit}${before ? `&before=${before}` : ""}`),
   sessionReports: (id: string) => request<Report[]>("GET", `/api/sessions/${id}/reports`),
+  sessionChanges: (id: string) => request<SessionChanges>("GET", `/api/sessions/${id}/changes`),
+  openFile: (id: string, path: string, side: "uncommitted" | "committed") =>
+    request<{ diff: boolean }>("POST", `/api/sessions/${id}/open-file`, { path, side }),
+  editor: () => request<EditorSettings>("GET", "/api/editor"),
+  saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
   send: (id: string, text: string, attachmentIds: string[] = []) =>
     request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds }),
   upload: (id: string, file: { name: string; mime: string; data: string }) =>

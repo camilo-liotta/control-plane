@@ -1,30 +1,10 @@
-import { execFile } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import { promisify } from "node:util"
 
 import type { Db } from "./db.ts"
+import { git } from "./git.ts"
 import type { ProjectOverview, RepoInfo } from "./shared/types.ts"
 import { now } from "./util.ts"
-
-const run = promisify(execFile)
-
-/**
- * Git de solo lectura. `--no-optional-locks` evita que `git status` tome el lock del índice: en un
- * checkout donde trabajan varias sesiones, un lock ajeno les haría fallar un commit.
- */
-async function git(dir: string, args: string[]): Promise<string | null> {
-  try {
-    const { stdout } = await run("git", ["--no-optional-locks", "-C", dir, ...args], {
-      timeout: 10_000,
-      maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    })
-    return stdout.trim()
-  } catch {
-    return null
-  }
-}
 
 /** owner/repo de un remoto de GitHub (ssh o https), o null si no es de GitHub. */
 export function githubOf(remote: string | null): { owner: string; repo: string } | null {

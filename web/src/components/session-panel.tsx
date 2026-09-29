@@ -6,24 +6,14 @@ import type { Attachment, Project, Report, Session } from "@shared/types"
 import { FileChip, ImageThumb, isImage } from "@/components/attachments"
 import { SubagentList } from "@/components/timeline/subagents"
 import { DraftCard } from "@/components/draft-card"
+import { Section } from "@/components/panel-section"
 import { ReportCard } from "@/components/report-card"
 import { ReviewGate } from "@/components/review-gate"
+import { ChangesSection } from "@/components/session-changes"
 import { api } from "@/lib/api"
 import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { openDrafts, projectReports, useModels, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
-
-function Section({ title, children, count }: { title: string; children: React.ReactNode; count?: number }) {
-  return (
-    <section className="border-b px-4 py-4 last:border-b-0">
-      <div className="mb-2.5 flex items-center gap-2">
-        <h3 className="eyebrow">{title}</h3>
-        {count !== undefined && count > 0 && <span className="font-mono text-xs text-muted-foreground">{count}</span>}
-      </div>
-      {children}
-    </section>
-  )
-}
 
 function CopyLine({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
@@ -112,6 +102,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
     }
   }, [session.id, isOrch, Object.keys(allReports).length])
 
+  const readyCount = drafts.filter((d) => d.state === "ready").length
   const model = models.find((m) => m.value === (session.model ?? project.settings.defaultModel))
   const resume = `cd ${session.cwd} && claude --resume ${session.claudeSessionId}`
 
@@ -119,10 +110,10 @@ export function SessionPanel({ session, project }: { session: Session; project: 
     <div className="text-sm">
       {isOrch ? (
         <>
-          <Section title="Cola y revisión">
+          <Section id="review" title="Cola y revisión" attention={pending.length > 0} summary={pending.length ? `${pending.length} en la cola` : "cola vacía"}>
             <ReviewGate project={project} orchestrator={session} drafts={drafts} className="grid-cols-1 [&>svg]:hidden" />
           </Section>
-          <Section title="Propuestas" count={drafts.length}>
+          <Section id="proposals" title="Propuestas" count={drafts.length} attention={readyCount > 0} summary={readyCount ? `${readyCount} para enviar` : undefined}>
             {drafts.length ? (
               <div className="space-y-2.5">
                 {drafts.map((d) => (
@@ -133,7 +124,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
               <p className="text-xs text-muted-foreground">No hay propuestas abiertas.</p>
             )}
           </Section>
-          <Section title="Resultados sin revisar" count={pending.length}>
+          <Section id="pending-reports" title="Resultados sin revisar" count={pending.length} attention={pending.length > 0}>
             {pending.length ? (
               <div className="space-y-2.5">
                 {pending.map((r) => (
@@ -147,14 +138,14 @@ export function SessionPanel({ session, project }: { session: Session; project: 
         </>
       ) : (
         <>
-          <Section title="Tarea actual">
+          <Section id="task" title="Tarea actual" summary={session.taskTitle ?? "sin tarea"}>
             <p className={session.taskTitle ? "leading-snug" : "text-muted-foreground"}>
               {session.taskTitle ?? "Sin tarea asignada"}
             </p>
             {session.taskTitle && <p className="mt-1 text-xs text-muted-foreground">{TASK_STATE[session.taskState]}</p>}
           </Section>
           {drafts.length > 0 && (
-            <Section title="Propuestas para esta sesión" count={drafts.length}>
+            <Section id="proposals" title="Propuestas para esta sesión" count={drafts.length} attention={readyCount > 0} summary={readyCount ? `${readyCount} para enviar` : undefined}>
               <div className="space-y-2.5">
                 {drafts.map((d) => (
                   <DraftCard key={d.id} draft={d} compact />
@@ -162,7 +153,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
               </div>
             </Section>
           )}
-          <Section title="Resultados reportados" count={history?.length}>
+          <Section id="reports" title="Resultados reportados" count={history?.length}>
             {history === null ? (
               <p className="text-xs text-muted-foreground">Cargando…</p>
             ) : history.length ? (
@@ -177,13 +168,14 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           </Section>
         </>
       )}
+      <ChangesSection session={session} />
       {hasSubagents && (
-        <Section title="Subagentes" count={session.subagentsRunning || undefined}>
+        <Section id="subagents" title="Subagentes" count={session.subagentsRunning || undefined} summary={session.subagentsRunning ? "trabajando" : undefined}>
           <SubagentList sessionId={session.id} events={events ?? []} limit={12} />
         </Section>
       )}
       {files.length > 0 && (
-        <Section title="Adjuntos" count={files.length}>
+        <Section id="attachments" title="Adjuntos" count={files.length}>
           {files.some(isImage) && (
             <div className="mb-2 grid grid-cols-4 gap-1.5">
               {files.filter(isImage).slice(0, 16).map((f) => (
@@ -201,7 +193,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           </div>
         </Section>
       )}
-      <Section title="Herramientas">
+      <Section id="tools" title="Herramientas" summary="MCP, skills y plugins">
         <button
           type="button"
           onClick={() => useUi.getState().set({ toolsFor: session.id })}
@@ -212,7 +204,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           <span className="text-muted-foreground">Ver</span>
         </button>
       </Section>
-      <Section title="Detalles">
+      <Section id="details" title="Detalles" summary={model?.label ?? session.model ?? undefined}>
         <dl>
           {session.role && <Detail label="Rol">{session.role}</Detail>}
           <Detail label="Modelo">{model?.label ?? session.model ?? project.settings.defaultModel ?? "El de tu configuración"}</Detail>

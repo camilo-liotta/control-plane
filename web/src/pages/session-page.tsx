@@ -36,6 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { tokens, usd } from "@/lib/format"
+import { usePanelSections } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
@@ -137,19 +138,30 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
 
   // Llegaste desde "Hay una propuesta lista": la vista baja hasta la primera propuesta lista del
   // chat. Si no está entre los mensajes cargados, se ve en el panel (en pantallas chicas, se abre).
+  // En el panel, la sección de propuestas puede estar plegada: se abre sola antes de buscarla.
   useEffect(() => {
     if (pendingReveal?.kind !== "proposals" || pendingReveal.id !== sessionId || !events) return
+    let inner = 0
     const raf = requestAnimationFrame(() => {
       const inChat = content.current?.querySelector<HTMLElement>('[data-draft-state="ready"]')
-      const inPanel = document.querySelector<HTMLElement>('aside [data-draft-state="ready"]')
-      const target = inChat ?? (inPanel?.offsetParent ? inPanel : null)
-      if (target) {
-        if (inChat) stick.current = false
-        reveal(target)
-      } else if (document.querySelector('[data-draft-state="ready"]') || inPanel) setPanelOpen(true)
-      setUi({ reveal: null })
+      if (inChat) {
+        stick.current = false
+        reveal(inChat)
+        setUi({ reveal: null })
+        return
+      }
+      usePanelSections.getState().reveal("proposals")
+      inner = requestAnimationFrame(() => {
+        const inPanel = document.querySelector<HTMLElement>('aside [data-draft-state="ready"]')
+        if (inPanel?.offsetParent) reveal(inPanel)
+        else if (document.querySelector('[data-draft-state="ready"]') || inPanel) setPanelOpen(true)
+        setUi({ reveal: null })
+      })
     })
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancelAnimationFrame(raf)
+      cancelAnimationFrame(inner)
+    }
   }, [pendingReveal, sessionId, events, setUi])
 
   const onScroll = () => {
