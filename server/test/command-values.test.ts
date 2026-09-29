@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { test } from "node:test"
 
-import { blockCommand, commandValues, fillCommand, isShellBlock, quoteValue } from "../src/shared/command-values.ts"
+import { blockCommand, commandValues, fillCommand, isShellBlock, pasteText, quoteValue } from "../src/shared/command-values.ts"
 
 test("encuentra los valores con descripción y sugerido, cada uno una vez", () => {
   assert.deepEqual(commandValues("gcloud config set project {{PROYECTO_GCP: el id de tu proyecto de GCP}} && echo {{PROYECTO_GCP: otra vez}}"), [
@@ -62,4 +62,11 @@ test("reconoce bloques de shell y les saca los prompts", () => {
   assert.ok(!isShellBlock(undefined, "npm test"))
   assert.equal(blockCommand("$ cd x\nsalida\n$ ls\n"), "cd x\nls")
   assert.equal(blockCommand("cd x\nls\n"), "cd x\nls")
+})
+
+test("sin bracketed paste, varias líneas se pegan en una (nunca se ejecutan solas)", () => {
+  assert.equal(pasteText("cd x\nls -la\n", true), "cd x\nls -la")
+  assert.equal(pasteText("cd x\nls -la\n", false), "cd x; ls -la")
+  assert.equal(pasteText("docker run \\\n  -it img\n\necho ok", false), "docker run -it img; echo ok")
+  assert.equal(pasteText("uno", false), "uno")
 })

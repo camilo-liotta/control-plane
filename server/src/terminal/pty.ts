@@ -42,8 +42,10 @@ export function innerScript(shell: string, cols: number, rows: number) {
 /** El comando de `script` para cada sistema. */
 export function scriptCommand(platform: NodeJS.Platform, inner: string): { file: string; args: string[]; env: NodeJS.ProcessEnv } {
   if (platform === "darwin") {
-    // BSD: script [-q] archivo comando…; lo ejecuta directo, sin shell.
-    return { file: "/usr/bin/script", args: ["-q", "/dev/null", "/bin/sh", "-c", inner], env: {} }
+    // BSD: script [-q] archivo comando…, que lo ejecuta directo. En la Mac, el stdin que le da Node
+    // a un hijo es un socket, y ahí el script de BSD corta ("tcgetattr/ioctl: Operation not
+    // supported on socket"): con `cat |` delante, su stdin es un pipe de verdad.
+    return { file: "/bin/sh", args: ["-c", 'cat | /usr/bin/script -q /dev/null /bin/sh -c "$1"', "sh", inner], env: {} }
   }
   // util-linux: -c pasa por $SHELL -c; -f escribe cada salida al toque. El ECHO del esclavo queda
   // prendido (stdin es un pipe), así lo que tipeás se ve también en programas que no son la shell.
@@ -82,9 +84,11 @@ export function spawnPty(opts: PtyOptions, platform: NodeJS.Platform = process.p
   const locate = async () => {
     if (shellPid && tty) return { pid: shellPid, tty }
     for (let i = 0; i < 20 && !exited; i++) {
+      // La shell es el primer descendiente con terminal (en la Mac cuelga de sh → script).
       const tree = await processTree()
-      const kid = tree.find((p) => p.ppid === child.pid)
-      if (kid && kid.tty && kid.tty !== "??" && kid.tty !== "?") {
+      const mine = new Set(descendants(tree, child.pid!))
+      const kid = tree.find((p) => mine.has(p.pid) && p.tty && p.tty !== "??" && p.tty !== "?")
+      if (kid) {
         shellPid = kid.pid
         tty = kid.tty.startsWith("/dev/") ? kid.tty : `/dev/${kid.tty}`
         return { pid: shellPid, tty }

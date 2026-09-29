@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { normalizeSubagents } from "../src/orchestration.ts"
-import { withSubagents } from "../src/prompts.ts"
+import { COMMANDS_NOTE, withSubagents } from "../src/prompts.ts"
+import { commandValues } from "../src/shared/command-values.ts"
 
 describe("subagentes pedidos por la orquestadora", () => {
   it("normaliza nombres, reglas y modelos", () => {
@@ -35,4 +36,11 @@ describe("subagentes pedidos por la orquestadora", () => {
   it("sin subagentes, el prompt queda igual", () => {
     assert.equal(withSubagents("Hola", []), "Hola")
   })
+})
+
+it("los protocolos explican cómo marcar los valores de un comando", () => {
+  assert.match(COMMANDS_NOTE, /\{\{NOMBRE: qué es\}\}/)
+  // El ejemplo del protocolo es un marcador que el dashboard reconoce.
+  const example = /`(gcloud[^`]+)`/.exec(COMMANDS_NOTE)![1]!
+  assert.deepEqual(commandValues(example), [{ name: "PROYECTO_GCP", description: "el id de tu proyecto de GCP", suggested: null }])
 })

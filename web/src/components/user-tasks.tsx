@@ -6,6 +6,7 @@ import { Link } from "wouter"
 import type { Project, UserTask } from "@shared/types"
 
 import { TonePill } from "@/components/status"
+import { TerminalTargetProvider, type TerminalTarget } from "@/components/take-to-terminal"
 import { Markdown } from "@/components/timeline/markdown"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -95,6 +96,17 @@ function Asker({ id }: { id: string | null }) {
   )
 }
 
+/**
+ * La terminal a la que van los comandos de la tarea: la de la sesión que la pidió o, si la creaste
+ * vos o esa sesión ya no está, la de la orquestadora del proyecto.
+ */
+function useTaskTerminal(task: UserTask): TerminalTarget | null {
+  const sessions = useStore((s) => s.sessions)
+  const live = (id: string | null) => (id && sessions[id] && !sessions[id].archivedAt ? sessions[id] : undefined)
+  const s = live(task.createdBy) ?? Object.values(sessions).find((x) => x.projectId === task.projectId && x.kind === "orchestrator" && !x.archivedAt)
+  return s ? { sessionId: s.id, projectId: s.projectId } : null
+}
+
 function TaskRow({ task }: { task: UserTask }) {
   const [open, setOpen] = useState(task.blocking)
   const [note, setNote] = useState("")
@@ -102,6 +114,7 @@ function TaskRow({ task }: { task: UserTask }) {
   const [busy, setBusy] = useState<null | "done" | "dismissed">(null)
   const overdue = task.due !== null && task.due < Date.now()
   const askers = [task.createdBy, ...task.alsoBy].filter(Boolean).length
+  const target = useTaskTerminal(task)
 
   const close = async (status: "done" | "dismissed") => {
     setBusy(status)
@@ -155,13 +168,15 @@ function TaskRow({ task }: { task: UserTask }) {
       {open && (
         <div className="mt-3 space-y-3 pl-8">
           {task.why && <p className="text-sm text-muted-foreground">{task.why}</p>}
-          <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
-            {task.steps.map((s, i) => (
-              <li key={i}>
-                <Markdown text={s} className="[&_p]:my-0" />
-              </li>
-            ))}
-          </ol>
+          <TerminalTargetProvider value={target}>
+            <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
+              {task.steps.map((s, i) => (
+                <li key={i}>
+                  <Markdown text={s} className="[&_p]:my-0" inlineCommands />
+                </li>
+              ))}
+            </ol>
+          </TerminalTargetProvider>
           <div className="flex flex-wrap items-center gap-2">
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota para la sesión (opcional)" className="h-8 min-w-48 flex-1 text-sm" />
             {askers > 0 && (

@@ -1,9 +1,15 @@
 import { Check, Copy } from "lucide-react"
-import { memo, useState } from "react"
+import { createContext, memo, useContext, useState } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+import { blockCommand, isShellBlock } from "@shared/command-values"
+
+import { TakeToTerminal } from "@/components/take-to-terminal"
 import { cn } from "@/lib/utils"
+
+/** Si el código entre backticks son comandos (los pasos de una tarea para vos): llevan su botón. */
+const InlineCommands = createContext(false)
 
 function CodeBlock({ children, className }: { children?: React.ReactNode; className?: string }) {
   const [copied, setCopied] = useState(false)
@@ -16,6 +22,7 @@ function CodeBlock({ children, className }: { children?: React.ReactNode; classN
       </pre>
       <div className="absolute top-1.5 right-1.5 flex items-center gap-1.5 opacity-0 transition-opacity group-hover/code:opacity-100">
         {lang && <span className="font-mono text-[0.65rem] text-muted-foreground">{lang}</span>}
+        {isShellBlock(lang, text) && <TakeToTerminal command={blockCommand(text)} />}
         <button
           type="button"
           aria-label="Copiar"
@@ -38,7 +45,7 @@ const components: Components = {
   code: ({ className, children }) => {
     const text = String(children ?? "")
     const block = /language-/.test(className ?? "") || text.includes("\n")
-    return block ? <CodeBlock className={className}>{children}</CodeBlock> : <code>{children}</code>
+    return block ? <CodeBlock className={className}>{children}</CodeBlock> : <InlineCode text={text} />
   },
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noreferrer">
@@ -47,12 +54,24 @@ const components: Components = {
   ),
 }
 
-export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
+function InlineCode({ text }: { text: string }) {
+  const commands = useContext(InlineCommands)
+  if (!commands) return <code>{text}</code>
+  return (
+    <span className="whitespace-nowrap">
+      <code>{text}</code> <TakeToTerminal command={text} compact />
+    </span>
+  )
+}
+
+export const Markdown = memo(function Markdown({ text, className, inlineCommands = false }: { text: string; className?: string; inlineCommands?: boolean }) {
   return (
     <div className={cn("md", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {text}
-      </ReactMarkdown>
+      <InlineCommands.Provider value={inlineCommands}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          {text}
+        </ReactMarkdown>
+      </InlineCommands.Provider>
     </div>
   )
 })

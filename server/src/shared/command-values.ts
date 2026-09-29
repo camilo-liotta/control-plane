@@ -102,3 +102,18 @@ export function blockCommand(text: string): string {
     .map((l) => l.replace(/^\s*\$ /, ""))
     .join("\n")
 }
+
+/**
+ * Lo que se pega. Con bracketed paste (bash 5.1+, zsh, fish) la shell recibe varias líneas sin
+ * ejecutarlas. Sin eso, cada salto de línea sería un Enter: se juntan en una línea con `;` (y las
+ * que terminan en `\` siguen en la misma), así nunca corre nada sin que aprietes Enter.
+ */
+export function pasteText(text: string, bracketed: boolean): string {
+  const clean = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "")
+  if (bracketed || !clean.includes("\n")) return clean
+  return clean
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .reduce((acc, l) => (acc === "" ? l : acc.endsWith("\\") ? `${acc.slice(0, -1).trimEnd()} ${l}` : `${acc}; ${l}`), "")
+}
