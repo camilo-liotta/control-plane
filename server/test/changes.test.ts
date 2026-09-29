@@ -191,13 +191,42 @@ describe("abrir un cambio en el editor", () => {
     const log = path.join(root, "args.log")
     const fake = path.join(root, "fake-editor.sh")
     // Se escribe aparte y se renombra: ejecutar un archivo recién escrito puede dar "Text file busy".
-    fs.writeFileSync(fake + ".tmp", `#!/bin/sh\nprintf '%s\\n' "$@" > "${log}"\n`, { mode: 0o755 })
+    fs.writeFileSync(fake + ".tmp", `#!/bin/sh\nprintf '%s\\n' "$@" > "${log}.tmp" && mv "${log}.tmp" "${log}"\n`, { mode: 0o755 })
     fs.renameSync(fake + ".tmp", fake)
     const real = new Editor({ home })
     real.save({ kind: "custom", command: `${fake} {dir} {file}` })
     await real.open(repo, "src/app.ts", "uncommitted")
     for (let i = 0; i < 50 && !fs.existsSync(log); i++) await new Promise((r) => setTimeout(r, 20))
     assert.deepEqual(fs.readFileSync(log, "utf8").trim().split("\n"), [repo, path.join(fs.realpathSync(repo), "src/app.ts")])
+  })
+})
+
+describe("el entorno del editor", () => {
+  it("no hereda NODE_ENV ni las CONTROL_PLANE_* internas del server", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cp-editor-env-"))
+    const repo = path.join(root, "repo")
+    fs.mkdirSync(repo)
+    sh(repo, "init", "-q", "-b", "main")
+    write(repo, "a.txt", "x\n")
+    const log = path.join(root, "env.log")
+    const fake = path.join(root, "env-editor.sh")
+    fs.writeFileSync(fake + ".tmp", `#!/bin/sh\nenv > "${log}.tmp" && mv "${log}.tmp" "${log}"\n`, { mode: 0o755 })
+    fs.renameSync(fake + ".tmp", fake)
+    const vars = { NODE_ENV: "production", CONTROL_PLANE_LAUNCH_ID: "l1", CONTROL_PLANE_WEB_DIST: "/w", CONTROL_PLANE_COMPACT_HOOK: "/h", CP_TEST_KEEP: "si" }
+    const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]))
+    Object.assign(process.env, vars)
+    try {
+      const editor = new Editor({ home: path.join(root, "home") })
+      editor.save({ kind: "custom", command: `${fake} {file}` })
+      await editor.open(repo, "a.txt", "uncommitted")
+      for (let i = 0; i < 50 && !fs.existsSync(log); i++) await new Promise((r) => setTimeout(r, 20))
+      const env = fs.readFileSync(log, "utf8")
+      for (const k of ["NODE_ENV", "CONTROL_PLANE_LAUNCH_ID", "CONTROL_PLANE_WEB_DIST", "CONTROL_PLANE_COMPACT_HOOK"]) assert.doesNotMatch(env, new RegExp(`^${k}=`, "m"), k)
+      assert.match(env, /^CP_TEST_KEEP=si$/m, "el resto del entorno sí llega")
+    } finally {
+      for (const [k, v] of Object.entries(saved)) (v === undefined ? delete process.env[k] : (process.env[k] = v))
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

@@ -3,6 +3,7 @@ import fs from "node:fs"
 import path from "node:path"
 
 import { baseRevision, fileAt } from "./changes.ts"
+import { childEnv } from "./claude/env.ts"
 import type { EditorSettings } from "./shared/types.ts"
 
 const DEFAULTS: EditorSettings = { kind: "code", command: "" }
@@ -11,10 +12,13 @@ const KEEP_MS = 12 * 60 * 60 * 1000
 
 export type Launch = (bin: string, args: string[], cwd: string) => Promise<void>
 
-/** Lanza el editor desacoplado del server: sin heredar stdio y sin esperar a que cierre. */
+/**
+ * Lanza el editor desacoplado del server: sin heredar stdio, sin esperar a que cierre y sin el entorno
+ * propio del server (`NODE_ENV=production` rompería un `npm install` en sus terminales integradas).
+ */
 export const launchDetached: Launch = (bin, args, cwd) =>
   new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd, detached: true, stdio: "ignore" })
+    const child = spawn(bin, args, { cwd, env: childEnv(), detached: true, stdio: "ignore" })
     child.once("error", (err) => {
       const code = (err as NodeJS.ErrnoException).code
       reject(new Error(code === "ENOENT" || code === "EACCES" ? `No encontré \`${bin}\`. Elegí tu editor en Ajustes` : err.message))
