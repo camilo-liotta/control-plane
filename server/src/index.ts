@@ -12,10 +12,11 @@ import { Accounts } from "./accounts.ts"
 import { registerApi, snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
 import { Compaction } from "./compaction.ts"
-import { config, version } from "./config.ts"
+import { config, repoUrl, version } from "./config.ts"
 import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
+import { Editor } from "./editor.ts"
 import { localOnly, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
@@ -116,6 +117,7 @@ async function main() {
     },
     meta: {
       version,
+      repoUrl,
       claudeVersion: cliVersion,
       models: Array.isArray(saved.models) ? saved.models : [],
       account: null,
@@ -211,7 +213,7 @@ async function main() {
   })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
   const tasks = new UserTasks({ db, hub, sessions })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks }
+  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, editor: new Editor({ home: config.home }) }
   hub.setSummary(() => desktopSummary(deps))
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.

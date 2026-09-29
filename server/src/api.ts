@@ -7,9 +7,11 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import type { Accounts } from "./accounts.ts"
 import { toRef, type AttachmentStore } from "./attachments.ts"
 import { readSettings, writeSetting } from "./claude/config-settings.ts"
+import { sessionChanges } from "./changes.ts"
 import type { Compaction, CompactionSelection } from "./compaction.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
+import type { Editor } from "./editor.ts"
 import type { Hub } from "./hub.ts"
 import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
@@ -19,7 +21,7 @@ import { deleteProject } from "./project-delete.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
 import type { SkillMarket } from "./skill-market.ts"
-import type { ClaudeSettingValue, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
+import type { ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
 interface Deps {
@@ -35,6 +37,7 @@ interface Deps {
   skillMarket: SkillMarket
   clis: Clis
   tasks: UserTasks
+  editor: Editor
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -75,7 +78,7 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, editor } = deps
 
   // ------------------------------------------------------------------ tareas para vos
 
@@ -414,6 +417,23 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       return db.listReports({ sessionId: req.params.id, limit: 50 }).map((r) => orchestration.reportView(r))
     })
   )
+
+  // ------------------------------------------------------------------ cambios de git y editor
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/changes", (req, reply) =>
+    guard(reply, () => sessionChanges(requireSession(req.params.id).cwd))
+  )
+
+  app.post<{ Params: { id: string }; Body: { path?: string; side?: string } }>("/api/sessions/:id/open-file", (req, reply) =>
+    guard(reply, () => {
+      const s = requireSession(req.params.id)
+      return editor.open(s.cwd, String(req.body?.path ?? ""), req.body?.side === "committed" ? "committed" : "uncommitted")
+    })
+  )
+
+  app.get("/api/editor", (_req, reply) => guard(reply, () => editor.settings()))
+
+  app.put<{ Body: Partial<EditorSettings> }>("/api/editor", (req, reply) => guard(reply, () => editor.save(req.body ?? {})))
 
   app.post<{ Params: { id: string }; Body: { text: string; attachmentIds?: string[] } }>("/api/sessions/:id/messages", (req, reply) =>
     guard(reply, async () => {

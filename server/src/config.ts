@@ -3,6 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import pkg from "../package.json" with { type: "json" }
+import rootPkg from "../../package.json" with { type: "json" }
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -34,3 +35,13 @@ export const config = {
 
 /** La de server/package.json (la pone `npm run version:set`). */
 export const version: string = pkg.version
+
+/** El repo del proyecto, del campo `repository` del package.json raíz (un fork lo cambia ahí). */
+export const repoUrl: string | null = repoOf((rootPkg as { repository?: unknown }).repository)
+
+export function repoOf(field: unknown): string | null {
+  const raw = typeof field === "string" ? field : (field as { url?: unknown } | null)?.url
+  if (typeof raw !== "string" || !raw) return null
+  const url = raw.replace(/^git\+/, "").replace(/\.git$/, "").replace(/^github:/, "https://github.com/")
+  return /^https?:\/\//.test(url) ? url : null
+}
