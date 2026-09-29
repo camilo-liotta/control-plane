@@ -20,6 +20,8 @@ pub mod server_state;
 pub mod settings;
 pub mod sidecar;
 pub mod startup;
+#[cfg(test)]
+mod test_exe;
 pub mod tray;
 pub mod update;
 pub mod window;

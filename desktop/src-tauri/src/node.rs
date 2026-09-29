@@ -259,8 +259,7 @@ mod tests {
 
     fn exe(dir: &Path, name: &str, body: &str) -> PathBuf {
         let p = dir.join(name);
-        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exe::write_executable(&p, &format!("#!/bin/sh\n{body}\n"));
         p
     }
 
