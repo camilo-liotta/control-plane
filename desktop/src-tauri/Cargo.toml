@@ -1,6 +1,6 @@
 [package]
 name = "control-plane-desktop"
-version = "0.2.1"
+version = "0.2.2"
 description = "App de escritorio de control-plane: envuelve el server local en una ventana propia."
 license = "MIT"
 edition = "2021"
