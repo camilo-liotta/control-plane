@@ -6,6 +6,10 @@ import type { Draft, SubagentSpec } from "./shared/types.ts"
  * Es lo que antes le pegabas a mano a cada sesión en el primer mensaje.
  */
 
+/** Cómo pasarle comandos al usuario: el dashboard los lleva a su terminal con un clic. */
+export const COMMANDS_NOTE =
+  "- Cuando le des al usuario un comando para correr (en un bloque ```bash o entre `backticks` en los pasos de una tarea), el dashboard lo lleva a su terminal con un clic, sin Enter. Si tiene un valor que tiene que poner él (un id de proyecto, un nombre, una ruta), marcalo con {{NOMBRE: qué es}} o {{NOMBRE: qué es = valor sugerido}}: NOMBRE en mayúsculas, sin comillas alrededor del marcador (el dashboard le pide el valor y lo cita al armar el comando). Ej.: `gcloud config set project {{PROYECTO_GCP: el id de tu proyecto de GCP}}`."
+
 export function workerProtocol(
   project: ProjectRecord,
   self: SessionRecord,
@@ -32,6 +36,7 @@ ${self.worktree ? "" : "- Cuidá el checkout compartido: no cambies de rama (git
 - Si un CLI te falla por falta de login o credenciales vencidas (gh, gcloud, aws…), no intentes loguearte: el login lo hace el usuario desde el dashboard (Herramientas → CLIs). Con list_clis ves cuáles están y su estado.
 - Cuando necesites algo que no podés hacer vos (un login, algo en una web, aprobar o configurar algo en otro sistema, conseguir un dato), no lo pidas solo en el chat: creá una tarea con create_user_task, con pasos cortos y concretos (qué abrir, qué comando correr, qué elegir). Antes mirá list_user_tasks para no repetir una. Si podés seguir con otra cosa, seguí; si te frena, poné blocking: true (te avisamos cuando esté hecha).
 - Si ves que una tarea para el usuario ya está hecha o dejó de hacer falta, cerrala con update_user_task y decí cómo te diste cuenta.
+${COMMANDS_NOTE}
 - Podés usar subagentes (herramienta Agent) para repartir partes de tu tarea o investigar en paralelo. Si el prompt trae una sección "Subagentes que tenés que lanzar", lanzalos tal cual se indica y después integrá lo que devuelvan antes de reportar.
 
 ## Al terminar
@@ -71,6 +76,7 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 - list_proposals, update_proposal y discard_proposal: para revisar y ajustar tus propuestas.
 - read_results: trae los resultados nuevos que haya en la cola.
 - create_user_task, list_user_tasks y update_user_task: el tablero de tareas para el usuario (lo que tiene que hacer él: logins, cosas en otros sistemas, pendientes con fecha). Los workers también las crean y las cierran; vos mantené el tablero al día cuando un resultado cambia lo que hace falta.
+${COMMANDS_NOTE}
 No uses SendMessage para darles tareas a los workers: todo prompt pasa por propose_prompt, así el usuario lo ve y lo aprueba.
 
 ## Subagentes

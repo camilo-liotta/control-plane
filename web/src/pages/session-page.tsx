@@ -1,4 +1,4 @@
-import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, Square } from "lucide-react"
+import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, Square, SquareTerminal } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
@@ -9,6 +9,8 @@ import { ModelPicker, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
 import { SessionLamp, StatusPill } from "@/components/status"
+import { TerminalTargetProvider } from "@/components/take-to-terminal"
+import { TerminalPanel } from "@/components/terminal-panel"
 import { Timeline } from "@/components/timeline/timeline"
 import {
   AlertDialog,
@@ -39,6 +41,7 @@ import { tokens, usd } from "@/lib/format"
 import { usePanelSections } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
+import { useTerminal } from "@/lib/terminal"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
@@ -107,6 +110,22 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const [loadingOlder, setLoadingOlder] = useState(false)
   const setUi = useUi((s) => s.set)
   const pendingReveal = useUi((s) => s.reveal)
+  const terminalOpen = useTerminal((s) => !!s.open[sessionId])
+  const toggleTerminal = useTerminal((s) => s.toggle)
+
+  // Ctrl+` abre y esconde la terminal (como en los editores). En la captura y sin seguir: si no, la
+  // terminal lo recibe primero y le manda un NUL a la shell.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === "`" || e.code === "Backquote")) {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleTerminal(sessionId)
+      }
+    }
+    window.addEventListener("keydown", onKey, true)
+    return () => window.removeEventListener("keydown", onKey, true)
+  }, [sessionId, toggleTerminal])
 
   useEffect(() => {
     stick.current = true
@@ -215,6 +234,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     )
 
   const panel = <SessionPanel session={session} project={project} />
+  const terminalTarget = { sessionId: session.id, projectId: project.id }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -252,6 +272,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 Reanudar
               </Button>
             )}
+            <Button size="icon-sm" variant={terminalOpen ? "secondary" : "ghost"} onClick={() => toggleTerminal(session.id)} aria-label="Terminal" title="Terminal (Ctrl+`)">
+              <SquareTerminal />
+            </Button>
             <Button size="icon-sm" variant="ghost" className="lg:hidden" onClick={() => setPanelOpen(true)} aria-label="Ver detalles">
               <PanelRight />
             </Button>
@@ -288,7 +311,8 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
           </>
         }
       />
-      <div className="flex min-h-0 flex-1">
+      <TerminalTargetProvider value={terminalTarget}>
+        <div className="flex min-h-0 flex-1">
         <div ref={column} className="relative flex min-w-0 flex-1 flex-col">
           <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
             <div ref={content} className="mx-auto max-w-3xl px-4 py-6">
@@ -335,9 +359,11 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             </button>
           )}
           <Composer session={session} dropTarget={column} />
+          <TerminalPanel session={session} />
         </div>
         <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
-      </div>
+        </div>
+      </TerminalTargetProvider>
 
       <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
         <SheetContent className="w-[22rem] overflow-y-auto p-0 sm:max-w-sm">

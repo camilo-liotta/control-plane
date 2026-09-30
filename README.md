@@ -278,6 +278,16 @@ Con un proyecto entero pasa lo mismo: **Archivar proyecto** (en su configuració
 - **Modelo y esfuerzo**: se cambian desde el encabezado, en vivo: aplican desde el próximo turno sin reiniciar la sesión.
 - **Costo y tokens**: el encabezado muestra lo acumulado de la sesión (costo equivalente API y tokens, incluidos sus subagentes y todas las veces que se reanudó), el panel el desglose (entrada, salida, caché) y cada separador de turno los tokens de ese turno. El tablero suma los totales del proyecto. Una sesión importada trae lo que la conversación ya había gastado antes.
 
+### La terminal
+
+Cada sesión tiene su terminal, al pie del chat: se abre y se esconde con el botón del encabezado o con <kbd>Ctrl</kbd>+<kbd>`</kbd>. Es tu shell de login (la de `$SHELL`, con tu entorno), en la carpeta de la sesión. <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>Z</kbd> y el resto de las teclas son de la shell; para copiar y pegar, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> y <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> (o <kbd>Shift</kbd>+<kbd>Insert</kbd>), y en la Mac <kbd>⌘</kbd>+<kbd>C</kbd> y <kbd>⌘</kbd>+<kbd>V</kbd>. Un archivo que soltás sobre la terminal se adjunta al mensaje, como en el resto del chat.
+
+- **Sigue viva** al cambiar de sesión o recargar la página: al volver ves lo último que mostró. Se cierra con la ✕, al archivar la sesión, al apagar el server o después de una hora sin ninguna pestaña mirándola. Cerrarla corta la shell y todo lo que lanzó.
+- **Llevar a la terminal**: los bloques de código de shell en el chat (`bash`, `sh`, `zsh`, `console`, o los que empiezan con `$ `) y los comandos entre backticks de las tareas para vos tienen un botón que abre la terminal y pega el comando **sin Enter**: lo revisás y lo corrés vos. Desde una tarea va a la terminal de la sesión que la pidió (o a la de la orquestadora, si la creaste vos).
+- **Valores para completar**: si un comando dice `{{PROYECTO_GCP: el id de tu proyecto}}`, antes de pegarlo te pide ese valor (y lo recuerda para el proyecto). Con `{{NOMBRE: qué es = valor}}` viene un valor sugerido. El valor se escribe citado para que la shell lo lea como texto: espacios, comillas o `$(…)` no rompen el comando ni ejecutan nada. Las sesiones saben usar esta sintaxis.
+- **Seguridad**: la terminal es del server, no de la pestaña ni de la app de escritorio. Solo se abre con un `POST` desde el propio dashboard (Origin y Host de esta máquina, JSON) que devuelve un token, y el WebSocket exige el mismo Origin y ese token. Una página de otro sitio en tu navegador no puede abrirla ni conectarse.
+- No suma dependencias nativas: el PTY lo abre `script(1)`, que viene con Linux (util-linux) y con macOS.
+
 ### Compactación: elegí qué sobrevive
 
 El encabezado de cada sesión muestra **cuánto contexto usa** (el % y, al tocarlo, el desglose). Desde ahí, desde el menú de la sesión o escribiendo `/compact` solo, se abre **Compactar eligiendo qué queda**:

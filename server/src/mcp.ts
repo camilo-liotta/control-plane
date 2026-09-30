@@ -111,7 +111,7 @@ function buildServer(
           "Deja en el tablero del proyecto algo que necesitás que haga el usuario y no podés hacer vos (loguearse en un CLI o una web, aprobar o configurar algo en otro sistema, conseguir un dato). Mejor que pedírselo en el chat: ahí se pierde. Si ya hay una abierta para lo mismo, se suma a esa.",
         inputSchema: {
           title: z.string().min(1).describe("Qué hay que hacer, en pocas palabras (ej. \"Reautenticar gcloud\")."),
-          steps: z.array(z.string().min(1)).min(1).max(12).describe("Pasos cortos y en orden: qué abrir, qué comando correr (entre `backticks`), qué elegir. Sin explicaciones largas."),
+          steps: z.array(z.string().min(1)).min(1).max(12).describe("Pasos cortos y en orden: qué abrir, qué comando correr (entre `backticks`: el dashboard lo lleva a su terminal con un clic), qué elegir. Si el comando tiene un valor que pone el usuario, marcalo con {{NOMBRE: qué es}} o {{NOMBRE: qué es = sugerido}}, sin comillas alrededor. Sin explicaciones largas."),
           why: z.string().optional().describe("Para qué hace falta, en una línea."),
           blocking: z.boolean().optional().describe("true si estás frenado esperando esto. Cuando el usuario la marque hecha, te llega un aviso."),
           due: z.string().optional().describe("Para cuándo, si tiene fecha (ISO 8601, ej. 2026-09-30T23:40:00Z)."),
