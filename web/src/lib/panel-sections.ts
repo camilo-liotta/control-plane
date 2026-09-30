@@ -8,12 +8,15 @@ export type PanelSection =
   | "task"
   | "reports"
   | "changes"
+  | "scheduled"
   | "subagents"
   | "attachments"
   | "tools"
   | "details"
   /** El resumen de git de la vista del proyecto (igual para todos los proyectos). */
   | "project-repos"
+  /** Lo programado por las sesiones, en la vista del proyecto. */
+  | "project-scheduled"
 
 const KEY = "session-panel-open"
 

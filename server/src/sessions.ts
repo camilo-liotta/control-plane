@@ -29,6 +29,7 @@ import type {
   UserOrigin,
 } from "./shared/types.ts"
 import { withSubagents } from "./prompts.ts"
+import { Schedules, SCHEDULE_TOOLS } from "./schedule.ts"
 import { clampJson, errorMessage, now, oneLine, plainText, shortId, token, uuid } from "./util.ts"
 
 interface PendingControl {
@@ -187,6 +188,8 @@ export class SessionManager extends EventEmitter<{
   private runtimes = new Map<string, Runtime>()
   private stoppedDetail = new Map<string, string>()
   private lastTexts = new Map<string, string | null>()
+  /** Lo que programó cada sesión (crons, wakeups de /loop), armado de sus eventos. */
+  private schedules: Schedules
   /** Últimos comandos conocidos por sesión (sirven aunque esté detenida) y los de cada cuenta. */
   private commands = new Map<string, SlashCommand[]>()
   private accountCommands = new Map<string, SlashCommand[]>()
@@ -220,6 +223,7 @@ export class SessionManager extends EventEmitter<{
     this.liveElsewhere = opts.liveElsewhere
     this.meta = opts.meta
     const db = opts.db
+    this.schedules = new Schedules({ load: (id) => db.listScheduleEvents(id, SCHEDULE_TOOLS) })
     // Si el server se cortó, ninguna sesión sigue viva: arrancan como detenidas.
     for (const s of db.listSessions()) {
       if (s.status !== "stopped") db.updateSession(s.id, { status: "stopped" })
@@ -255,6 +259,12 @@ export class SessionManager extends EventEmitter<{
       subagents: rt ? this.subagentBriefs(rt) : [],
       context: rt?.context ?? rec.context,
       external: rt && !rt.proc.exited ? null : (this.external.get(rec.id) ?? null),
+      scheduled: this.schedules.list(rec.id, {
+        claudeSessionId: rec.claudeSessionId,
+        dirs: [rec.cwd, this.db.getProject(rec.projectId)?.repoPath ?? rec.cwd],
+        running: Boolean(rt && !rt.proc.exited),
+        runtimeStartedAt: rt && !rt.proc.exited ? rt.startedAt : null,
+      }),
     }
   }
 
@@ -349,6 +359,7 @@ export class SessionManager extends EventEmitter<{
   addEvent(sessionId: string, event: TimelineEvent): StoredEvent {
     const stored = this.db.insertEvent(sessionId, now(), event)
     this.hub.broadcast({ type: "event", event: stored })
+    if (this.schedules.observe(stored)) this.broadcastSession(sessionId)
     if (event.kind === "text" && !event.parent) {
       this.lastTexts.set(sessionId, event.text)
       this.broadcastSession(sessionId)

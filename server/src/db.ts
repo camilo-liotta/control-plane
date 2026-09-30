@@ -688,6 +688,27 @@ export class Db {
     return rows.reverse().map((r) => this.toStored(r))
   }
 
+  /**
+   * Los eventos que hacen falta para saber qué programó una sesión: los tool_use de las herramientas
+   * de programar, sus resultados y los mensajes que llegaron de afuera (los disparos). Solo si hubo alguno.
+   */
+  listScheduleEvents(sessionId: string, tools: string[]): StoredEvent[] {
+    const marks = tools.map(() => "?").join(", ")
+    const uses = `SELECT json_extract(data, '$.id') FROM events WHERE session_id = ? AND kind = 'tool_use' AND json_extract(data, '$.name') IN (${marks})`
+    const first = this.db.prepare(`SELECT MIN(id) AS id FROM events WHERE session_id = ? AND kind = 'tool_use' AND json_extract(data, '$.name') IN (${marks})`).get(sessionId, ...tools) as Row | undefined
+    if (!first?.id) return []
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM events WHERE session_id = ? AND id >= ? AND (
+          (kind = 'tool_use' AND json_extract(data, '$.name') IN (${marks}))
+          OR (kind = 'tool_result' AND json_extract(data, '$.toolUseId') IN (${uses}))
+          OR (kind = 'user' AND json_extract(data, '$.origin') = 'external')
+        ) ORDER BY id`
+      )
+      .all(sessionId, Number(first.id), ...tools, sessionId, ...tools) as Row[]
+    return rows.map((r) => this.toStored(r))
+  }
+
   /** Último texto de la sesión (para resúmenes en tarjetas). */
   lastText(sessionId: string): string | null {
     const r = this.db
