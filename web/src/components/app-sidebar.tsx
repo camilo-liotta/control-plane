@@ -34,7 +34,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { UsageMeter } from "@/components/usage-meter"
-import { inDesktop, requestNotifications, setOsNotificationsEnabled, systemNotification, useNotifications } from "@/lib/notify"
+import { inDesktop, requestNotifications, setOsNotificationsEnabled, systemNotification, trayIconPlace, useNotifications } from "@/lib/notify"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
@@ -188,7 +188,7 @@ function DesktopNotificationsMenu() {
           <p className="text-sm font-medium">Avisos del sistema</p>
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             Los manda la app de escritorio cuando una sesión te necesita, hay propuestas listas o algo va a compactarse.
-            Los prendés o apagás desde el menú del ícono de la bandeja, en Avisos.
+            Los prendés o apagás desde {trayIconPlace()} → Avisos.
           </p>
         </div>
       </PopoverContent>

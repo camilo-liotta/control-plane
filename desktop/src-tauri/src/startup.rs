@@ -25,7 +25,7 @@ pub const USAGE: &str = "\
 control-plane: el dashboard de control-plane en una ventana propia.
 
   control-plane-desktop                       abre la app (o trae al frente la que está abierta)
-  control-plane-desktop --hidden              la abre escondida, solo en la bandeja
+  control-plane-desktop --hidden              la abre escondida: solo el ícono, sin ventana
   control-plane-desktop --quit                sale como con \"Salir\" (según \"Al salir\")
   control-plane-desktop --quit --keep-server  sale sin preguntar y deja el server corriendo
   control-plane-desktop --help                esta ayuda
@@ -153,7 +153,7 @@ pub mod linux_autostart {
             "[Desktop Entry]\n\
              Type=Application\n\
              Name=control-plane\n\
-             Comment=Abre control-plane escondida, solo en la bandeja\n\
+             Comment=Abre control-plane escondida, solo con su ícono en la barra de arriba\n\
              Exec={}\n\
              Icon=control-plane-desktop\n\
              Terminal=false\n\

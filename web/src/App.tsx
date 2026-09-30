@@ -21,6 +21,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { useCurrentAccount, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
+import { trayIconPlace } from "@/lib/notify"
 import { connect } from "@/lib/ws"
 import { Home } from "@/pages/home"
 import { ProjectBoard } from "@/pages/project-board"
@@ -122,7 +123,7 @@ function ConnectionBanner() {
 
 const UPDATE_DISMISSED_KEY = "control-plane:update-dismissed"
 
-/** La app de escritorio avisa que hay una versión nueva. Solo informa: se actualiza desde la bandeja. */
+/** La app de escritorio avisa que hay una versión nueva. Solo informa: se actualiza desde el menú del ícono. */
 function UpdateBanner() {
   const update = useUi((s) => s.desktopUpdate)
   const [dismissed, setDismissed] = useState(() => {
@@ -144,7 +145,7 @@ function UpdateBanner() {
   return (
     <div className="flex items-center justify-center gap-3 border-b border-status-working/30 bg-status-working/10 px-4 py-1.5 text-xs">
       <span>
-        Hay una versión nueva (v{update.version}). Actualizala desde la bandeja → Actualizar.{" "}
+        Hay una versión nueva (v{update.version}). Actualizala desde {trayIconPlace()} → Actualizar a v{update.version}.{" "}
         <a href={update.notesUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">
           Qué trae
         </a>

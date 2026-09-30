@@ -28,13 +28,13 @@ npm start
 
 `npm start` compila la web y levanta el server en **http://127.0.0.1:4700**. Las sesiones viven mientras el server esté corriendo; si lo cerrás, quedan detenidas y se reanudan (con `claude --resume`) cuando les volvés a escribir.
 
-Si preferís una ventana propia con bandeja y avisos nativos, está la [app de escritorio](#app-de-escritorio).
+Si preferís una ventana propia con un ícono en la barra del sistema y avisos nativos, está la [app de escritorio](#app-de-escritorio).
 
 Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga en **http://localhost:4701**). Tests del server: `npm test`.
 
 ## App de escritorio
 
-Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la barra de menú (macOS), avisos nativos y arranque al iniciar sesión. Por dentro es el mismo server de siempre: la app lo lanza, o usa el que ya tengas corriendo, y abre su página en `127.0.0.1`.
+Una ventana propia para el dashboard, con un ícono en la barra de arriba (Linux) o en la barra de menú (macOS), avisos nativos y arranque al iniciar sesión. Por dentro es el mismo server de siempre: la app lo lanza, o usa el que ya tengas corriendo, y abre su página en `127.0.0.1`.
 
 - Linux (Ubuntu) y macOS. Windows no.
 - Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
@@ -67,7 +67,7 @@ git pull && npm run app:install
   - En Linux se instala el `.deb` con `sudo apt install`.
 - Antes revisa lo que hace falta (Node 24, Rust, y las herramientas de Xcode en la Mac o las librerías de Tauri en Linux). Si falta algo, te dice cómo instalarlo o te pregunta si lo instala.
 - **Actualizar no corta las sesiones**: si la app está abierta, la cierra dejando el server corriendo (`--quit --keep-server`, sin preguntar y sin tocar tu ajuste de **Al salir**), instala la nueva y la vuelve a abrir, y esa adopta el mismo server.
-  - La primera vez que actualizás en Linux una app instalada antes de este cambio, no la cierra, porque esa versión no sabe salir dejando el server. Reiniciala vos una vez: bandeja → Al salir ▸ "Dejarlo corriendo" → Salir, y abrila de nuevo. En la Mac, esa primera vez la cierra como desde el Dock, que también deja el server.
+  - La primera vez que actualizás en Linux una app instalada antes de este cambio, no la cierra, porque esa versión no sabe salir dejando el server. Reiniciala vos una vez: menú del ícono → Al salir ▸ "Dejarlo corriendo" → Salir, y abrila de nuevo. En la Mac, esa primera vez la cierra como desde el Dock, que también deja el server.
 - `npm run app:install -- --dry-run` muestra lo que haría sin tocar nada. `-- --no-install` compila y deja el paquete sin instalarlo.
 - Si falla, el detalle de la compilación queda en `/tmp/control-plane-install.log` (o en `$TMPDIR` en la Mac).
 
@@ -131,30 +131,32 @@ Si el server se cae:
 - **El que lanzó la app**: avisa siempre. Lo relanza solo si había andado más de un minuto, y como mucho 3 veces cada 5 minutos.
 - **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzarlo** y **Reintentar**. La app no lo relanza sola.
 
-**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde la bandeja.
+**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde el menú del ícono.
 
 ### Salir
 
-Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde una terminal en Linux: `control-plane-desktop --quit` si la instalaste con el `.deb`, o el propio `.AppImage` con `--quit`:
+Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde una terminal en Linux: `control-plane-desktop --quit` si la instalaste con el `.deb`, o el propio `.AppImage` con `--quit`:
 
 - Si el server no lo lanzó la app, sale sin tocarlo.
-- Si lo lanzó ella, hace lo que diga **Al salir ▸** en la bandeja:
+- Si lo lanzó ella, hace lo que diga **Al salir ▸** en el menú del ícono:
   - **Preguntar** (el default): "Hay N sesiones abiertas: detener el server las cierra (se reanudan después)", con **Detener y salir**, **Dejarlo corriendo** y **Cancelar**.
-  - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en la bandeja.
+  - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en el menú del ícono.
   - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
 - `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia). Es lo que usa `npm run app:install` para actualizar sin cortar las sesiones.
 - Al apagar el equipo o cerrar la sesión no pregunta: el sistema le avisa al server y se cierra ordenado.
-- **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o la barra de menú.
+- **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o el menú del ícono.
 
-### La bandeja
+### El ícono de la barra
+
+El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú (Mac). Acá le decimos **el menú del ícono**, para no confundirlo con la **Bandeja** de la web.
 
 - La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va cuántas cosas te necesitan. Cuando algo te necesita, el ícono lleva un punto.
-- El menú: **Abrir**, **Bandeja**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
+- El menú: **Abrir**, **Abrir la Bandeja** (la de la web), **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
 - En GNOME hace falta la extensión AppIndicator, que Ubuntu trae activada.
 
 ### Avisos y sonidos
 
-- Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en bandeja → **Avisos**.
+- Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en el menú del ícono → **Avisos**.
 - Si tenés el dashboard abierto también en una pestaña, esa pestaña deja de mandar los suyos mientras la app está conectada, así no se duplican.
 - En Linux los avisos nativos piden no sonar (`suppress-sound`): el sonido lo pone la página, así no suenan dos.
 - Los [sonidos](#sonidos) siguen saliendo de la página y se configuran con el parlante de la barra lateral. **Avisos** no los apaga. Dentro de la app esa configuración es propia, aparte de la del navegador.
@@ -162,11 +164,11 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
 ### Actualizaciones
 
 - **Cómo busca**: al abrir y después una vez por día, la app le pregunta a GitHub cuál es el último release publicado de este repo (no mira borradores ni prereleases) y lo compara con su versión. Usa el `curl` del sistema, no manda ningún dato tuyo (solo un User-Agent con la versión) y, si no hay red o GitHub no contesta, no dice nada y prueba al día siguiente.
-- **Se apaga** en bandeja → **Buscar actualizaciones**. Apagado, no consulta nada.
+- **Se apaga** en el menú del ícono → **Buscar actualizaciones**. Apagado, no consulta nada.
 - **Cuando hay una versión nueva**:
-  - En la bandeja aparece **Actualizar a vX.Y.Z**.
+  - En el menú del ícono aparece **Actualizar a vX.Y.Z**.
   - Llega un solo aviso del sistema por versión, y tocarlo actualiza.
-  - En el dashboard aparece un cartel con un link a las notas. Solo informa: desde la página no se puede actualizar.
+  - En el dashboard aparece un cartel que dice dónde está **Actualizar a vX.Y.Z** (el ícono de control-plane en la barra de arriba, o en la barra de menú en la Mac), con un link a las notas. Solo informa: desde la página no se puede actualizar.
 - **Al actualizar**, la app lanza el instalador que vino con ella (`get.sh`), aparte de sí misma:
   1. Baja el paquete del release y lo verifica contra `SHA256SUMS`. Si no coincide, no instala nada.
   2. Instala.
@@ -174,7 +176,7 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
   - En Linux, el `.deb` necesita permisos de administrador: **el sistema te pide la contraseña** con su diálogo (`pkexec`). Si lo cancelás, no se instala nada y la app sigue como estaba.
   - Un AppImage se reemplaza en su lugar, sin contraseña.
   - En la Mac se reemplaza la `.app` que tenés abierta.
-- Si algo falla, llega un aviso con el motivo (tocalo para ver el log, `update.log` en la carpeta de logs), y la app vieja sigue andando. Mientras actualiza, la bandeja dice **Actualizando…**.
+- Si algo falla, llega un aviso con el motivo (tocalo para ver el log, `update.log` en la carpeta de logs), y la app vieja sigue andando. Mientras actualiza, el menú del ícono dice **Actualizando…**.
 
 ### Pantallas de error
 
@@ -194,7 +196,7 @@ Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
 
 ### Log y ajustes
 
-- **Log del server**: bandeja → **Ver log del server**, o **Ver log** en las pantallas de error. Pasados los 5 MB rota a `.1`.
+- **Log del server**: menú del ícono → **Ver log del server**, o **Ver log** en las pantallas de error. Pasados los 5 MB rota a `.1`.
   - Linux: `~/.local/share/app.control-plane.desktop/logs/server-<puerto>.log`
   - Mac: `~/Library/Logs/app.control-plane.desktop/server-<puerto>.log`
 - **Ajustes**: `settings.json`, en `~/.config/app.control-plane.desktop/` (Linux) o `~/Library/Application Support/app.control-plane.desktop/` (Mac). Los campos:
@@ -228,7 +230,7 @@ Atajos: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> para saltar a cualquier se
 
 ### Sonidos
 
-El parlante, al lado de la campana, configura los **sonidos de la bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), todos suaves, elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
+El parlante, al lado de la campana, configura los **sonidos de la Bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), todos suaves, elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
 
 ### Tareas para vos
 
@@ -454,7 +456,7 @@ El estado del dashboard es local de cada máquina: el repo solo tiene el código
 - **Puerto ocupado**: `CONTROL_PLANE_PORT=4800 npm start`.
 - **"Ya hay un control-plane usando esta carpeta de datos"**: cada server toma `server.lock` en `CONTROL_PLANE_HOME` para que no haya dos sobre la misma base. Detené el otro (el mensaje dice su puerto y su pid) o usá otra carpeta. Si el server anterior se cortó de golpe, el lock viejo se toma solo.
 - **Los avisos del sistema no aparecen**: tocá la campana (abajo en la barra lateral). Ahí ves si el navegador los permite, los prendés o apagás y mandás uno de prueba. Si están bloqueados, se habilitan desde el ícono a la izquierda de la dirección → Notificaciones → Permitir. Si igual no llegan, revisá que tu navegador tenga permiso en los ajustes de notificaciones del sistema. Solo aparecen cuando no estás mirando el dashboard (si no, ves el aviso adentro).
-- **La app de escritorio muestra una pantalla de error**: cada una dice qué pasó y qué hacer; están todas en [Pantallas de error](#pantallas-de-error). El log del server está en bandeja → Ver log del server.
+- **La app de escritorio muestra una pantalla de error**: cada una dice qué pasó y qué hacer; están todas en [Pantallas de error](#pantallas-de-error). El log del server está en el menú del ícono → Ver log del server.
 - **`npm ci` falla o se saltea las devDependencies en una terminal abierta desde el dashboard**: las sesiones que lanza el dashboard heredan `NODE_ENV=production` y `npm_config_allow_scripts` del `npm start`. Instalá con `env -u NODE_ENV -u npm_config_allow_scripts npm ci`.
 - **Una cuenta figura "Sin login" pero en la terminal anda**: el directorio tiene que ser exactamente el que usa tu comando. `alias claude-personal` (o `type claude-personal`) te muestra cuál es.
 
@@ -477,15 +479,15 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/prompts.ts        protocolo de orquestadora y workers
   src/http.ts           chequeo de host/origen, /api/health y /ws
   src/lock.ts           lock de la carpeta de datos (un server por base)
-  src/desktop.ts        resumen para la bandeja de la app de escritorio
+  src/desktop.ts        resumen para el ícono de la app de escritorio
 web/      Vite + React + Tailwind + shadcn/ui
-desktop/  Tauri v2: ventana, sidecar del server, bandeja y avisos
+desktop/  Tauri v2: ventana, sidecar del server, ícono de la barra y avisos
   ui/                   pantallas locales (cargando y errores)
   src-tauri/src/window.rs, screen.rs     ventana, puerto y pantallas
   src-tauri/src/sidecar.rs, policy.rs    lanzar, adoptar, supervisar y detener el server
   src-tauri/src/health.rs, server_state.rs, server_log.rs  reconocer el server, su estado y su log
   src-tauri/src/login_env.rs, launch_env.rs, node.rs      entorno de la shell de login, node y claude
-  src-tauri/src/desktop_ws.rs, tray.rs, notify.rs         WS de escritorio, bandeja y avisos nativos
+  src-tauri/src/desktop_ws.rs, tray.rs, notify.rs         WS de escritorio, ícono de la barra y avisos nativos
   src-tauri/src/startup.rs, settings.rs  instancia única, inicio automático y ajustes
   src-tauri/src/app_menu.rs, macos.rs    menú y apagado del sistema en la Mac
 ```

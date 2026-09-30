@@ -278,7 +278,7 @@ else
     fi
   elif app_pids >/dev/null 2>&1; then
     say "La app sigue abierta con la versión anterior hasta que la reinicies. Para pasar a la nueva"
-    say "sin cortar las sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a"
+    say "sin cortar las sesiones: menú del ícono → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a"
     say "abrirla desde el lanzador (adopta el mismo server)."
   fi
 fi
@@ -292,5 +292,5 @@ elif [[ -n "$TEST_BIN" ]]; then
   say "Modo prueba terminado: no se instaló nada."
 else
   say "control-plane $VERSION instalada en $WHERE."
-  say "Si algo falla, el detalle de la compilación está en $LOG; el de la app, en \"Ver log del server\" de la bandeja."
+  say "Si algo falla, el detalle de la compilación está en $LOG; el de la app, en \"Ver log del server\" del menú del ícono."
 fi
