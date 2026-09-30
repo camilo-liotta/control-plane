@@ -5,6 +5,7 @@ import { useLocation } from "wouter"
 import type { Project, ProjectOverview, RepoInfo } from "@shared/types"
 
 import { GithubMark } from "@/components/github-mark"
+import { ProjectScheduled } from "@/components/scheduled"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -222,10 +223,12 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
     return list.sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0] ?? null
   }, [sessions, project.id])
 
+  const projectSessionsList = useMemo(() => Object.values(sessions).filter((s) => s.projectId === project.id && !s.archivedAt), [sessions, project.id])
   const t = data?.tokens
   return (
     <section className="rounded-xl border bg-card">
       <Repos data={data} />
+      <ProjectScheduled sessions={projectSessionsList} />
       <div className="grid divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <Stat
           label="Tokens del proyecto"

@@ -163,6 +163,8 @@ export interface Session {
   context: ContextUsage | null
   /** La conversación está abierta fuera del dashboard (en una terminal o en segundo plano). */
   external: ExternalSession | null
+  /** Lo que programó para más tarde (crons, wakeups de /loop, rutinas): lo activo y lo reciente. */
+  scheduled: ScheduledItem[]
 }
 
 export interface RepoInfo {
@@ -235,6 +237,38 @@ export interface EditorSettings {
   kind: EditorKind
   /** Comando propio: `{file}`, `{base}` (la versión anterior) y `{dir}` se reemplazan. */
   command: string
+}
+
+/**
+ * Algo que una sesión programó para más tarde: un cron (`CronCreate`), un "despertame" de `/loop`
+ * (`ScheduleWakeup`) o una rutina en la nube (`RemoteTrigger`, no corre en esta máquina).
+ */
+export interface ScheduledItem {
+  /** El id del job de Claude Code (o el del tool_use, en los wakeups). */
+  id: string
+  kind: "cron" | "wakeup" | "routine"
+  cron: string | null
+  /** Cuándo corre, en palabras ("todos los días a las 9:00"). */
+  when: string
+  prompt: string
+  /** El motivo de un wakeup de `/loop`. */
+  reason: string | null
+  recurring: boolean
+  /** Persistido en `.claude/scheduled_tasks.json`: sobrevive a que se cierre la sesión. */
+  durable: boolean
+  createdAt: number
+  /** Próxima ejecución (hora de esta máquina); null si ya no va a correr o no se sabe. */
+  nextAt: number | null
+  lastFiredAt: number | null
+  fires: number
+  /**
+   * active: va a correr · done: ya corrió (una vez) · cancelled: la borró (CronDelete) ·
+   * expired: recurrente con más de 7 días · lost: era de la sesión y el proceso terminó ·
+   * missed: le llegó la hora sin que corriera.
+   */
+  status: "active" | "done" | "cancelled" | "expired" | "lost" | "missed"
+  /** Activa pero frenada: la sesión está detenida y no corre hasta que vuelva a arrancar. */
+  paused: boolean
 }
 
 export interface TurnProgress {

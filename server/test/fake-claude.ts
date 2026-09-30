@@ -8,7 +8,8 @@ import path from "node:path"
  * - con FAKE_FULL=1 la conversación "no entra": los mensajes terminan en blocking_limit hasta un /compact;
  * - /clear sigue con una conversación nueva que arranca sus totales de cero (como el de verdad);
  * - con FAKE_NO_COMPACT=1, /compact contesta "No messages to compact" sin compactar;
- * - `--version` contesta una versión y los otros subcomandos (auth status, agents) salen sin nada.
+ * - `--version` contesta una versión y los otros subcomandos (auth status, agents) salen sin nada;
+ * - "CRON …", "CRONDEL …", "WAKEUP …" y "FIRE …" programan, cancelan y disparan tareas (ver el script).
  */
 const SCRIPT = String.raw`#!/usr/bin/env node
 import fs from "node:fs"
@@ -85,6 +86,56 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   if (full) {
     say("Prompt is too long")
     result({ is_error: true, result: "Prompt is too long", terminal_reason: "blocking_limit", errors: [] })
+    continue
+  }
+  // Programar para más tarde, con la forma que tienen en el stream de Claude Code:
+  //   "CRON <cron>|<recurrente 1/0>|<durable 1/0>|<prompt>", "CRONDEL <id>", "WAKEUP <segundos>|<motivo>",
+  //   "FIRE <prompt>" (un cron que se dispara: su prompt vuelve como mensaje de usuario).
+  const tool = (name, input, content, structured) => {
+    const id = "toolu_" + Math.random().toString(36).slice(2, 10)
+    out({ type: "assistant", message: { id: "m" + Math.random(), role: "assistant", content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: null })
+    out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] }, parent_tool_use_id: null, tool_use_result: structured })
+  }
+  if (text.startsWith("CRON ")) {
+    const [cron, rec, dur, ...rest] = text.slice(5).split("|")
+    const prompt = rest.join("|")
+    const jobId = Math.random().toString(16).slice(2, 10).padEnd(8, "0")
+    const recurring = rec !== "0"
+    const durable = dur === "1"
+    if (durable) {
+      const f = path.join(process.cwd(), ".claude", "scheduled_tasks.json")
+      let tasks = []
+      try { tasks = JSON.parse(fs.readFileSync(f, "utf8")).tasks } catch {}
+      tasks.push({ id: jobId, cron, prompt, createdAt: Date.now(), ...(recurring ? { recurring: true } : {}), createdBySessionId: sid, createdByPid: process.pid, createdInProject: process.cwd() })
+      fs.mkdirSync(path.dirname(f), { recursive: true })
+      fs.writeFileSync(f, JSON.stringify({ tasks }, null, 2) + "\n")
+    }
+    tool("CronCreate", { cron, prompt, recurring, ...(durable ? { durable: true } : {}) },
+      "Scheduled " + (recurring ? "recurring" : "one-shot") + " job " + jobId + " (" + cron + "). " + (durable ? "Persisted to .claude/scheduled_tasks.json." : "Session-only (not written to disk, dies when Claude exits)."),
+      { id: jobId, humanSchedule: cron, recurring, durable })
+    say("Programado: " + jobId)
+    result({})
+    continue
+  }
+  if (text.startsWith("FIRE ")) {
+    out({ type: "user", message: { role: "user", content: text.slice(5) }, isReplay: true, uuid: "fire-" + Math.random().toString(36).slice(2) })
+    say("Corrió lo programado.")
+    result({})
+    continue
+  }
+  if (text.startsWith("CRONDEL ")) {
+    const jobId = text.slice(8).trim()
+    tool("CronDelete", { id: jobId }, "Cancelled job " + jobId + ".", { id: jobId })
+    result({})
+    continue
+  }
+  if (text.startsWith("WAKEUP ")) {
+    const [secs, reason] = text.slice(7).split("|")
+    const at = Date.now() + Number(secs) * 1000
+    tool("ScheduleWakeup", { delaySeconds: Number(secs), reason, prompt: "<<autonomous-loop-dynamic>>" },
+      "Next wakeup scheduled for " + new Date(at).toTimeString().slice(0, 8) + " (in " + secs + "s).",
+      { scheduledFor: at, clampedDelaySeconds: Number(secs), wasClamped: false })
+    result({})
     continue
   }
   usd += 0.25

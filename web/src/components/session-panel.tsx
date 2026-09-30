@@ -9,6 +9,7 @@ import { DraftCard } from "@/components/draft-card"
 import { Section } from "@/components/panel-section"
 import { ReportCard } from "@/components/report-card"
 import { ReviewGate } from "@/components/review-gate"
+import { SessionScheduled } from "@/components/scheduled"
 import { ChangesSection } from "@/components/session-changes"
 import { api } from "@/lib/api"
 import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
@@ -169,6 +170,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
         </>
       )}
       <ChangesSection session={session} />
+      <SessionScheduled session={session} />
       {hasSubagents && (
         <Section id="subagents" title="Subagentes" count={session.subagentsRunning || undefined} summary={session.subagentsRunning ? "trabajando" : undefined}>
           <SubagentList sessionId={session.id} events={events ?? []} limit={12} />

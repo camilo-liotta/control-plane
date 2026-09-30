@@ -365,6 +365,18 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       })
   )
 
+  // Lo programado por todas las sesiones del proyecto (también viaja en cada sesión, por WS).
+  app.get<{ Params: { id: string } }>("/api/projects/:id/scheduled", (req, reply) =>
+    guard(reply, () => {
+      const p = requireProject(req.params.id)
+      return sessions
+        .list()
+        .filter((s) => s.projectId === p.id && !s.archivedAt)
+        .flatMap((s) => s.scheduled.map((item) => ({ ...item, sessionId: s.id, sessionName: s.name })))
+        .sort((a, b) => (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity))
+    })
+  )
+
   app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>("/api/projects/:id/overview", (req, reply) =>
     guard(reply, () => overview.get(requireProject(req.params.id).id, req.query.refresh === "1"))
   )
