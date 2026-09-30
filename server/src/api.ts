@@ -365,6 +365,15 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       })
   )
 
+  // Pedirle a una sesión que cancele algo que programó (lo cancela ella, con sus herramientas).
+  app.post<{ Params: { id: string; itemId: string }; Body: { clientId?: string } }>("/api/sessions/:id/scheduled/:itemId/cancel", (req, reply) =>
+    guard(reply, () => {
+      const s = requireSession(req.params.id)
+      const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.slice(0, 100) : undefined
+      return sessions.requestCancelScheduled(s.id, req.params.itemId, clientId)
+    })
+  )
+
   // Lo programado por todas las sesiones del proyecto (también viaja en cada sesión, por WS).
   app.get<{ Params: { id: string } }>("/api/projects/:id/scheduled", (req, reply) =>
     guard(reply, () => {

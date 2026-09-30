@@ -117,6 +117,28 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     result({})
     continue
   }
+  // El pedido de cancelar del panel "Programado". Con "TERCA" en el nombre de la sesión no lo hace;
+  // con "LENTA", tarda FAKE_CANCEL_DELAY_MS (15 s si no está) en hacerlo.
+  if (text.startsWith('Pedido del usuario desde el panel "Programado":')) {
+    const name = flag("--name") ?? ""
+    if (name.includes("LENTA")) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_CANCEL_DELAY_MS ?? 15000)))
+    if (name.includes("TERCA")) {
+      say("Prefiero no cancelarla todavía: la necesito para revisar el deploy.")
+    } else if (text.includes("CronDelete")) {
+      const jobId = (/\x60([^\x60]+)\x60/.exec(text) ?? [])[1] ?? ""
+      tool("CronDelete", { id: jobId }, "Cancelled job " + jobId + ".", { id: jobId })
+      say("Listo, la cancelé.")
+    } else if (text.includes("ScheduleWakeup")) {
+      tool("ScheduleWakeup", { stop: true }, "Loop stopped — cancelled 1 pending wakeup(s).", { scheduledFor: 0, clampedDelaySeconds: 0, wasClamped: false, stopped: true, cancelledWakeups: 1 })
+      say("Corté el loop.")
+    } else if (text.includes("RemoteTrigger")) {
+      const trigger = (/\x60([^\x60]+)\x60/.exec(text) ?? [])[1] ?? ""
+      tool("RemoteTrigger", { action: "update", trigger_id: trigger, body: { enabled: false } }, "HTTP 200\n" + JSON.stringify({ trigger: { id: trigger, enabled: false } }))
+      say("Apagué la rutina.")
+    }
+    result({})
+    continue
+  }
   if (text.startsWith("FIRE ")) {
     out({ type: "user", message: { role: "user", content: text.slice(5) }, isReplay: true, uuid: "fire-" + Math.random().toString(36).slice(2) })
     say("Corrió lo programado.")
