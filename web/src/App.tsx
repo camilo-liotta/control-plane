@@ -17,6 +17,7 @@ import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { CompactionSheet } from "@/components/compaction-sheet"
 import { SubagentSheet } from "@/components/subagent-sheet"
 import { SessionToolsSheet } from "@/components/tools/session-tools-sheet"
+import { UpdateFailureDialog } from "@/components/update-failure-dialog"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { useCurrentAccount, useStore } from "@/lib/store"
@@ -70,6 +71,7 @@ function Dialogs() {
       <Lightbox />
       <AccountsDialog />
       <ClaudeSettingsDialog />
+      <UpdateFailureDialog />
     </>
   )
 }

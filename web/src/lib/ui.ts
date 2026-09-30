@@ -30,6 +30,8 @@ interface UiState {
   reveal: { kind: "proposals" | "tasks"; id: string; at: number } | null
   /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde el menú de su ícono). */
   desktopUpdate: { version: string; notesUrl: string } | null
+  /** La actualización de la app falló: el motivo y lo último de su log (para "Ver log"). */
+  updateFailure: { version: string; error: string; logPath: string; log: string } | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
   selectAccount: (id: string) => void
 }
@@ -61,6 +63,7 @@ export const useUi = create<UiState>((set) => ({
   toolsFor: null,
   reveal: null,
   desktopUpdate: null,
+  updateFailure: null,
   set: (patch) => set(patch),
   selectAccount: (id) => {
     try {

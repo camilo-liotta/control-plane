@@ -14,8 +14,10 @@
 //!   `--quit --keep-server`, instala y la vuelve a abrir. Las sesiones siguen.
 //! - Nada de esto se puede disparar desde el dashboard: la web solo recibe un cartel informativo.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -26,6 +28,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::desktop_ws::{Local, Toast};
+use crate::launch_env::LaunchEnv;
 use crate::AppState;
 
 /// De dónde salen las versiones. Un fork lo cambia acá.
@@ -341,6 +344,37 @@ fn push_banner<R: Runtime>(app: &AppHandle<R>, v: Version) {
     }
 }
 
+/// Cuántas líneas del log le llegan a la web (lo último, que es donde está el motivo).
+const LOG_TAIL_LINES: usize = 40;
+
+fn log_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(LOG_TAIL_LINES)..].join("\n")
+}
+
+/// El JS que le cuenta a la página que la actualización falló (el motivo, dónde está el log y lo
+/// último que dice). Va como JSON: el texto del log nunca se interpreta como código.
+pub fn failure_script(v: Version, why: &str, log: &Path, tail: &str) -> String {
+    let info = serde_json::json!({
+        "version": v.to_string(),
+        "error": why,
+        "logPath": log.to_string_lossy(),
+        "log": tail,
+    });
+    let json = info
+        .to_string()
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    format!("window.__cpDesktop?.updateFailed?.({json})")
+}
+
+/// Además del aviso del sistema, la página lo muestra como toast (con "Ver log").
+fn push_failure<R: Runtime>(app: &AppHandle<R>, v: Version, why: &str, log: &Path, tail: &str) {
+    if let Some(w) = app.get_webview_window(crate::window::MAIN) {
+        let _ = w.eval(failure_script(v, why, log, tail));
+    }
+}
+
 /// Cada vez que carga la página del dashboard, si hay una versión nueva, se le vuelve a avisar.
 pub fn on_page_load<R: Runtime>(app: &AppHandle<R>) {
     if let Some(Status::Available(v)) = app.try_state::<Updater>().map(|u| u.status()) {
@@ -410,6 +444,8 @@ fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
     show(app, Status::Available(v));
     if let Err(why) = result {
         eprintln!("No pude actualizar a v{v}: {why}");
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        push_failure(app, v, &why, &log, &log_tail(&text));
         crate::notify::handle(
             app,
             Toast {
@@ -421,6 +457,39 @@ fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
             },
         );
     }
+}
+
+/// Lo que la app le suma al server para lanzarlo, y que el instalador no tiene que heredar.
+const NOT_FOR_INSTALLER: &[&str] = &[
+    "NODE_ENV",
+    "npm_config_allow_scripts",
+    "CONTROL_PLANE_HOST",
+    "CONTROL_PLANE_LAUNCH_ID",
+    "CONTROL_PLANE_WEB_DIST",
+    "CONTROL_PLANE_COMPACT_HOOK",
+];
+
+/// El entorno del instalador: el mismo que el server (el de la app sin lo de Claude Code, lo de la
+/// shell de login y el PATH combinado), sin lo propio del server, y con el `node` que ya resolvió
+/// la app en `CONTROL_PLANE_NODE`. Abierta desde el lanzador, la app no tiene el PATH de tu shell:
+/// sin esto, `get.sh` no veía el node de nvm. Lo gráfico (`DISPLAY`, `WAYLAND_DISPLAY`,
+/// `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR`), que pkexec y su agente necesitan, viene de la app.
+pub fn installer_env(
+    server_env: &BTreeMap<String, String>,
+    node: Option<&Path>,
+) -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = server_env
+        .iter()
+        .filter(|(k, _)| !NOT_FOR_INSTALLER.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if let Some(node) = node {
+        env.insert(
+            "CONTROL_PLANE_NODE".into(),
+            node.to_string_lossy().into_owned(),
+        );
+    }
+    env
 }
 
 fn spawn_installer<R: Runtime>(
@@ -438,7 +507,14 @@ fn spawn_installer<R: Runtime>(
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let out = std::fs::File::create(log).map_err(|e| e.to_string())?;
+    let launch = LaunchEnv::prepare(&app.state::<AppState>().settings());
+    let env = installer_env(
+        &launch.server_env,
+        launch.node.as_ref().ok().map(|n| n.path.as_path()),
+    );
+    let mut out = std::fs::File::create(log).map_err(|e| e.to_string())?;
+    // Primero, con qué entorno corre (sin valores de variables): si no encuentra algo, se ve acá.
+    let _ = writeln!(out, "{}", launch.summary());
     let err = out.try_clone().map_err(|e| e.to_string())?;
     let args = installer_args(&script, v, std::process::id(), &install_kind(app));
     eprintln!(
@@ -451,7 +527,8 @@ fn spawn_installer<R: Runtime>(
         .stdin(Stdio::null())
         .stdout(out)
         .stderr(err)
-        .env_remove("NODE_ENV");
+        .env_clear()
+        .envs(&env);
     if let Some((k, v)) = installer_locale() {
         cmd.env(k, v);
     }
@@ -476,6 +553,89 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn installer_env_has_the_login_path_and_the_node_and_nothing_internal() {
+        use crate::login_env::{server_env, LoginEnv};
+        let app_env = [
+            ("PATH", "/usr/bin:/bin"),
+            ("HOME", "/home/u"),
+            ("DISPLAY", ":0"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("NODE_ENV", "production"),
+            ("CLAUDECODE", "1"),
+            ("CONTROL_PLANE_LAUNCH_ID", "abc"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        let login = LoginEnv {
+            shell: "/bin/bash".into(),
+            elapsed: Duration::ZERO,
+            vars: [(
+                "PATH".to_string(),
+                "/home/u/.nvm/versions/node/v24.1.0/bin:/usr/bin".to_string(),
+            )]
+            .into(),
+            error: None,
+        };
+        let path =
+            crate::login_env::merge_path(login.get("PATH"), Some("/usr/bin:/bin"), &[], |_| true);
+        let server = server_env(app_env, &login, &path);
+        let node = Path::new("/home/u/.nvm/versions/node/v24.1.0/bin/node");
+        let env = installer_env(&server, Some(node));
+        assert_eq!(
+            env["PATH"], "/home/u/.nvm/versions/node/v24.1.0/bin:/usr/bin:/bin",
+            "el PATH de la shell de login, primero"
+        );
+        assert_eq!(env["CONTROL_PLANE_NODE"], node.to_string_lossy());
+        for keep in [
+            "HOME",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "XDG_RUNTIME_DIR",
+        ] {
+            assert!(
+                env.contains_key(keep),
+                "falta {keep} (pkexec y su agente lo necesitan)"
+            );
+        }
+        for gone in ["NODE_ENV", "CLAUDECODE", "CONTROL_PLANE_LAUNCH_ID"] {
+            assert!(!env.contains_key(gone), "{gone} no es para el instalador");
+        }
+        assert!(!installer_env(&server, None).contains_key("CONTROL_PLANE_NODE"));
+    }
+
+    #[test]
+    fn failure_reaches_the_page_as_json() {
+        let js = failure_script(
+            Version(0, 3, 2),
+            "No encuentro Node.",
+            Path::new("/home/u/.local/share/x/logs/update.log"),
+            "línea 1\n✗ No encuentro Node. \")</script>\u{2028}",
+        );
+        let json = js
+            .strip_prefix("window.__cpDesktop?.updateFailed?.(")
+            .and_then(|r| r.strip_suffix(')'))
+            .expect("la llamada");
+        assert!(!json.contains('\u{2028}'));
+        let v: serde_json::Value = serde_json::from_str(json).expect("JSON");
+        assert_eq!(v["version"], "0.3.2");
+        assert_eq!(v["error"], "No encuentro Node.");
+        assert_eq!(v["logPath"], "/home/u/.local/share/x/logs/update.log");
+        assert!(v["log"].as_str().unwrap().ends_with("</script>\u{2028}"));
+    }
+
+    #[test]
+    fn log_tail_keeps_the_last_lines() {
+        let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
+        let tail = log_tail(&text);
+        assert!(
+            tail.starts_with("l61\n") && tail.ends_with("l100"),
+            "{tail}"
+        );
+    }
 
     #[test]
     fn installer_runs_with_c_locale_on_the_mac() {

@@ -176,7 +176,8 @@ El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú 
   - En Linux, el `.deb` necesita permisos de administrador: **el sistema te pide la contraseña** con su diálogo (`pkexec`). Si lo cancelás, no se instala nada y la app sigue como estaba.
   - Un AppImage se reemplaza en su lugar, sin contraseña.
   - En la Mac se reemplaza la `.app` que tenés abierta.
-- Si algo falla, llega un aviso con el motivo (tocalo para ver el log, `update.log` en la carpeta de logs), y la app vieja sigue andando. Mientras actualiza, el menú del ícono dice **Actualizando…**.
+  - El instalador corre con el mismo entorno que el server: el PATH de tu shell de login y el `node` que encontró la app (en `CONTROL_PLANE_NODE`). Así encuentra el Node de nvm, Volta o Homebrew aunque hayas abierto la app desde el lanzador. Sin eso, busca en las mismas rutas de respaldo que la app.
+- Si algo falla, llega un aviso del sistema con el motivo, aunque tengas la ventana al frente (tocalo para ver el log, `update.log` en la carpeta de logs). En el dashboard aparece además un toast con **Ver log**, que muestra lo último del log. La app vieja sigue andando. Mientras actualiza, el menú del ícono dice **Actualizando…**.
 
 ### Pantallas de error
 
