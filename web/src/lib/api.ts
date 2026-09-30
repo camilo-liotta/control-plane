@@ -151,6 +151,8 @@ export const api = {
     request<{ diff: boolean }>("POST", `/api/sessions/${id}/open-file`, { path, side }),
   editor: () => request<EditorSettings>("GET", "/api/editor"),
   saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
+  cancelScheduled: (id: string, itemId: string, clientId: string) =>
+    request<{ sent: boolean }>("POST", `/api/sessions/${id}/scheduled/${encodeURIComponent(itemId)}/cancel`, { clientId }),
   send: (id: string, text: string, attachmentIds: string[] = [], clientId?: string) =>
     request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds, clientId }),
   upload: (id: string, file: { name: string; mime: string; data: string }) =>

@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 
 import { describeCron, isPinned, isValidCron, nextRun } from "./cron.ts"
+import type { CancelRequest } from "./shared/cancel-scheduled.ts"
 import type { ScheduledItem, StoredEvent, TimelineEvent } from "./shared/types.ts"
 
 /** Claude Code borra solos los crons recurrentes a los 7 días (salvo los "permanent"). */
@@ -87,6 +88,8 @@ const jobIdOf = (text: string) => /\bjob ([0-9a-f]{6,})\b/i.exec(text)?.[1] ?? n
  */
 export class Schedules {
   private states = new Map<string, State>()
+  /** Pedidos de cancelar que el dashboard le mandó a cada sesión (por id de lo programado). */
+  private requests = new Map<string, Map<string, CancelRequest>>()
   private durableCache = new Map<string, { at: number; tasks: DurableTask[] | null }>()
   private load: (sessionId: string) => StoredEvent[]
   private clock: () => number
@@ -108,6 +111,7 @@ export class Schedules {
 
   /** Un evento nuevo de la sesión. Devuelve true si cambió lo programado. */
   observe(ev: StoredEvent): boolean {
+    if (ev.event.kind === "turn_end" && this.turnEnded(ev.sessionId, ev.ts)) return true
     if (!this.states.has(ev.sessionId)) {
       // Todavía no se armó: se arma con todo lo que hay en la base (que ya incluye este evento).
       if (!relevant(ev.event)) return false
@@ -119,6 +123,29 @@ export class Schedules {
 
   forget(sessionId: string) {
     this.states.delete(sessionId)
+    this.requests.delete(sessionId)
+  }
+
+  /** Anota que se le pidió a la sesión que cancele `itemId` (reemplaza un pedido anterior). */
+  requestCancel(sessionId: string, itemId: string) {
+    const map = this.requests.get(sessionId) ?? new Map<string, CancelRequest>()
+    map.set(itemId, { requestedAt: this.clock(), lastTurnEndAt: null })
+    this.requests.set(sessionId, map)
+  }
+
+  dropCancel(sessionId: string, itemId: string) {
+    this.requests.get(sessionId)?.delete(itemId)
+  }
+
+  /** Un fin de turno: los pedidos anteriores ya tuvieron su oportunidad. */
+  private turnEnded(sessionId: string, ts: number): boolean {
+    let changed = false
+    for (const req of this.requests.get(sessionId)?.values() ?? []) {
+      if (req.requestedAt > ts) continue
+      req.lastTurnEndAt = ts
+      changed = true
+    }
+    return changed
   }
 
   private apply(st: State, { event: e, ts }: StoredEvent): boolean {
@@ -193,6 +220,14 @@ export class Schedules {
         cancelledAt: null,
         doneAt: null,
       })
+      return true
+    }
+    if (use.name === "RemoteTrigger" && (str(input.action) === "update" || str(input.action) === "delete")) {
+      // Apagar o borrar una rutina la da por cancelada.
+      const item = st.items.get(str(input.trigger_id))
+      const off = str(input.action) === "delete" || obj(input.body).enabled === false
+      if (!item || item.cancelledAt || !off || !/^HTTP 2\d\d\b/.test(e.content)) return false
+      item.cancelledAt = ts
       return true
     }
     if (use.name === "RemoteTrigger" && str(input.action) === "create") {
@@ -296,8 +331,13 @@ export class Schedules {
       }
     }
     const out: ScheduledItem[] = []
+    const requests = this.requests.get(sessionId)
     for (const it of items.values()) {
       const view = this.view(it, now, opts, mine)
+      const req = requests?.get(it.id)
+      // Un pedido de cancelar vale mientras siga activa; si se canceló (o terminó), se olvida.
+      if (req && view.status === "active") view.cancelRequest = { ...req }
+      else if (req) requests!.delete(it.id)
       const endedAt =
         it.cancelledAt ?? it.doneAt ?? (view.status === "expired" ? it.createdAt + RECURRING_MAX_AGE_MS : null) ?? view.nextAt ?? it.lastFiredAt ?? it.createdAt
       if (view.status !== "active" && now - endedAt > HISTORY_MS) continue
@@ -348,6 +388,7 @@ export class Schedules {
       fires: it.fires,
       status,
       paused: status === "active" && it.kind !== "routine" && !opts.running,
+      cancelRequest: null,
     }
   }
 }

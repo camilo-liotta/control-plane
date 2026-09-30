@@ -30,6 +30,7 @@ import type {
 } from "./shared/types.ts"
 import { withSubagents } from "./prompts.ts"
 import { Schedules, SCHEDULE_TOOLS } from "./schedule.ts"
+import { cancelMessage, cancelState } from "./shared/cancel-scheduled.ts"
 import { clampJson, errorMessage, now, oneLine, plainText, shortId, token, uuid } from "./util.ts"
 
 interface PendingControl {
@@ -893,6 +894,29 @@ export class SessionManager extends EventEmitter<{
   // ---------------------------------------------------------------- acciones
 
   /** Manda un mensaje como si lo escribieras vos. Si la sesión estaba detenida, la reanuda. */
+  /**
+   * Le pide a la sesión que cancele algo que programó (solo ella puede llamar a CronDelete): le manda
+   * el mensaje por el mismo camino que el composer y anota el pedido, que se ve hasta que lo cancela.
+   * Si ya hay un pedido pendiente para lo mismo, no lo vuelve a mandar.
+   */
+  async requestCancelScheduled(id: string, itemId: string, clientId?: string): Promise<{ sent: boolean }> {
+    const rec = this.db.getSession(id)
+    if (!rec) throw new Error("La sesión no existe")
+    const view = this.view(rec)
+    const item = view.scheduled.find((i) => i.id === itemId)
+    if (!item || item.status !== "active") throw new Error("Eso ya no está programado")
+    if (cancelState(item.cancelRequest, item, view.status, now()) === "pending") return { sent: false }
+    this.schedules.requestCancel(id, itemId)
+    try {
+      await this.send(id, cancelMessage(item), { origin: "user", clientId })
+    } catch (err) {
+      this.schedules.dropCancel(id, itemId)
+      throw err
+    }
+    this.broadcastSession(id)
+    return { sent: true }
+  }
+
   async send(id: string, text: string, opts: SendOptions): Promise<StoredEvent> {
     const clientKey = opts.clientId ? `${id}:${opts.clientId}` : null
     const already = clientKey ? this.byClientId.get(clientKey) : undefined

@@ -239,6 +239,8 @@ export interface EditorSettings {
   command: string
 }
 
+import type { CancelRequest } from "./cancel-scheduled.ts"
+
 /**
  * Algo que una sesión programó para más tarde: un cron (`CronCreate`), un "despertame" de `/loop`
  * (`ScheduleWakeup`) o una rutina en la nube (`RemoteTrigger`, no corre en esta máquina).
@@ -269,6 +271,8 @@ export interface ScheduledItem {
   status: "active" | "done" | "cancelled" | "expired" | "lost" | "missed"
   /** Activa pero frenada: la sesión está detenida y no corre hasta que vuelva a arrancar. */
   paused: boolean
+  /** Se le pidió a la sesión que la cancele (desde el panel) y todavía no lo hizo. */
+  cancelRequest: CancelRequest | null
 }
 
 export interface TurnProgress {
