@@ -89,26 +89,45 @@ pub enum ExitAction {
     /// Salir sin tocar el server.
     Exit,
     StopThenExit,
+    /// Para actualizar: el server guarda las sesiones activas para retomarlas, se detiene y la
+    /// app sale. La app nueva lanza el server nuevo, que las retoma.
+    RestartThenExit,
     /// Mostrar el diálogo y volver a decidir con la respuesta.
     Ask,
     /// No salir.
     Stay,
 }
 
+/// Cómo se pidió salir.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuitMode {
+    /// "Salir", o `--quit` a secas: según "Al salir".
+    #[default]
+    Normal,
+    /// `--quit --keep-server`: salir dejando el server (lo usaban los instaladores anteriores).
+    KeepServer,
+    /// `--quit --restart-for-update`: lo usan `get.sh` e `install.sh` después de instalar.
+    RestartForUpdate,
+}
+
 /// La salida: un server ajeno nunca se toca; uno propio según "Al salir" o la respuesta.
 /// Si el sistema se está apagando o cerrando la sesión, no se pregunta (el sistema ya le manda
-/// SIGTERM al server, que se cierra ordenado). `keep_server` es un pedido explícito de salir
-/// dejándolo (`--quit --keep-server`, lo usa el instalador al actualizar): no pregunta ni lo
-/// detiene, diga lo que diga "Al salir", y no cambia el ajuste.
+/// SIGTERM al server, que se cierra ordenado). Los pedidos explícitos (`--keep-server`,
+/// `--restart-for-update`) no preguntan, diga lo que diga "Al salir", y no cambian el ajuste.
 pub fn exit_action(
     kind: ServerKind,
     on_exit: OnExit,
     answer: Option<Answer>,
     system_ending: bool,
-    keep_server: bool,
+    mode: QuitMode,
 ) -> ExitAction {
-    if kind != ServerKind::Own || system_ending || keep_server {
+    if kind != ServerKind::Own || system_ending {
         return ExitAction::Exit;
+    }
+    match mode {
+        QuitMode::KeepServer => return ExitAction::Exit,
+        QuitMode::RestartForUpdate => return ExitAction::RestartThenExit,
+        QuitMode::Normal => {}
     }
     let choice = match (on_exit, answer) {
         (_, Some(a)) => a,
@@ -120,6 +139,68 @@ pub fn exit_action(
         Answer::Stop => ExitAction::StopThenExit,
         Answer::Leave => ExitAction::Exit,
         Answer::Cancel => ExitAction::Stay,
+    }
+}
+
+/// Al tocar "Actualizar a…": directo si no hay sesiones trabajando; si hay, se pregunta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateStart {
+    Now,
+    Ask { working: u32 },
+}
+
+pub fn update_start(working: u32) -> UpdateStart {
+    if working == 0 {
+        UpdateStart::Now
+    } else {
+        UpdateStart::Ask { working }
+    }
+}
+
+pub fn update_question(working: u32) -> String {
+    let n = if working == 1 {
+        "1 sesión está trabajando".to_string()
+    } else {
+        format!("{working} sesiones están trabajando")
+    };
+    format!("{n}. Actualizar reinicia el server: las sesiones se retoman solas cuando vuelve, pero lo que estén haciendo se corta y siguen desde ahí.")
+}
+
+/// Cuánto se espera, con "Esperar a que terminen", antes de actualizar igual.
+pub const WAIT_FOR_IDLE: Duration = Duration::from_secs(30 * 60);
+
+/// Un server adoptado, según su versión y la de la app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerAge {
+    /// La misma (o una que no se entiende: no se molesta).
+    Current,
+    /// Propio y más viejo: se reinicia solo si no hay sesiones trabajando; si hay, se ofrece.
+    OlderOwn {
+        from: String,
+        to: String,
+        auto: bool,
+    },
+    /// Ajeno (un `npm start`) y más viejo: solo se avisa.
+    OlderForeign { from: String, to: String },
+}
+
+pub fn server_age(app: &str, server: &str, kind: ServerKind, working: u32) -> ServerAge {
+    use crate::update::Version;
+    let (Some(a), Some(s)) = (Version::parse(app), Version::parse(server)) else {
+        return ServerAge::Current;
+    };
+    if s >= a {
+        return ServerAge::Current;
+    }
+    let (from, to) = (s.to_string(), a.to_string());
+    match kind {
+        ServerKind::Own => ServerAge::OlderOwn {
+            from,
+            to,
+            auto: working == 0,
+        },
+        ServerKind::Foreign => ServerAge::OlderForeign { from, to },
+        ServerKind::None => ServerAge::Current,
     }
 }
 
@@ -189,38 +270,99 @@ mod tests {
     fn exit_table() {
         use Answer::*;
         use ExitAction::*;
+        use QuitMode::{KeepServer, Normal, RestartForUpdate};
         use ServerKind::{Foreign, None as NoServer, Own};
         for on_exit in [OnExit::Ask, OnExit::Stop, OnExit::Leave] {
             for answer in [None, Some(Stop), Some(Leave), Some(Cancel)] {
-                for keep in [false, true] {
+                for mode in [Normal, KeepServer, RestartForUpdate] {
                     // Ajeno o sin server: salir sin tocar nada, diga lo que diga.
-                    assert_eq!(exit_action(Foreign, on_exit, answer, false, keep), Exit);
-                    assert_eq!(exit_action(NoServer, on_exit, answer, false, keep), Exit);
+                    assert_eq!(exit_action(Foreign, on_exit, answer, false, mode), Exit);
+                    assert_eq!(exit_action(NoServer, on_exit, answer, false, mode), Exit);
                     // Apagado o cierre de sesión: nunca se pregunta.
-                    assert_eq!(exit_action(Own, on_exit, answer, true, keep), Exit);
+                    assert_eq!(exit_action(Own, on_exit, answer, true, mode), Exit);
                 }
                 // --quit --keep-server: sale dejando el server, sin preguntar ni detenerlo.
-                assert_eq!(exit_action(Own, on_exit, answer, false, true), Exit);
+                assert_eq!(exit_action(Own, on_exit, answer, false, KeepServer), Exit);
+                // --quit --restart-for-update: guarda las sesiones, lo detiene y sale, sin preguntar.
+                assert_eq!(
+                    exit_action(Own, on_exit, answer, false, RestartForUpdate),
+                    RestartThenExit
+                );
             }
         }
         // Un --quit a secas (o "Salir") sigue respetando "Al salir".
-        assert_eq!(exit_action(Own, OnExit::Ask, None, false, false), Ask);
+        assert_eq!(exit_action(Own, OnExit::Ask, None, false, Normal), Ask);
         assert_eq!(
-            exit_action(Own, OnExit::Stop, None, false, false),
+            exit_action(Own, OnExit::Stop, None, false, Normal),
             StopThenExit
         );
-        assert_eq!(exit_action(Own, OnExit::Leave, None, false, false), Exit);
+        assert_eq!(exit_action(Own, OnExit::Leave, None, false, Normal), Exit);
         assert_eq!(
-            exit_action(Own, OnExit::Ask, Some(Stop), false, false),
+            exit_action(Own, OnExit::Ask, Some(Stop), false, Normal),
             StopThenExit
         );
         assert_eq!(
-            exit_action(Own, OnExit::Ask, Some(Leave), false, false),
+            exit_action(Own, OnExit::Ask, Some(Leave), false, Normal),
             Exit
         );
         assert_eq!(
-            exit_action(Own, OnExit::Ask, Some(Cancel), false, false),
+            exit_action(Own, OnExit::Ask, Some(Cancel), false, Normal),
             Stay
+        );
+    }
+
+    #[test]
+    fn update_asks_only_with_sessions_working() {
+        assert_eq!(update_start(0), UpdateStart::Now);
+        assert_eq!(update_start(2), UpdateStart::Ask { working: 2 });
+        assert!(update_question(1).starts_with("1 sesión está trabajando."));
+        assert!(update_question(3).starts_with("3 sesiones están trabajando."));
+    }
+
+    #[test]
+    fn older_servers() {
+        use ServerKind::*;
+        assert_eq!(server_age("0.3.2", "0.3.2", Own, 0), ServerAge::Current);
+        assert_eq!(
+            server_age("0.3.2", "0.4.0", Own, 0),
+            ServerAge::Current,
+            "más nuevo: no se toca"
+        );
+        assert_eq!(
+            server_age("0.3.2", "dev", Own, 0),
+            ServerAge::Current,
+            "no se entiende: no se molesta"
+        );
+        assert_eq!(
+            server_age("0.3.2", "0.1.0", Own, 0),
+            ServerAge::OlderOwn {
+                from: "0.1.0".into(),
+                to: "0.3.2".into(),
+                auto: true
+            }
+        );
+        assert_eq!(
+            server_age("0.3.2", "0.3.1", Own, 2),
+            ServerAge::OlderOwn {
+                from: "0.3.1".into(),
+                to: "0.3.2".into(),
+                auto: false
+            }
+        );
+        assert_eq!(
+            server_age("0.3.2", "0.1.0", Foreign, 0),
+            ServerAge::OlderForeign {
+                from: "0.1.0".into(),
+                to: "0.3.2".into()
+            }
+        );
+        assert_eq!(
+            server_age("0.10.0", "0.9.9", Own, 1),
+            ServerAge::OlderOwn {
+                from: "0.9.9".into(),
+                to: "0.10.0".into(),
+                auto: false
+            }
         );
     }
 

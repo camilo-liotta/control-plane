@@ -65,7 +65,7 @@ Puertos y datos en la app de desarrollo:
 - Sin `CONTROL_PLANE_HOME` usa `$TMPDIR/control-plane-dev-<puerto>`, y `~/.control-plane` se rechaza salvo con `CONTROL_PLANE_ALLOW_REAL_HOME=1`.
 - **El build de release no tiene estas guardas.** Si probás un `.AppImage` o un binario de release, pasale siempre un puerto y carpetas temporales.
 - `npm run app:install` (`desktop/scripts/install.sh`) instala en tu máquina. Para probar el script sin instalar, usá `-- --dry-run` o `-- --no-install`.
-- Para probar el reinicio del script (cerrar con `--quit --keep-server` y volver a abrir) sin instalar nada, pasale otro binario con `CONTROL_PLANE_INSTALL_BIN`. **Siempre dentro de `dbus-run-session`**, con un puerto y carpetas temporales: el binario de release comparte la instancia única con la app instalada, y el script se niega a correr en el bus de siempre.
+- Para probar el reinicio del script (cerrar con `--quit --restart-for-update` y volver a abrir) sin instalar nada, pasale otro binario con `CONTROL_PLANE_INSTALL_BIN`. **Siempre dentro de `dbus-run-session`**, con un puerto y carpetas temporales: el binario de release comparte la instancia única con la app instalada, y el script se niega a correr en el bus de siempre.
 
   ```bash
   dbus-run-session -- bash -c 'export HOME=$(mktemp -d) CONTROL_PLANE_PORT=4730 CONTROL_PLANE_HOME=$(mktemp -d) CLAUDE_CONFIG_DIR=$(mktemp -d)
@@ -93,7 +93,8 @@ Probar sin mouse, con una segunda apertura del mismo binario (en desarrollo, `de
 
 - `--quit`: sale como con **Salir** (pasa por **Al salir**). Anda también en release.
 - `--quit --keep-server`: sale sin preguntar y deja el server corriendo, sin cambiar **Al salir**. Anda también en release. `--keep-server` solo no hace nada.
-- `--help`: el uso. Sale antes de la instancia única, así que no le llega a una app abierta. `install.sh` busca el texto `--quit --keep-server` de esa ayuda en el binario instalado para saber si lo entiende.
+- `--quit --restart-for-update`: sale sin preguntar; antes, el server guarda las sesiones activas (`POST /api/restart/prepare`) y se detiene por el camino ordenado. El próximo server las retoma.
+- `--help`: el uso. Sale antes de la instancia única, así que no le llega a una app abierta. `install.sh` y `get.sh` buscan el texto `--quit --restart-for-update` de esa ayuda en el binario instalado para saber si lo entiende.
 - `--action <id> [--port N]`: aprieta un botón de la pantalla que se ve. Solo en desarrollo. Los ids: `retry`, `launch`, `pick-node`, `get-node`, `open-anyway`, `cancel`, `set-port` (con `--port`), `use-that`, `wait`, `log` y `stop`.
 
 Para abrirla como desde el menú de GNOME, sin heredar el entorno de tu terminal: `systemd-run --user --collect --unit=<nombre> -E CONTROL_PLANE_PORT=4710 -E CONTROL_PLANE_HOME=<carpeta> <binario>`, y la cortás con `systemctl --user stop <nombre>`.

@@ -88,11 +88,13 @@ run() {
   fi
 }
 
-# ¿El binario instalado entiende `--quit --keep-server` (salir dejando el server, sin preguntar)?
-# Se busca el texto en el binario, sin ejecutarlo: correrlo con un flag que no conoce le llegaría
-# a la app abierta como una segunda apertura.
-knows_keep_server() { grep -qaF -- "--quit --keep-server" "$1" 2>/dev/null; }
-WAIT_SECS=15
+# ¿El binario instalado sabe reiniciarse para actualizar (`--quit --restart-for-update`: el server
+# guarda las sesiones activas, se detiene y la app sale)? Se busca el texto en el binario, sin
+# ejecutarlo: correrlo con un flag que no conoce le llegaría a la app abierta como una segunda
+# apertura.
+knows_restart() { grep -qaF -- "--quit --restart-for-update" "$1" 2>/dev/null; }
+# Cerrar ahora incluye detener el server (el camino ordenado, hasta 15 s y lo que tarde en guardar).
+WAIT_SECS=45
 
 fetch() { curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$2" "$1"; }
 
@@ -309,19 +311,22 @@ install_mac() {
   run ditto "$pkg" "$target.nueva"
   run xattr -dr com.apple.quarantine "$target.nueva" || true
 
-  # 2. Cerrarla (si está abierta), sin cortar las sesiones.
+  # 2. Cerrarla (si está abierta): la app y el server se actualizan juntos.
   if still_open mac_running; then
     local exe=""
     if [[ -d "$target" ]]; then
       exe="$target/Contents/MacOS/$(defaults read "$target/Contents/Info" CFBundleExecutable 2>/dev/null)"
     fi
-    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-    # Con --app-pid, la que llama ya sabe --keep-server.
-    if [[ -n "$APP_PID" ]] || { [[ -x "$exe" ]] && knows_keep_server "$exe"; }; then
-      run "$exe" --quit --keep-server
+    # Con --app-pid, la que llama es de esta versión: ya sabe --restart-for-update.
+    if [[ -n "$APP_PID" ]] || { [[ -x "$exe" ]] && knows_restart "$exe"; }; then
+      say "Cierro la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+      run "$exe" --quit --restart-for-update
     else
-      # Una app vieja no conoce --keep-server: salir como desde el Dock tampoco pregunta y deja
-      # el server corriendo.
+      # Una app de antes no sabe reiniciarse para actualizar: salir como desde el Dock deja su
+      # server corriendo. La nueva lo detecta al abrir y lo reinicia (sola si no hay sesiones
+      # trabajando; si hay, desde el menú del ícono).
+      say "La app abierta es de una versión anterior: la cierro, pero su server queda corriendo."
+      say "Al abrirse, la nueva lo reinicia sola (si hay sesiones trabajando, te lo ofrece en el menú del ícono → Reiniciar el server)."
       run osascript -e "quit app \"$APP\""
     fi
     ((DRY)) || REOPEN_ON_FAIL="$target"
@@ -356,9 +361,9 @@ install_linux() {
     bin="$HOME/.local/bin/$APP.AppImage"
   fi
 
-  # Antes de instalar: ¿está abierta, y sabe salir dejando el server? Después del apt, el binario
-  # ya es el nuevo. Con --app-pid la llama la propia app, que sabe; un .AppImage no se puede
-  # revisar con grep (está comprimido).
+  # Antes de instalar: ¿está abierta, y sabe reiniciarse para actualizar? Después del apt, el
+  # binario ya es el nuevo. Con --app-pid la llama la propia app, que sabe; un .AppImage no se
+  # puede revisar con grep (está comprimido).
   local open=0 knows=0
   if [[ -n "$APP_PID" ]]; then
     # Se vuelve a mirar ahora (después de bajar y verificar): si la app ya no está, no hay nada
@@ -369,7 +374,7 @@ install_linux() {
     fi
   elif app_pids "$bin" >/dev/null; then
     open=1
-    knows_keep_server "$bin" && knows=1
+    knows_restart "$bin" && knows=1
   fi
 
   # 1. Instalar, con la app todavía abierta (sigue con su archivo hasta que se cierre). Si esto
@@ -402,10 +407,11 @@ install_linux() {
   fi
   WHERE="$bin"
 
-  # 2. Cerrar la vieja dejando el server y abrir la nueva, que lo adopta.
+  # 2. Cerrar la vieja (el server guarda las sesiones activas y se detiene) y abrir la nueva, que
+  #    lanza el server nuevo y las retoma. App y server se actualizan juntos.
   if ((open && knows)); then
-    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-    run "$bin" --quit --keep-server
+    say "Cierro la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+    run "$bin" --quit --restart-for-update
     if ! wait_closed app_pids "$bin"; then
       warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
       return 0
@@ -429,10 +435,11 @@ install_linux() {
       fi
     fi
   elif ((open)); then
-    say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
-    say "Sigue con la versión anterior hasta que la reinicies. Para pasar a la nueva sin cortar las"
-    say "sesiones: menú del ícono → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a abrirla desde el"
-    say "lanzador (adopta el mismo server)."
+    say "La app abierta es de una versión anterior, que no sabe reiniciarse para actualizar: no la cierro."
+    say "Para pasar a la nueva: menú del ícono → Salir → \"Detener y salir\", y volvé a abrirla desde el"
+    say "lanzador: arranca con el server nuevo (las sesiones se reanudan cuando les escribís)."
+    say "Si la cerrás dejando el server, la nueva lo detecta y te ofrece reiniciarlo (menú del ícono →"
+    say "Reiniciar el server)."
   fi
 }
 
