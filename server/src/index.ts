@@ -19,6 +19,7 @@ import { desktopSummary } from "./desktop.ts"
 import { Editor } from "./editor.ts"
 import { localOnly, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
+import { registerRestart, Restart } from "./restart.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
@@ -225,7 +226,9 @@ async function main() {
 
   await app.register(fastifyWebsocket)
   registerWs(app, hub, () => ({ type: "hello", snapshot: snapshot(deps) }))
-  registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId })
+  const restart = new Restart({ home: config.home, version, sessions, hub })
+  registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId }, () => restart.resuming)
+  registerRestart(app, restart)
 
   registerApi(app, deps)
   registerMcp(app, deps)
@@ -259,12 +262,19 @@ async function main() {
   console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
   console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
   console.log(`Datos: ${config.home}`)
+  // Las sesiones que estaban vivas antes de reiniciar para actualizar.
+  void restart.resumePending().then(({ resumed, failed }) => {
+    if (resumed.length || failed.length) console.log(`Retomé ${resumed.length} sesiones${failed.length ? ` (${failed.length} no arrancaron)` : ""}.`)
+  })
 
   let closing = false
   const shutdown = async (signal: string) => {
     if (closing) return
     closing = true
     console.log(`\n${signal}: cerrando sesiones…`)
+    // Si la app pidió reiniciar para actualizar, anota qué sesiones retomar antes de cerrarlas.
+    const saved = restart.onShutdown()
+    if (saved) console.log(`Guardé ${saved.sessions.length} sesiones para retomar al volver.`)
     orchestration.dispose()
     compaction.dispose()
     clis.dispose()

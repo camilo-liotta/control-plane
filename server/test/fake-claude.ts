@@ -9,7 +9,8 @@ import path from "node:path"
  * - /clear sigue con una conversación nueva que arranca sus totales de cero (como el de verdad);
  * - con FAKE_NO_COMPACT=1, /compact contesta "No messages to compact" sin compactar;
  * - `--version` contesta una versión y los otros subcomandos (auth status, agents) salen sin nada;
- * - "CRON …", "CRONDEL …", "WAKEUP …" y "FIRE …" programan, cancelan y disparan tareas (ver el script).
+ * - "CRON …", "CRONDEL …", "WAKEUP …" y "FIRE …" programan, cancelan y disparan tareas (ver el script);
+ * - "PREGUNTA" deja una pregunta pendiente y "LARGO" hace un turno que tarda (para los reinicios).
  */
 const SCRIPT = String.raw`#!/usr/bin/env node
 import fs from "node:fs"
@@ -88,6 +89,13 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     result({ is_error: true, result: "Prompt is too long", terminal_reason: "blocking_limit", errors: [] })
     continue
   }
+  // "PREGUNTA": pide contestar una pregunta (AskUserQuestion) y se queda esperando, sin cerrar el turno.
+  if (text.includes("PREGUNTA")) {
+    out({ type: "control_request", request_id: "q-" + Math.random().toString(36).slice(2), request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", tool_use_id: "toolu_q" + Math.random().toString(36).slice(2, 8), input: { questions: [{ question: "¿Sigo con el plan B?", header: "Plan", multiSelect: false, options: [{ label: "Sí", description: "" }, { label: "No", description: "" }] }] } } })
+    continue
+  }
+  // "LARGO" (en cualquier parte del mensaje): un turno que tarda FAKE_LONG_MS (30 s si no está).
+  if (text.includes("LARGO")) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LONG_MS ?? 30000)))
   // Programar para más tarde, con la forma que tienen en el stream de Claude Code:
   //   "CRON <cron>|<recurrente 1/0>|<durable 1/0>|<prompt>", "CRONDEL <id>", "WAKEUP <segundos>|<motivo>",
   //   "FIRE <prompt>" (un cron que se dispara: su prompt vuelve como mensaje de usuario).
