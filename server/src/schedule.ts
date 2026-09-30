@@ -337,7 +337,7 @@ export class Schedules {
       id: it.id,
       kind: it.kind,
       cron: it.cron,
-      when: whenText(it, nextAt),
+      when: whenText(it, nextAt, now),
       prompt: it.prompt,
       reason: it.reason,
       recurring: it.recurring,
@@ -361,15 +361,15 @@ const clock = (t: number) => {
   return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
-function whenText(it: Item, nextAt: number | null): string {
+function whenText(it: Item, nextAt: number | null, now: number): string {
   if (it.kind === "wakeup") return it.at ? `vuelve a las ${clock(it.at)}` : "vuelve más tarde"
   if (!it.cron) return ""
   if (it.kind === "routine") return `${describeCron(it.cron)} (en la nube)`
   if (!it.recurring || isPinned(it.cron)) {
     const d = nextAt ? new Date(nextAt) : null
     if (!d) return describeCron(it.cron)
-    const today = new Date()
-    const sameDay = d.toDateString() === today.toDateString()
+    // "Hoy" según el mismo reloj que el resto (no el de la máquina, para que se pueda probar).
+    const sameDay = d.toDateString() === new Date(now).toDateString()
     return sameDay ? `una vez, a las ${clock(nextAt!)}` : `una vez, el ${d.getDate()}/${d.getMonth() + 1} a las ${clock(nextAt!)}`
   }
   return describeCron(it.cron)
