@@ -102,6 +102,30 @@ export function TerminalPanel({ session }: { session: Session }) {
         setStatus("error")
       })
 
+    // Copiar y pegar, como en las terminales de Linux (Ctrl+C y Ctrl+V son de la shell):
+    // - Ctrl+Shift+C copia la selección (en Chrome, además, abriría las herramientas).
+    // - Ctrl+Shift+V y Shift+Insert no los toma xterm: los hace el navegador o el webview, con un
+    //   pegado de verdad que xterm recibe como evento paste (leer el portapapeles desde JS no está
+    //   permitido en la app). En la Mac, ⌘C y ⌘V ya andan.
+    t.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown" || e.altKey || e.metaKey) return true
+      const key = e.key.toLowerCase()
+      if (e.ctrlKey && e.shiftKey && key === "c") {
+        const selected = t.getSelection()
+        if (selected) void navigator.clipboard.writeText(selected).catch(() => {})
+        e.preventDefault()
+        return false
+      }
+      if ((e.ctrlKey && e.shiftKey && key === "v") || (e.shiftKey && !e.ctrlKey && e.key === "Insert")) return false
+      return true
+    })
+    // Un archivo soltado sobre la terminal no se escribe en la shell: va al composer (la columna
+    // del chat lo recibe) o se ignora.
+    const noDrop = (e: DragEvent) => e.preventDefault()
+    host.current.addEventListener("dragover", noDrop, true)
+    host.current.addEventListener("drop", noDrop, true)
+    const hostEl = host.current
+
     // Lo que tipeás (y lo que se pega) va a la shell; xterm ya lo manda como bracketed paste si
     // la shell lo pidió, así un comando de varias líneas no se ejecuta solo.
     const input = t.onData((d) => send({ t: "i", d }))
@@ -134,6 +158,8 @@ export function TerminalPanel({ session }: { session: Session }) {
       disposed = true
       input.dispose()
       ro.disconnect()
+      hostEl.removeEventListener("dragover", noDrop, true)
+      hostEl.removeEventListener("drop", noDrop, true)
       ws?.close()
       window.clearTimeout(waiting)
       pastePending.current = () => {}
@@ -155,6 +181,7 @@ export function TerminalPanel({ session }: { session: Session }) {
 
   return (
     <section
+      data-terminal=""
       className="flex h-[40%] min-h-48 shrink-0 flex-col border-t bg-card"
       aria-label="Terminal"
     >

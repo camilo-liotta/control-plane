@@ -113,16 +113,18 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const terminalOpen = useTerminal((s) => !!s.open[sessionId])
   const toggleTerminal = useTerminal((s) => s.toggle)
 
-  // Ctrl+` abre y esconde la terminal (como en los editores).
+  // Ctrl+` abre y esconde la terminal (como en los editores). En la captura y sin seguir: si no, la
+  // terminal lo recibe primero y le manda un NUL a la shell.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "`" || e.code === "Backquote")) {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === "`" || e.code === "Backquote")) {
         e.preventDefault()
+        e.stopPropagation()
         toggleTerminal(sessionId)
       }
     }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
+    window.addEventListener("keydown", onKey, true)
+    return () => window.removeEventListener("keydown", onKey, true)
   }, [sessionId, toggleTerminal])
 
   useEffect(() => {
