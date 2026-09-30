@@ -282,7 +282,22 @@ export interface Account {
   auth: AccountAuth | null
   usage: UsageInfo | null
   projects: number
+  engram: EngramStatus
 }
+
+/** ready = todo instalado; no-binary = plugin y MCP, pero falta el programa; partial = a medias; missing = nada. */
+export type EngramState = "ready" | "no-binary" | "partial" | "missing"
+
+export interface EngramStatus {
+  state: EngramState
+  plugin: "ok" | "disabled" | "missing"
+  mcp: boolean
+  binary: string | null
+  /** Cómo conseguir el programa, cuando no está. */
+  binaryHint?: { command: string; url: string }
+}
+
+export type EngramInstallResult = { ok: true; message: string } | { needsConfirm: { command: string; sha256: string } }
 
 export type ClaudeSettingValue = string | boolean | null
 

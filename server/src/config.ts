@@ -2,6 +2,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { resolveClaudeBin } from "./claude/bin.ts"
 import pkg from "../package.json" with { type: "json" }
 import rootPkg from "../../package.json" with { type: "json" }
 
@@ -16,8 +17,8 @@ export const config = {
   port: Number(process.env.CONTROL_PLANE_PORT ?? 4700),
   /** Carpeta con la base de datos y el estado local de esta máquina. */
   home: process.env.CONTROL_PLANE_HOME ?? path.join(os.homedir(), ".control-plane"),
-  /** Binario de Claude Code (el que ya tenés instalado y logueado). */
-  claudeBin: process.env.CLAUDE_BIN ?? "claude",
+  /** Binario de Claude Code (el que ya tenés instalado y logueado). En Windows se resuelve al claude.exe. */
+  claudeBin: resolveClaudeBin(process.env.CLAUDE_BIN ?? "claude"),
   /** Build de la web que sirve el server en producción. */
   webDist: process.env.CONTROL_PLANE_WEB_DIST
     ? path.resolve(process.env.CONTROL_PLANE_WEB_DIST)

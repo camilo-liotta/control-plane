@@ -13,6 +13,7 @@ import type {
   ContextUsage,
   Draft,
   EditorSettings,
+  EngramInstallResult,
   Marketplace,
   Project,
   ProjectOverview,
@@ -203,6 +204,7 @@ export const api = {
   marketplaces: (accountId: string) => request<Marketplace[]>("GET", `/api/accounts/${accountId}/marketplaces`),
   marketplaceAction: (accountId: string, action: "add" | "remove" | "update", target?: string) =>
     request("POST", `/api/accounts/${accountId}/marketplaces`, { action, target }),
+  installEngram: (accountId: string) => request<EngramInstallResult>("POST", `/api/accounts/${accountId}/engram/install`),
   addMcp: (accountId: string, input: McpInput) => request("POST", `/api/accounts/${accountId}/mcp`, input),
   removeMcp: (accountId: string, name: string, scope: string, projectId: string | null) =>
     request("DELETE", `/api/accounts/${accountId}/mcp/${enc(name)}${qs({ scope, projectId })}`),

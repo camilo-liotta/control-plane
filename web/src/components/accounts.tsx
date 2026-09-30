@@ -4,6 +4,7 @@ import { toast } from "sonner"
 
 import type { Account, AccountAuth } from "@shared/types"
 
+import { EngramLine } from "@/components/engram"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -169,6 +170,7 @@ function AccountRow({ account }: { account: Account }) {
                   Para loguearla, corré en una terminal <code className="font-mono break-all">{loginCommand(account)}</code> y usá /login.
                 </p>
               )}
+              <EngramLine account={account} />
             </>
           )}
         </div>

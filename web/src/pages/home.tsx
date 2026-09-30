@@ -2,6 +2,7 @@ import { FolderGit2, Plus } from "lucide-react"
 import { Link } from "wouter"
 
 import { Mark } from "@/components/app-sidebar"
+import { EngramCard } from "@/components/engram"
 import { PageHeader } from "@/components/page-header"
 import { SessionLamp } from "@/components/status"
 import { Button } from "@/components/ui/button"
@@ -61,6 +62,7 @@ export function Home() {
       />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto grid max-w-6xl gap-3 px-6 py-6 sm:grid-cols-2 xl:grid-cols-3">
+          <EngramCard />
           {projects.map((p) => {
             const { orchestrator, workers } = projectSessions(sessions, p.id)
             const working = workers.filter((w) => w.status === "working").length

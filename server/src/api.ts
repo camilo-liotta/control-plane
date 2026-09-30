@@ -548,6 +548,13 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       })
   )
 
+  app.post<AccountParams>("/api/accounts/:id/engram/install", async (req, reply) => {
+    if (!accounts.get(req.params.id)) return reply.code(404).send({ error: "La cuenta no existe" })
+    const result = await guard(reply, () => tools.installEngram(req.params.id))
+    broadcastAccount(req.params.id)
+    return result
+  })
+
   app.get<AccountParams>("/api/accounts/:id/marketplaces", (req, reply) =>
     guard(reply, () => tools.marketplaces(requireAccount(req.params.id).id))
   )

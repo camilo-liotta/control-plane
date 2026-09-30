@@ -10,8 +10,9 @@ import { parseCommands } from "./claude/normalize.ts"
 import { ClaudeProcess } from "./claude/process.ts"
 import { lastJsonLine, parseFrontmatter, parsePluginDetails, SKILL_STATES, toMcpInfo } from "./claude/tool-parsers.ts"
 import type { AccountRecord, Db, ProjectRecord, SessionRecord } from "./db.ts"
+import { installEngram, runEngramSetup } from "./engram.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { CatalogPlugin, Marketplace, McpServerInfo, PluginInfo, SkillInfo, SkillState, ToolsView } from "./shared/types.ts"
+import type { CatalogPlugin, EngramInstallResult, Marketplace, McpServerInfo, PluginInfo, SkillInfo, SkillState, ToolsView } from "./shared/types.ts"
 import { errorMessage, now, oneLine } from "./util.ts"
 
 const run = promisify(execFile)
@@ -395,6 +396,18 @@ export class Tools {
     }
     await this.cli(account, args, this.inspectDir(), 300_000)
     this.invalidate(account.id)
+  }
+
+  /** Engram en esta cuenta: marketplace, plugin y registro del MCP. El programa no se instala solo. */
+  async installEngram(accountId: string): Promise<EngramInstallResult> {
+    const account = this.account(accountId)
+    const result = await installEngram(this.deps.accounts.engram(account), {
+      addMarketplace: () => this.marketplaceAction(accountId, "add", "Gentleman-Programming/engram"),
+      plugin: (action) => this.pluginAction(accountId, null, "engram@engram", action, { scope: "user" }),
+      setup: (bin) => runEngramSetup(bin, childEnv(this.deps.accounts.env(account)), this.inspectDir()),
+    })
+    this.invalidate(account.id)
+    return result
   }
 
   // ---------------------------------------------------------------- MCP

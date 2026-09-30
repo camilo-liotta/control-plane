@@ -4,10 +4,12 @@ import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 
+import { cachedResolver } from "./claude/bin.ts"
 import { childEnv } from "./claude/env.ts"
 import { config } from "./config.ts"
 import type { AccountRecord, Db } from "./db.ts"
-import type { Account, AccountAuth, UsageInfo } from "./shared/types.ts"
+import { detectEngram, type EngramDeps } from "./engram.ts"
+import type { Account, AccountAuth, EngramStatus, UsageInfo } from "./shared/types.ts"
 import { errorMessage, now, shortId } from "./util.ts"
 
 const run = promisify(execFile)
@@ -23,8 +25,13 @@ export class Accounts {
   private auth = new Map<string, { at: number; value: AccountAuth }>()
   readonly defaultDir = path.resolve(expandHome(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")))
 
-  constructor(db: Db) {
+  private resolveBin: (bin: string) => string
+  private engramDeps: EngramDeps
+
+  constructor(db: Db, opts: { resolveBin?: (bin: string) => string; engramDeps?: EngramDeps } = {}) {
     this.db = db
+    this.resolveBin = opts.resolveBin ?? cachedResolver()
+    this.engramDeps = opts.engramDeps ?? {}
   }
 
   dir(a: AccountRecord): string {
@@ -44,7 +51,8 @@ export class Accounts {
   }
 
   bin(a: AccountRecord): string {
-    return a.bin?.trim() || config.claudeBin
+    const own = a.bin?.trim()
+    return own ? this.resolveBin(own) : config.claudeBin
   }
 
   settingsFile(a: AccountRecord): string {
@@ -55,6 +63,11 @@ export class Accounts {
   globalConfigFile(a: AccountRecord): string {
     if (this.isDefault(a) && !process.env.CLAUDE_CONFIG_DIR) return path.join(os.homedir(), ".claude.json")
     return path.join(this.dir(a), ".claude.json")
+  }
+
+  /** Qué tiene esta cuenta de Engram (mira sus archivos, sin lanzar procesos; se recalcula en cada vista). */
+  engram(a: AccountRecord): EngramStatus {
+    return detectEngram({ configDir: this.dir(a), globalConfig: this.globalConfigFile(a) }, this.engramDeps)
   }
 
   list(): AccountRecord[] {
@@ -199,6 +212,7 @@ export class Accounts {
       auth: this.cachedAuth(a.id),
       usage,
       projects: this.db.countProjectsByAccount(a.id),
+      engram: this.engram(a),
     }
   }
 }

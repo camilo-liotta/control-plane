@@ -15,7 +15,7 @@ Es 100% local: corre en tu máquina, escucha solo en `127.0.0.1` y no tiene cuen
 - **Node.js 24 o más nuevo** (corre TypeScript y SQLite nativos, sin compilar ni dependencias nativas).
 - **Claude Code** instalado y logueado (`claude --version` tiene que andar en la terminal donde levantás el dashboard).
 - **git** (para el resumen de cada proyecto y los marketplaces de skills).
-- Linux o macOS.
+- Linux, macOS o Windows (en Windows, con `npm start`; la app de escritorio no).
 
 ## Instalación y uso diario
 
@@ -27,6 +27,8 @@ npm start
 ```
 
 `npm start` compila la web y levanta el server en **http://127.0.0.1:4700**. Las sesiones viven mientras el server esté corriendo; si lo cerrás, quedan detenidas y se reanudan (con `claude --resume`) cuando les volvés a escribir.
+
+En Windows, `npm start` anda igual (Node 24). El server busca `claude.exe` en el PATH o en `~\.local\bin`; si lo tenés en otro lado, definí `CLAUDE_BIN` con la ruta a `claude.exe`.
 
 Si preferís una ventana propia con bandeja y avisos nativos, está la [app de escritorio](#app-de-escritorio).
 

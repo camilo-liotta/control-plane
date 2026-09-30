@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -7,6 +6,7 @@ import { childEnv } from "./claude/env.ts"
 import type { CliUsage } from "./cli-usage.ts"
 import type { CliAuthState, CliCredential, CliInfo, CliJob, CliView, UsedProgram } from "./shared/types.ts"
 import { now, oneLine, shortId } from "./util.ts"
+import { which as whichAll, type WhichOptions } from "./which.ts"
 
 /**
  * CLIs de la máquina: un catálogo (el "marketplace") con cómo detectar cada uno, cómo saber si está
@@ -536,20 +536,10 @@ export function installFor(spec: CliSpec, platform: NodeJS.Platform = process.pl
   return { command, runnable: !/\bsudo\b/.test(command) }
 }
 
-/** Busca un ejecutable en el PATH (sin shell). */
-export function which(bin: string, envPath = process.env.PATH ?? ""): string | null {
-  const extra = [path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".cargo", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/snap/bin"]
-  for (const dir of [...envPath.split(path.delimiter), ...extra]) {
-    if (!dir) continue
-    const file = path.join(dir, bin)
-    try {
-      fs.accessSync(file, fs.constants.X_OK)
-      if (fs.statSync(file).isFile()) return file
-    } catch {
-      // no está acá
-    }
-  }
-  return null
+/** Busca un ejecutable en el PATH y en las carpetas habituales (sin shell). En Windows encuentra los .exe. */
+export function which(bin: string, envPath = process.env.PATH ?? "", opts: Pick<WhichOptions, "platform" | "exists"> = {}): string | null {
+  const extraDirs = [path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".cargo", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/snap/bin"]
+  return whichAll(bin, { ...opts, env: { ...process.env, PATH: envPath }, extraDirs })[0] ?? null
 }
 
 /** Links y códigos de un login (el de dispositivo de gh, las URLs de gcloud) para mostrarlos a mano. */

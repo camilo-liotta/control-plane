@@ -13,6 +13,7 @@ import { registerApi, snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
 import { Compaction } from "./compaction.ts"
 import { config, repoUrl, version } from "./config.ts"
+import { missingClaudeMessage } from "./claude/bin.ts"
 import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
@@ -44,7 +45,7 @@ async function claudeVersion(): Promise<string | null> {
 async function main() {
   const cliVersion = await claudeVersion()
   if (!cliVersion) {
-    console.error(`No encontré el binario de Claude Code ("${config.claudeBin}"). Instalalo o definí CLAUDE_BIN.`)
+    console.error(missingClaudeMessage(config.claudeBin))
     process.exit(1)
   }
 
