@@ -6,7 +6,7 @@ import path from "node:path"
 import { after, before, describe, it } from "node:test"
 
 import { MAX_FILES, parseNumstat, sessionChanges } from "../src/changes.ts"
-import { Editor, editorCommand, resolveInside, splitCommand } from "../src/editor.ts"
+import { Editor, editorCommand, folderCommand, projectFolder, resolveInside, splitCommand } from "../src/editor.ts"
 import { repoOf } from "../src/config.ts"
 
 const sh = (dir: string, ...args: string[]) =>
@@ -226,6 +226,56 @@ describe("el entorno del editor", () => {
     } finally {
       for (const [k, v] of Object.entries(saved)) (v === undefined ? delete process.env[k] : (process.env[k] = v))
       fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("abrir el proyecto en el editor", () => {
+  it("VS Code y Cursor reciben la carpeta; un comando propio, en {dir} o {file} (o al final)", () => {
+    assert.deepEqual(folderCommand({ kind: "code", command: "" }, "/r"), { bin: "code", args: ["/r"] })
+    assert.deepEqual(folderCommand({ kind: "cursor", command: "" }, "/r"), { bin: "cursor", args: ["/r"] })
+    assert.deepEqual(folderCommand({ kind: "custom", command: "zed --new {dir}" }, "/r"), { bin: "zed", args: ["--new", "/r"] })
+    assert.deepEqual(folderCommand({ kind: "custom", command: "meld {base} {file}" }, "/r"), { bin: "meld", args: ["/r"] })
+    assert.deepEqual(folderCommand({ kind: "custom", command: "subl -n" }, "/r"), { bin: "subl", args: ["-n", "/r"] })
+  })
+
+  it("solo abre la carpeta del proyecto o uno de sus worktrees, con el entorno limpio", async () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cp-open-")))
+    const root = path.join(base, "app")
+    fs.mkdirSync(root)
+    sh(root, "init", "-q", "-b", "main")
+    write(root, "a.txt", "a\n")
+    sh(root, "add", ".")
+    sh(root, "commit", "-q", "-m", "base")
+    sh(root, "worktree", "add", "-q", "-b", "feat/x", path.join(base, "app--x"))
+    fs.mkdirSync(path.join(base, "otra"))
+
+    assert.equal(await projectFolder(root), root)
+    assert.equal(await projectFolder(root, path.join(base, "app--x")), path.join(base, "app--x"), "un worktree del repo, aunque esté afuera")
+    assert.equal(await projectFolder(root, path.join(base, "app--x", "..", "app")), root)
+    await assert.rejects(projectFolder(root, path.join(base, "otra")), /no es del proyecto/)
+    await assert.rejects(projectFolder(root, "/etc"), /no es del proyecto/)
+    await assert.rejects(projectFolder(path.join(base, "no-existe")), /ya no existe/)
+
+    // Un editor falso que guarda sus argumentos y su entorno.
+    const log = path.join(base, "open.log")
+    const fake = path.join(base, "fake-code.sh")
+    fs.writeFileSync(fake + ".tmp", `#!/bin/sh\n{ printf 'ARG=%s\\n' "$@"; env; } > "${log}.tmp" && mv "${log}.tmp" "${log}"\n`, { mode: 0o755 })
+    fs.renameSync(fake + ".tmp", fake)
+    const saved = { NODE_ENV: process.env.NODE_ENV, CONTROL_PLANE_LAUNCH_ID: process.env.CONTROL_PLANE_LAUNCH_ID }
+    Object.assign(process.env, { NODE_ENV: "production", CONTROL_PLANE_LAUNCH_ID: "l1" })
+    try {
+      const editor = new Editor({ home: path.join(base, "home") })
+      editor.save({ kind: "custom", command: `${fake} {dir}` })
+      await editor.openFolder(await projectFolder(root, path.join(base, "app--x")))
+      for (let i = 0; i < 50 && !fs.existsSync(log); i++) await new Promise((r) => setTimeout(r, 20))
+      const out = fs.readFileSync(log, "utf8")
+      assert.match(out, new RegExp(`^ARG=${path.join(base, "app--x")}$`, "m"))
+      assert.doesNotMatch(out, /^NODE_ENV=/m)
+      assert.doesNotMatch(out, /^CONTROL_PLANE_LAUNCH_ID=/m)
+    } finally {
+      for (const [k, v] of Object.entries(saved)) (v === undefined ? delete process.env[k] : (process.env[k] = v))
+      fs.rmSync(base, { recursive: true, force: true })
     }
   })
 })
