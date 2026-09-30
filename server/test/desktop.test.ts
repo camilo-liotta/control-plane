@@ -44,7 +44,7 @@ describe("health", () => {
   it("responde quién es, sin rutas de la máquina", async () => {
     const res = await app.inject({ url: "/api/health", headers: { host: `127.0.0.1:${port}` } })
     assert.equal(res.statusCode, 200)
-    assert.deepEqual(res.json(), { app: "control-plane", version: "9.9.9", pid: process.pid, port, startedAt: 123, launchId: "lanzado-por-la-app" })
+    assert.deepEqual(res.json(), { app: "control-plane", version: "9.9.9", pid: process.pid, port, startedAt: 123, launchId: "lanzado-por-la-app", resuming: false })
   })
 
   it("pasa por el mismo chequeo de host y origen", async () => {

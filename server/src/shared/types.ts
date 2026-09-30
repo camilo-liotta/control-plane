@@ -750,6 +750,8 @@ export interface Health {
   startedAt: number
   /** El que puso la app al lanzarlo (CONTROL_PLANE_LAUNCH_ID), o null. */
   launchId: string | null
+  /** Retomando las sesiones de un reinicio para actualizar (ver restart.ts). */
+  resuming: boolean
 }
 
 export type ServerMessage =

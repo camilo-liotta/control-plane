@@ -29,6 +29,7 @@ import type {
   UserOrigin,
 } from "./shared/types.ts"
 import { withSubagents } from "./prompts.ts"
+import type { LiveSession } from "./restart.ts"
 import { Schedules, SCHEDULE_TOOLS } from "./schedule.ts"
 import { cancelMessage, cancelState } from "./shared/cancel-scheduled.ts"
 import { clampJson, errorMessage, now, oneLine, plainText, shortId, token, uuid } from "./util.ts"
@@ -336,6 +337,19 @@ export class SessionManager extends EventEmitter<{
 
   list(): Session[] {
     return this.db.listSessions().map((s) => this.view(s))
+  }
+
+  /** Las sesiones con el proceso vivo y en qué están (para retomarlas después de un reinicio). */
+  liveSessions(): LiveSession[] {
+    const out: LiveSession[] = []
+    for (const [id, rt] of this.runtimes) {
+      if (rt.proc.exited) continue
+      if (rt.status !== "idle" && rt.status !== "working" && rt.status !== "needs_input" && rt.status !== "starting") continue
+      const rec = this.db.getSession(id)
+      if (!rec || rec.archivedAt) continue
+      out.push({ id, name: rec.name, projectId: rec.projectId, projectName: this.db.getProject(rec.projectId)?.name ?? "", status: rt.status })
+    }
+    return out
   }
 
   isRunning(id: string) {
