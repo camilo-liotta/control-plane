@@ -42,7 +42,7 @@ export function ReportCard({ report, showSession = true, className }: { report: 
         <span className="ml-auto">{timeAgo(report.createdAt)}</span>
       </header>
       {report.taskTitle && <p className="mt-1.5 truncate text-xs text-muted-foreground">Tarea: {report.taskTitle}</p>}
-      <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-wrap">{report.summary}</p>
+      <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">{report.summary}</p>
       {(report.details || report.state === "queued") && (
         <div className="mt-2 flex items-center gap-2">
           {report.details && (

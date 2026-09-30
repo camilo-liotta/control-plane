@@ -75,7 +75,7 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
       {event.text && (
         <div
           className={cn(
-            "max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap break-words",
+            "max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap wrap-anywhere",
             event.origin === "draft" && "border border-status-working/25 bg-status-working/8"
           )}
         >
@@ -100,7 +100,7 @@ function PeerMessage({ ev }: { ev: Ev<"peer"> }) {
         Mensaje de <span className="font-mono font-medium text-foreground">{ev.event.from}</span>
         <span className="ml-auto font-mono text-[0.65rem]">{clock(ev.ts)}</span>
       </div>
-      <p className="text-[0.87rem] leading-relaxed whitespace-pre-wrap">{ev.event.body}</p>
+      <p className="text-[0.87rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">{ev.event.body}</p>
     </div>
   )
 }
@@ -212,7 +212,7 @@ function ReportCall({ call }: { call: ToolCall }) {
         <TonePill tone={status.tone}>{status.label}</TonePill>
         {call.result?.isError && <span className="text-xs text-status-error">no se registró</span>}
       </div>
-      {input.summary && <p className="mt-1.5 text-[0.87rem] leading-relaxed whitespace-pre-wrap">{input.summary}</p>}
+      {input.summary && <p className="mt-1.5 text-[0.87rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">{input.summary}</p>}
       {input.details && (
         <>
           <button

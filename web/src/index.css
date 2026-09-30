@@ -288,7 +288,7 @@
 
 /* Markdown de las respuestas de Claude. */
 .md {
-  @apply text-[0.9rem] leading-relaxed break-words;
+  @apply max-w-full min-w-0 text-[0.9rem] leading-relaxed break-words;
 }
 .md > * + * {
   @apply mt-3;
@@ -335,10 +335,11 @@
   @apply my-4 border-border;
 }
 .md :not(pre) > code {
-  @apply rounded-[0.3rem] bg-muted px-[0.35em] py-[0.1em] font-mono text-[0.84em];
+  /* Los comandos y rutas largas cortan donde haga falta, también sin espacios (URLs, --flag=valor). */
+  @apply rounded-[0.3rem] bg-muted px-[0.35em] py-[0.1em] font-mono text-[0.84em] wrap-anywhere;
 }
 .md pre {
-  @apply overflow-x-auto rounded-lg border bg-muted/60 p-3 font-mono text-[0.8rem] leading-relaxed;
+  @apply max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 font-mono text-[0.8rem] leading-relaxed;
 }
 .md table {
   @apply block w-full overflow-x-auto text-[0.85rem];

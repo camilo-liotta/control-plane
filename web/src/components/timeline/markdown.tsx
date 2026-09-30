@@ -57,10 +57,14 @@ const components: Components = {
 function InlineCode({ text }: { text: string }) {
   const commands = useContext(InlineCommands)
   if (!commands) return <code>{text}</code>
+  // El comando corta adentro del contenedor (ver .md code); el espacio sin corte deja el botón
+  // pegado al último pedazo, sin quedar solo en una línea aparte.
   return (
-    <span className="whitespace-nowrap">
-      <code>{text}</code> <TakeToTerminal command={text} compact />
-    </span>
+    <>
+      <code>{text}</code>
+      {"\u00a0"}
+      <TakeToTerminal command={text} compact />
+    </>
   )
 }
 

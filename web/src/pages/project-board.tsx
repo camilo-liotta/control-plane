@@ -208,7 +208,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
           <section>
             <SectionTitle count={workers.length}>Sesiones</SectionTitle>
             {workers.length ? (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {workers.map((w) => (
                   <WorkerCard key={w.id} session={w} lastReport={lastReportBySession.get(w.id)} />
                 ))}

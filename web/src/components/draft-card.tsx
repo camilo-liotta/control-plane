@@ -143,7 +143,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
           <div className="relative mt-2">
             <p
               className={cn(
-                "text-sm leading-relaxed whitespace-pre-wrap text-foreground/85",
+                "text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere text-foreground/85",
                 !expanded && long && "max-h-28 overflow-hidden"
               )}
             >
