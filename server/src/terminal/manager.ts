@@ -6,19 +6,28 @@ import fs from "node:fs"
 import os from "node:os"
 
 import { childEnv } from "../claude/env.ts"
-import { spawnPty, type Pty } from "./pty.ts"
+import { hiddenInput, spawnPty, type Pty } from "./pty.ts"
 
 /** Lo que se guarda para reenviar al reconectar. */
 const SCROLLBACK = 256 * 1024
 /** Sin ninguna pestaña conectada durante esto, se cierra. */
 export const IDLE_MS = 60 * 60 * 1000
+/**
+ * Cuándo mirar si la entrada está oculta: un rato después de que la salida se quedó quieta (justo
+ * cuando aparece un "Password:") y después de cada Enter (una segunda vez, por si el programa
+ * tarda en apagar el eco). Sin actividad o sin nadie mirando, no se consulta.
+ */
+export const PROBE_QUIET_MS = 150
+export const PROBE_ENTER_MS = [150, 600]
 
 export interface TerminalClient {
   send(msg: TerminalServerMessage): void
 }
 
 /** Del server a la web: salida de la terminal, o que la shell terminó. */
-export type TerminalServerMessage = { t: "o"; d: string } | { t: "x"; code: number | null }
+/** Del server a la web: salida de la terminal, que la shell terminó, o si lo que tipeás no se
+ * muestra (entrada oculta: una contraseña o un secreto). */
+export type TerminalServerMessage = { t: "o"; d: string } | { t: "x"; code: number | null } | { t: "secure"; on: boolean }
 /** De la web al server: lo que tipeás, o el tamaño nuevo. */
 export type TerminalClientMessage = { t: "i"; d: string } | { t: "r"; c: number; r: number }
 
@@ -31,6 +40,9 @@ interface Terminal {
   /** Desde cuándo no hay nadie conectado (null: hay alguien). */
   idleSince: number | null
   exited: boolean
+  /** Si la entrada está oculta (lo último que se les mandó a las pestañas). */
+  secure: boolean
+  probe: Prober
 }
 
 export interface TerminalsOptions {
@@ -42,6 +54,9 @@ export interface TerminalsOptions {
   sessionAlive: (sessionId: string) => boolean
   idleMs?: number
   spawn?: typeof spawnPty
+  /** Para los tests: los tiempos de las consultas del modo. */
+  probeQuietMs?: number
+  probeEnterMs?: number[]
 }
 
 export function userShell(env: NodeJS.ProcessEnv = process.env, platform = process.platform) {
@@ -78,13 +93,32 @@ export class Terminals {
     if (cur && !cur.exited) return { token: cur.token, created: false }
     const dir = fs.existsSync(cwd) ? cwd : os.homedir()
     const pty = (this.opts.spawn ?? spawnPty)({ shell: this.opts.shell ?? userShell(this.opts.env), cwd: dir, env: terminalEnv(this.opts.env), cols, rows })
-    const term: Terminal = { sessionId, token: randomBytes(24).toString("base64url"), pty, buffer: "", clients: new Set(), idleSince: Date.now(), exited: false }
+    const term: Terminal = {
+      sessionId,
+      token: randomBytes(24).toString("base64url"),
+      pty,
+      buffer: "",
+      clients: new Set(),
+      idleSince: Date.now(),
+      exited: false,
+      secure: false,
+      probe: new Prober(async () => {
+        if (term.exited || term.clients.size === 0) return
+        const on = hiddenInput(await pty.mode())
+        if (on === term.secure || term.exited) return
+        term.secure = on
+        for (const c of term.clients) c.send({ t: "secure", on })
+      }),
+    }
+    const quiet = this.opts.probeQuietMs ?? PROBE_QUIET_MS
     pty.onData((d) => {
       term.buffer = (term.buffer + d).slice(-SCROLLBACK)
       for (const c of term.clients) c.send({ t: "o", d })
+      if (term.clients.size) term.probe.debounce(quiet)
     })
     pty.onExit((code) => {
       term.exited = true
+      term.probe.stop()
       for (const c of term.clients) c.send({ t: "x", code })
       if (this.terms.get(sessionId) === term) this.terms.delete(sessionId)
     })
@@ -104,10 +138,16 @@ export class Terminals {
     term.clients.add(client)
     term.idleSince = null
     if (term.buffer) client.send({ t: "o", d: term.buffer })
+    if (term.secure) client.send({ t: "secure", on: true })
+    term.probe.debounce(0)
+    const enter = this.opts.probeEnterMs ?? PROBE_ENTER_MS
     return {
       receive: (raw) => {
         const msg = raw as TerminalClientMessage
-        if (msg?.t === "i" && typeof msg.d === "string") term.pty.write(msg.d)
+        if (msg?.t === "i" && typeof msg.d === "string") {
+          term.pty.write(msg.d)
+          if (/[\r\n]/.test(msg.d)) for (const ms of enter) term.probe.later(ms)
+        }
         else if (msg?.t === "r" && Number.isFinite(msg.c) && Number.isFinite(msg.r)) void term.pty.resize(msg.c, msg.r)
       },
       detach: () => {
@@ -121,6 +161,7 @@ export class Terminals {
     const term = this.terms.get(sessionId)
     if (!term) return
     this.terms.delete(sessionId)
+    term.probe.stop()
     await term.pty.kill()
   }
 
@@ -134,6 +175,63 @@ export class Terminals {
     for (const [id, t] of this.terms) {
       if (!this.opts.sessionAlive(id) || (t.idleSince !== null && at - t.idleSince >= this.idleMs)) void this.close(id)
     }
+  }
+}
+
+/**
+ * Corre una consulta cuando se le pide, sin superponerlas: si llega un pedido mientras hay una
+ * corriendo, se repite una vez al terminar.
+ */
+class Prober {
+  private quiet: NodeJS.Timeout | null = null
+  private timers = new Set<NodeJS.Timeout>()
+  private running = false
+  private again = false
+  private stopped = false
+  private readonly check: () => Promise<void>
+  constructor(check: () => Promise<void>) {
+    this.check = check
+  }
+
+  /** Consulta cuando pasen `ms` sin otro pedido igual (se reinicia con cada uno). */
+  debounce(ms: number) {
+    if (this.stopped) return
+    if (this.quiet) clearTimeout(this.quiet)
+    this.quiet = setTimeout(() => ((this.quiet = null), this.run()), ms)
+    this.quiet.unref()
+  }
+
+  /** Consulta dentro de `ms`, pase lo que pase en el medio. */
+  later(ms: number) {
+    if (this.stopped) return
+    const t = setTimeout(() => (this.timers.delete(t), this.run()), ms)
+    t.unref()
+    this.timers.add(t)
+  }
+
+  stop() {
+    this.stopped = true
+    if (this.quiet) clearTimeout(this.quiet)
+    for (const t of this.timers) clearTimeout(t)
+    this.timers.clear()
+  }
+
+  private run() {
+    if (this.stopped) return
+    if (this.running) {
+      this.again = true
+      return
+    }
+    this.running = true
+    void this.check()
+      .catch(() => {})
+      .finally(() => {
+        this.running = false
+        if (this.again && !this.stopped) {
+          this.again = false
+          this.run()
+        }
+      })
   }
 }
 
