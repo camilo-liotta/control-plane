@@ -154,7 +154,7 @@ function ValuesDialog({
               )}
             </div>
           ))}
-          <pre className="max-h-40 overflow-auto rounded-md border bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap">
+          <pre className="max-h-40 overflow-auto rounded-md border bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere">
             {preview}
           </pre>
           <DialogFooter>

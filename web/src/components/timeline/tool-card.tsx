@@ -370,7 +370,7 @@ export function OutgoingMessage({ call }: { call: ToolCall }) {
         Mensaje a <span className="font-mono font-medium text-foreground">{to || "otra sesión"}</span>
         {failed && <span className="text-status-error">· no se entregó</span>}
       </div>
-      <p className="text-[0.85rem] whitespace-pre-wrap">{text}</p>
+      <p className="text-[0.85rem] whitespace-pre-wrap wrap-anywhere">{text}</p>
     </div>
   )
 }
