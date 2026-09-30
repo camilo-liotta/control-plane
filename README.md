@@ -280,7 +280,7 @@ Con un proyecto entero pasa lo mismo: **Archivar proyecto** (en su configuració
 
 ### La terminal
 
-Cada sesión tiene su terminal, al pie del chat: se abre y se esconde con el botón del encabezado o con <kbd>Ctrl</kbd>+<kbd>`</kbd>. Es tu shell de login (la de `$SHELL`, con tu entorno), en la carpeta de la sesión.
+Cada sesión tiene su terminal, al pie del chat: se abre y se esconde con el botón del encabezado o con <kbd>Ctrl</kbd>+<kbd>`</kbd>. Es tu shell de login (la de `$SHELL`, con tu entorno), en la carpeta de la sesión. <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>Z</kbd> y el resto de las teclas son de la shell; para copiar y pegar, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> y <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> (o <kbd>Shift</kbd>+<kbd>Insert</kbd>), y en la Mac <kbd>⌘</kbd>+<kbd>C</kbd> y <kbd>⌘</kbd>+<kbd>V</kbd>. Un archivo que soltás sobre la terminal se adjunta al mensaje, como en el resto del chat.
 
 - **Sigue viva** al cambiar de sesión o recargar la página: al volver ves lo último que mostró. Se cierra con la ✕, al archivar la sesión, al apagar el server o después de una hora sin ninguna pestaña mirándola. Cerrarla corta la shell y todo lo que lanzó.
 - **Llevar a la terminal**: los bloques de código de shell en el chat (`bash`, `sh`, `zsh`, `console`, o los que empiezan con `$ `) y los comandos entre backticks de las tareas para vos tienen un botón que abre la terminal y pega el comando **sin Enter**: lo revisás y lo corrés vos. Desde una tarea va a la terminal de la sesión que la pidió (o a la de la orquestadora, si la creaste vos).
