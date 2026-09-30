@@ -118,6 +118,7 @@ Taggeá un commit de `main` con los mismos `.github/workflows/` que `main` tiene
 - Un cambio por PR, desde una rama propia, contra `main`.
 - Contá qué cambia, por qué y cómo lo probaste. Si toca la UI, sumá una captura.
 - `npm run typecheck` y `npm test` tienen que pasar. Si arreglás un bug del server, sumá un test que lo muestre.
+- El CI (`.github/workflows/ci.yml`) corre typecheck, tests y build en cada PR y en cada push a `main`.
 - Si tocás `desktop/`, también `npm run test -w desktop`.
 - Seguí el estilo del código que tocás: mismos nombres, mismos patrones, comentarios solo donde hacen falta. Nada de frameworks nuevos sin charlarlo antes.
 - Los textos de la UI van en castellano rioplatense (voseo), con el mismo tono del resto.
