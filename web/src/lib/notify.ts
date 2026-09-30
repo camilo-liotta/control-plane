@@ -37,6 +37,15 @@ export function inDesktop() {
   return typeof window !== "undefined" && typeof window.__CONTROL_PLANE_DESKTOP__ === "object" && window.__CONTROL_PLANE_DESKTOP__ !== null
 }
 
+/**
+ * Dónde está el ícono de la app de escritorio. "Bandeja" es solo la de la web: el ícono del sistema
+ * se nombra así, para que no se confundan.
+ */
+export function trayIconPlace() {
+  const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent)
+  return mac ? "el ícono de control-plane en la barra de menú" : "el ícono de control-plane en la barra de arriba"
+}
+
 export type NotifyPermission = NotificationPermission | "unsupported"
 
 const PREF_KEY = "control-plane:os-notifications"

@@ -26,7 +26,7 @@ Opciones:
                     sirve para probar los artifacts de un build
   -h, --help        esta ayuda
 
-Las que usa la app cuando se actualiza sola ("Actualizar a vX.Y.Z" en la bandeja):
+Las que usa la app cuando se actualiza sola ("Actualizar a vX.Y.Z" en el menú del ícono):
   --app-pid <pid>     el pid de la app abierta: se la cierra dejando el server y se la reabre
   --appimage <ruta>   reemplaza ese AppImage (el que está corriendo), aunque haya apt
   --mac-app <ruta>    en la Mac, reemplaza esa control-plane.app (la que está corriendo)
@@ -223,7 +223,7 @@ main() {
     if [[ "$mode" == mac ]]; then
       say "No tiene firma de Apple: si la Mac no te deja abrirla, mirá \"La primera vez, sin firma de Apple\" en el README."
     fi
-    say "Si algo falla, el detalle está en \"Ver log del server\" de la bandeja."
+    say "Si algo falla, el detalle está en \"Ver log del server\" del menú del ícono."
   fi
 }
 
@@ -401,7 +401,7 @@ install_linux() {
   elif ((open)); then
     say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
     say "Sigue con la versión anterior hasta que la reinicies. Para pasar a la nueva sin cortar las"
-    say "sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a abrirla desde el"
+    say "sesiones: menú del ícono → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a abrirla desde el"
     say "lanzador (adopta el mismo server)."
   fi
 }

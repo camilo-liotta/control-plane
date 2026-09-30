@@ -315,7 +315,7 @@ fn check<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
             Toast {
                 level: "info".into(),
                 title: format!("Hay una versión nueva de control-plane (v{v})"),
-                body: Some("Tocá para actualizar. Las sesiones siguen abiertas.".into()),
+                body: Some(format!("Tocá para actualizar, o más tarde desde el menú del ícono → Actualizar a v{v}. Las sesiones siguen abiertas.")),
                 local: Some(Local::Update),
                 ..Toast::default()
             },

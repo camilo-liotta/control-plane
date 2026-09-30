@@ -72,7 +72,7 @@ export function CommandPalette() {
         <CommandGroup heading="Acciones">
           <CommandItem onSelect={() => setUi({ palette: false, inbox: true })}>
             <Inbox />
-            Abrir la bandeja
+            Abrir la Bandeja
           </CommandItem>
           <CommandItem onSelect={() => setUi({ palette: false, newProject: true })}>
             <Plus />

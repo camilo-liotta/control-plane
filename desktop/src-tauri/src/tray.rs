@@ -252,7 +252,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&status)
         .separator()
         .text(OPEN, "Abrir")
-        .text(INBOX, "Bandeja")
+        .text(INBOX, "Abrir la Bandeja")
         .item(&projects)
         .separator()
         .item(&notifications)
