@@ -40,6 +40,35 @@ die() {
   printf '✗ %s\n' "$*" >&2
   exit 1
 }
+
+# El node a usar, como lo busca la app: el que resolvió ella (CONTROL_PLANE_NODE), el del PATH si
+# es ≥ 24 o, si no, el de las rutas de respaldo (Homebrew, ~/.local/bin, Volta, nvm, fnm). Una app
+# abierta desde el lanzador no trae el PATH de tu shell: sin esto no ve el node de nvm.
+node_major_of() { "$1" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+use_node() {
+  local n="${CONTROL_PLANE_NODE:-}" d best=""
+  if [[ -n "$n" ]]; then
+    [[ "$n" == */* ]] || n="$(command -v "$n" || true)"
+    [[ -n "$n" && -x "$n" ]] || die "CONTROL_PLANE_NODE=${CONTROL_PLANE_NODE} no es un ejecutable."
+    PATH="$(dirname "$n"):$PATH"
+    export PATH
+    return 0
+  fi
+  if command -v node >/dev/null && (($(node_major_of node) >= 24)); then return 0; fi
+  for d in /opt/homebrew/bin /usr/local/bin "${HOME:-}/.local/bin" "${HOME:-}/.volta/bin" "${HOME:-}/.bun/bin" \
+    "${HOME:-}"/.nvm/versions/node/*/bin "${HOME:-}"/.local/share/fnm/node-versions/*/installation/bin \
+    "${HOME:-}/Library/Application Support/fnm/node-versions"/*/installation/bin; do
+    # En nvm y fnm, las carpetas van en orden: queda la última que sirve (la más nueva).
+    if [[ -x "$d/node" ]] && (($(node_major_of "$d/node") >= 24)); then
+      best="$d"
+      case "$d" in */.nvm/* | */fnm/*) ;; *) break ;; esac
+    fi
+  done
+  if [[ -n "$best" ]]; then
+    PATH="$best:$PATH"
+    export PATH
+  fi
+}
 # Corre un comando, o solo lo muestra con --dry-run.
 run() {
   if ((DRY)); then
@@ -79,6 +108,7 @@ fi
 
 # ---- 1. Lo que hace falta ----
 
+use_node
 command -v node >/dev/null || die "No encuentro Node. Instalá Node 24 (nvm, fnm o nodejs.org) y volvé a probar."
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 ((NODE_MAJOR >= 24)) || die "Tenés Node $(node --version) y hace falta el 24 o más nuevo."

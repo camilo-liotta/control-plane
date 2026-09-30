@@ -28,6 +28,8 @@ declare global {
       dragging: (on: unknown) => void
       /** Hay una versión nueva de la app: solo para mostrar el cartel (no actualiza nada). */
       update: (info: unknown) => boolean
+      /** "Actualizar a…" falló: el motivo y lo último del log, para mostrarlo acá también. */
+      updateFailed: (info: unknown) => boolean
     }
   }
 }
@@ -196,6 +198,29 @@ export function updateFromDesktop(info: unknown): boolean {
   return true
 }
 
+/**
+ * La actualización falló. El aviso del sistema puede no verse (o haberse ido), así que la página
+ * también lo muestra, con "Ver log". Solo muestra: no le pide nada a la app.
+ */
+export function updateFailedFromDesktop(info: unknown): boolean {
+  if (!info || typeof info !== "object") return false
+  const { version, error, logPath, log } = info as Record<string, unknown>
+  if (typeof version !== "string" || !/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(version)) return false
+  const failure = {
+    version,
+    error: typeof error === "string" ? error.slice(0, 500) : "",
+    logPath: typeof logPath === "string" ? logPath.slice(0, 500) : "",
+    log: typeof log === "string" ? log.slice(-20_000) : "",
+  }
+  toast.error(`No pude actualizar a v${version}`, {
+    id: `update-failed-${version}`,
+    description: failure.error || undefined,
+    duration: Infinity,
+    action: { label: "Ver log", onClick: () => useUi.getState().set({ updateFailure: failure }) },
+  })
+  return true
+}
+
 /** Registra window.__cpDesktop, solo dentro de la app de escritorio. */
 export function installDesktopApi() {
   if (!inDesktop()) return
@@ -205,5 +230,6 @@ export function installDesktopApi() {
     dropFiles: dropFromDesktop,
     dragging: draggingFromDesktop,
     update: updateFromDesktop,
+    updateFailed: updateFailedFromDesktop,
   }
 }
