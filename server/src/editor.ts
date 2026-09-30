@@ -4,6 +4,7 @@ import path from "node:path"
 
 import { baseRevision, fileAt } from "./changes.ts"
 import { childEnv } from "./claude/env.ts"
+import { readRepos } from "./overview.ts"
 import type { EditorSettings } from "./shared/types.ts"
 
 const DEFAULTS: EditorSettings = { kind: "code", command: "" }
@@ -45,6 +46,30 @@ export function resolveInside(dir: string, rel: string): string {
   return target
 }
 
+/**
+ * La carpeta a abrir de un proyecto: la suya, o (con `target`) uno de sus repos o worktrees conocidos,
+ * comparando por realpath. Cualquier otra ruta se rechaza.
+ */
+export async function projectFolder(root: string, target?: string): Promise<string> {
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p)
+    } catch {
+      return null
+    }
+  }
+  const rootReal = real(root)
+  if (!rootReal) throw new Error("La carpeta del proyecto ya no existe")
+  if (!target) return root
+  if (typeof target !== "string" || target.includes("\0")) throw new Error("Ruta inválida")
+  const want = real(target)
+  if (want === rootReal) return root
+  const known = (await readRepos(root)).map((r) => r.path)
+  const match = known.find((k) => want !== null && real(k) === want)
+  if (!match) throw new Error("Esa carpeta no es del proyecto")
+  return match
+}
+
 /** Parte un comando en argumentos, respetando comillas simples y dobles (sin shell). */
 export function splitCommand(cmd: string): string[] {
   const out: string[] = []
@@ -82,6 +107,21 @@ export function editorCommand(s: EditorSettings, opts: { dir: string; file: stri
   }
   // La carpeta primero: el editor usa (o abre) la ventana de ese repo.
   return { bin: s.kind, args: opts.base ? [opts.dir, "--diff", opts.base, opts.file] : [opts.dir, "-g", opts.file] }
+}
+
+/**
+ * El binario y los argumentos para abrir una carpeta entera. En un comando propio, `{dir}` (o `{file}`,
+ * si es lo único que tiene) es la carpeta; sin ninguno de los dos, va al final. `{base}` no aplica.
+ */
+export function folderCommand(s: EditorSettings, dir: string): { bin: string; args: string[] } {
+  if (s.kind === "custom") {
+    const [bin, ...rest] = splitCommand(s.command)
+    if (!bin) throw new Error("Falta el comando del editor. Configuralo en Ajustes")
+    const args = rest.filter((a) => !a.includes("{base}")).map((a) => a.replace(/\{(file|dir)\}/g, dir))
+    if (!rest.some((a) => /\{(file|dir)\}/.test(a))) args.push(dir)
+    return { bin, args }
+  }
+  return { bin: s.kind, args: [dir] }
 }
 
 /** El editor con el que se abren los cambios de una sesión, y lo que hace falta para abrirlos. */
@@ -145,6 +185,12 @@ export class Editor {
     const file = path.join(dir, `${path.basename(rel, ext)} (${label})${ext}`)
     fs.writeFileSync(file, content, { mode: 0o444 })
     return file
+  }
+
+  /** Abre una carpeta (la del proyecto o uno de sus worktrees) en el editor. */
+  async openFolder(dir: string): Promise<void> {
+    const cmd = folderCommand(this.settings(), dir)
+    await this.launch(cmd.bin, cmd.args, dir)
   }
 
   /**

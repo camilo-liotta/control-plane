@@ -1,5 +1,6 @@
-import { ArrowRight, ChevronRight, FolderGit2, GitBranch, GitCommitHorizontal } from "lucide-react"
+import { ArrowRight, ChevronRight, FolderGit2, GitBranch, GitCommitHorizontal, SquareArrowOutUpRight } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 import { useLocation } from "wouter"
 
 import type { Project, ProjectOverview, RepoInfo } from "@shared/types"
@@ -9,7 +10,9 @@ import { ProjectScheduled } from "@/components/scheduled"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
+import { EDITOR_NAMES, useEditor } from "@/lib/editor"
 import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
 import { useStore } from "@/lib/store"
@@ -82,8 +85,52 @@ function repoName(r: RepoInfo) {
   return r.github ? `${r.github.owner}/${r.github.repo}` : r.isRoot ? "Repositorio git" : r.name
 }
 
+/** Abre el proyecto (o una de sus carpetas) en el editor de Ajustes; si falla, lo dice. */
+function useOpenInEditor(projectId: string) {
+  return async (path?: string) => {
+    try {
+      await api.openProjectInEditor(projectId, path)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+}
+
+function OpenFolder({ projectId, path }: { projectId: string; path: string }) {
+  const settings = useEditor()
+  const open = useOpenInEditor(projectId)
+  const label = `Abrir en ${settings ? EDITOR_NAMES[settings.kind] : "VS Code"}`
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => void open(path)}
+          aria-label={label}
+          className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <SquareArrowOutUpRight className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** "Abrir en VS Code" (o el editor de Ajustes): la carpeta del proyecto entera. */
+function OpenProject({ projectId }: { projectId: string }) {
+  const settings = useEditor()
+  const open = useOpenInEditor(projectId)
+  return (
+    <Button size="xs" variant="outline" className="shrink-0" onClick={() => void open()}>
+      <SquareArrowOutUpRight />
+      Abrir en {settings ? EDITOR_NAMES[settings.kind] : "VS Code"}
+    </Button>
+  )
+}
+
 /** Un repo con su checkout principal arriba y sus worktrees abajo, cada uno con su rama y su estado. */
-function RepoGroup({ main, worktrees }: { main: RepoInfo; worktrees: RepoInfo[] }) {
+function RepoGroup({ main, worktrees, projectId }: { main: RepoInfo; worktrees: RepoInfo[]; projectId: string }) {
   const gh = main.github
   return (
     <div className="min-w-0 space-y-1.5">
@@ -102,6 +149,7 @@ function RepoGroup({ main, worktrees }: { main: RepoInfo; worktrees: RepoInfo[] 
         )}
         <Branch repo={main} />
         <RepoState repo={main} />
+        <OpenFolder projectId={projectId} path={main.path} />
       </div>
       <Commit repo={main} />
       {worktrees.length > 0 && (
@@ -114,6 +162,7 @@ function RepoGroup({ main, worktrees }: { main: RepoInfo; worktrees: RepoInfo[] 
                   {shortPath(w.path)}
                 </span>
                 <RepoState repo={w} />
+                <OpenFolder projectId={projectId} path={w.path} />
               </span>
               <span className="hidden min-w-0 sm:block">
                 <Commit repo={w} />
@@ -165,25 +214,38 @@ function RepoSummary({ repos, groups }: { repos: RepoInfo[]; groups: { main: Rep
   )
 }
 
-function Repos({ data }: { data: ProjectOverview | null }) {
+function Repos({ data, projectId }: { data: ProjectOverview | null; projectId: string }) {
   const open = useSectionOpen("project-repos")
   const toggle = usePanelSections((s) => s.toggle)
   const groups = useMemo(() => groupRepos(data?.repos ?? []), [data])
-  if (!data) return <div className="border-b px-4 py-3"><Skeleton className="h-6 w-2/3" /></div>
+  if (!data)
+    return (
+      <div className="border-b px-4 py-3">
+        <Skeleton className="h-6 w-2/3" />
+      </div>
+    )
   if (!data.repos.length)
-    return <p className="border-b px-4 py-3 text-sm text-muted-foreground">La carpeta del proyecto no es un repositorio git.</p>
+    return (
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">La carpeta del proyecto no es un repositorio git.</p>
+        <OpenProject projectId={projectId} />
+      </div>
+    )
   return (
     <Collapsible open={open} onOpenChange={(v) => toggle("project-repos", v)} className="border-b">
-      <CollapsibleTrigger
-        className="group flex w-full min-w-0 items-center gap-2 rounded-t-xl px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
-        aria-label={open ? "Plegar los repos" : "Ver los repos y sus ramas"}
-      >
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-        <RepoSummary repos={data.repos} groups={groups} />
-      </CollapsibleTrigger>
+      <div className="flex items-center gap-2 pr-4">
+        <CollapsibleTrigger
+          className="group flex min-w-0 flex-1 items-center gap-2 rounded-tl-xl px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
+          aria-label={open ? "Plegar los repos" : "Ver los repos y sus ramas"}
+        >
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+          <RepoSummary repos={data.repos} groups={groups} />
+        </CollapsibleTrigger>
+        <OpenProject projectId={projectId} />
+      </div>
       <CollapsibleContent className="space-y-4 px-4 pb-4 pl-10">
         {groups.map((g) => (
-          <RepoGroup key={g.main.path} main={g.main} worktrees={g.worktrees} />
+          <RepoGroup key={g.main.path} main={g.main} worktrees={g.worktrees} projectId={projectId} />
         ))}
       </CollapsibleContent>
     </Collapsible>
@@ -227,7 +289,7 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
   const t = data?.tokens
   return (
     <section className="rounded-xl border bg-card">
-      <Repos data={data} />
+      <Repos data={data} projectId={project.id} />
       <ProjectScheduled sessions={projectSessionsList} />
       <div className="grid divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <Stat

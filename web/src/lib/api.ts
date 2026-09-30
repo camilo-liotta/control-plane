@@ -150,6 +150,7 @@ export const api = {
   openFile: (id: string, path: string, side: "uncommitted" | "committed") =>
     request<{ diff: boolean }>("POST", `/api/sessions/${id}/open-file`, { path, side }),
   editor: () => request<EditorSettings>("GET", "/api/editor"),
+  openProjectInEditor: (projectId: string, path?: string) => request<{ dir: string }>("POST", `/api/projects/${projectId}/open-in-editor`, { path }),
   saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
   cancelScheduled: (id: string, itemId: string, clientId: string) =>
     request<{ sent: boolean }>("POST", `/api/sessions/${id}/scheduled/${encodeURIComponent(itemId)}/cancel`, { clientId }),

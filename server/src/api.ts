@@ -11,7 +11,7 @@ import { sessionChanges } from "./changes.ts"
 import type { Compaction, CompactionSelection } from "./compaction.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
-import type { Editor } from "./editor.ts"
+import { projectFolder, type Editor } from "./editor.ts"
 import type { Hub } from "./hub.ts"
 import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
@@ -449,6 +449,16 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => {
       const s = requireSession(req.params.id)
       return editor.open(s.cwd, String(req.body?.path ?? ""), req.body?.side === "committed" ? "committed" : "uncommitted")
+    })
+  )
+
+  // Abrir el proyecto (o uno de sus repos o worktrees) en el editor configurado.
+  app.post<{ Params: { id: string }; Body: { path?: string } }>("/api/projects/:id/open-in-editor", (req, reply) =>
+    guard(reply, async () => {
+      const p = requireProject(req.params.id)
+      const dir = await projectFolder(p.repoPath, req.body?.path)
+      await editor.openFolder(dir)
+      return { dir }
     })
   )
 
