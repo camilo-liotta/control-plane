@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -208,7 +209,14 @@ test("de punta a punta: read -s pone el candado, Enter lo saca, y el secreto no 
   }
 })
 
-test("sudo pidiendo contraseña pone el candado, y cortarlo con Ctrl+C lo saca", { skip: !fs.existsSync("/usr/bin/sudo") && "sin sudo" }, async () => {
+/** Por qué no se puede probar sudo acá: no está, o no pide contraseña (los runners del CI). */
+function noSudoPrompt() {
+  if (!fs.existsSync("/usr/bin/sudo")) return "sin sudo"
+  const r = spawnSync("sudo", ["-n", "true"], { stdio: "ignore", timeout: 5000 })
+  return r.status === 0 ? "sudo no pide contraseña" : false
+}
+
+test("sudo pidiendo contraseña pone el candado, y cortarlo con Ctrl+C lo saca", { skip: noSudoPrompt() }, async () => {
   const t = await realTerminal()
   try {
     t.link.receive({ t: "i", d: "sudo -k; sudo true\r" })
