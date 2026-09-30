@@ -20,11 +20,42 @@ export interface Pty {
   readonly pid: number
   write(data: string): void
   resize(cols: number, rows: number): Promise<void>
+  /** El modo de la terminal (lo que dice `stty -a` del esclavo), o null si no se pudo leer. */
+  mode(): Promise<TermMode | null>
   /** Corta la shell y todo lo que lanzó. Resuelve cuando no queda nada. */
   kill(): Promise<void>
   onData(cb: (data: string) => void): void
   onExit(cb: (code: number | null) => void): void
 }
+
+/** Lo que nos importa de los termios del esclavo. */
+export interface TermMode {
+  echo: boolean
+  icanon: boolean
+  /** Muestra el Enter aunque no muestre lo demás. */
+  echonl: boolean
+}
+
+/**
+ * Lee `echo`, `icanon` y `echonl` de la salida de `stty -a` (la de GNU y la de BSD/Mac nombran
+ * igual los flags; apagados llevan `-` delante). null si no aparecen echo e icanon.
+ */
+export function parseSttyMode(out: string): TermMode | null {
+  const words = new Set(out.split(/[\s;]+/))
+  const flag = (name: string) => (words.has(name) ? true : words.has(`-${name}`) ? false : null)
+  const echo = flag("echo")
+  const icanon = flag("icanon")
+  return echo === null || icanon === null ? null : { echo, icanon, echonl: flag("echonl") ?? false }
+}
+
+/**
+ * Entrada oculta: sin eco y leyendo por líneas, lo que hacen `read -s`, `ssh`, `passwd` o el sudo
+ * clásico al pedir una contraseña (la heurística de Ghostty). El sudo-rs de Ubuntu lee de a una
+ * tecla (sin modo canónico) pero deja `echonl`, que sin `echo` es justo eso: no mostrar lo tipeado
+ * pero sí el Enter. La shell editando su línea (readline, zle), less, top o nano apagan el eco y el
+ * modo canónico, sin echonl: eso no cuenta.
+ */
+export const hiddenInput = (m: TermMode | null) => !!m && !m.echo && (m.icanon || m.echonl)
 
 /** Comillas simples de sh: el texto no se interpreta. */
 export const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
@@ -111,6 +142,13 @@ export function spawnPty(opts: PtyOptions, platform: NodeJS.Platform = process.p
       if (!where) return
       const flag = platform === "darwin" ? "-f" : "-F"
       await run("stty", [flag, where.tty, "rows", String(clamp(r, 1, 1000)), "cols", String(clamp(c, 2, 1000))]).catch(() => {})
+    },
+    mode: async () => {
+      const where = await locate()
+      if (!where) return null
+      const flag = platform === "darwin" ? "-f" : "-F"
+      const r = await run("stty", [flag, where.tty, "-a"], { timeout: 2000 }).catch(() => null)
+      return r ? parseSttyMode(r.stdout) : null
     },
     kill: async () => {
       if (exited) return
