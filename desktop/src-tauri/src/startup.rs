@@ -17,9 +17,12 @@ use tauri::{AppHandle, Runtime};
 pub const HIDDEN_ARG: &str = "--hidden";
 /// Con `--quit`: salir dejando el server corriendo.
 pub const KEEP_SERVER_ARG: &str = "--keep-server";
+/// Con `--quit`: para actualizar. El server guarda las sesiones activas, se detiene y la app sale;
+/// la app nueva lanza el server nuevo, que las retoma.
+pub const RESTART_FOR_UPDATE_ARG: &str = "--restart-for-update";
 
-/// Lo que muestra `--help`. `install.sh` busca "--quit --keep-server" en el binario instalado para
-/// saber si lo entiende, sin ejecutarlo: este texto es lo que lo deja ahí (una comparación de
+/// Lo que muestra `--help`. `install.sh` y `get.sh` buscan "--quit --restart-for-update" (y
+/// "--quit --keep-server", en las anteriores) en el binario instalado para saber si lo entiende, sin ejecutarlo: este texto es lo que lo deja ahí (una comparación de
 /// strings cortos el compilador la hace con números). No lo saques sin cambiar el script.
 pub const USAGE: &str = "\
 control-plane: el dashboard de control-plane en una ventana propia.
@@ -28,6 +31,9 @@ control-plane: el dashboard de control-plane en una ventana propia.
   control-plane-desktop --hidden              la abre escondida: solo el ícono, sin ventana
   control-plane-desktop --quit                sale como con \"Salir\" (según \"Al salir\")
   control-plane-desktop --quit --keep-server  sale sin preguntar y deja el server corriendo
+  control-plane-desktop --quit --restart-for-update
+                                              para actualizar: guarda las sesiones activas,
+                                              detiene el server y sale (la app nueva las retoma)
   control-plane-desktop --help                esta ayuda
 ";
 pub const TOKEN_ARG: &str = "--activation-token=";
@@ -217,6 +223,7 @@ mod tests {
     #[test]
     fn usage_names_the_flags_the_installer_looks_for() {
         assert!(USAGE.contains(&format!("--quit {KEEP_SERVER_ARG}")));
+        assert!(USAGE.contains(&format!("--quit {RESTART_FOR_UPDATE_ARG}")));
         assert!(USAGE.contains(HIDDEN_ARG));
     }
 

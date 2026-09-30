@@ -20,6 +20,7 @@ import { SessionToolsSheet } from "@/components/tools/session-tools-sheet"
 import { UpdateFailureDialog } from "@/components/update-failure-dialog"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
+import { restartHint, versionMismatch } from "@/lib/server-version"
 import { useCurrentAccount, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { trayIconPlace } from "@/lib/notify"
@@ -126,6 +127,20 @@ function ConnectionBanner() {
 const UPDATE_DISMISSED_KEY = "control-plane:update-dismissed"
 
 /** La app de escritorio avisa que hay una versión nueva. Solo informa: se actualiza desde el menú del ícono. */
+/** Si el server es de otra versión que la app o la página: algunas funciones no andan. */
+function VersionBanner() {
+  const server = useStore((s) => s.meta?.version)
+  const mismatch = versionMismatch(server)
+  if (!mismatch) return null
+  return (
+    <div className="flex items-center justify-center gap-3 border-b border-status-attention/30 bg-status-attention/10 px-4 py-1.5 text-xs">
+      <span>
+        El server es la v{mismatch.server} y {mismatch.where === "app" ? "la app" : "esta página"} es la v{mismatch.expected}: algunas funciones no van a andar hasta que lo reinicies, {restartHint()}.
+      </span>
+    </div>
+  )
+}
+
 function UpdateBanner() {
   const update = useUi((s) => s.desktopUpdate)
   const [dismissed, setDismissed] = useState(() => {
@@ -176,6 +191,7 @@ export default function App() {
       <LeaveDeletedProject />
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <ConnectionBanner />
+        <VersionBanner />
         <UpdateBanner />
         {!loaded ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">

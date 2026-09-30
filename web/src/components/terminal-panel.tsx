@@ -10,6 +10,7 @@ import type { Session } from "@shared/types"
 
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
+import { isNotFound, STALE_SERVER } from "@/lib/server-version"
 import { useTerminal } from "@/lib/terminal"
 import { cn } from "@/lib/utils"
 
@@ -98,7 +99,7 @@ export function TerminalPanel({ session }: { session: Session }) {
         }
       })
       .catch((err: Error) => {
-        setError(err.message)
+        setError(isNotFound(err) ? STALE_SERVER : err.message)
         setStatus("error")
       })
 

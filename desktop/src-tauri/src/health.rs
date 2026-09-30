@@ -102,7 +102,7 @@ pub fn classify(health: &Response, root: Option<&Response>) -> Probe {
     Probe::Other(format!("respondió {} en /api/health", health.status))
 }
 
-enum Get {
+pub(crate) enum Get {
     Refused,
     Timeout,
     Garbled,
@@ -110,6 +110,18 @@ enum Get {
 }
 
 fn get(port: u16, path: &str, timeout: Duration) -> Get {
+    request(port, "GET", path, None, timeout)
+}
+
+/// Un pedido HTTP a mano a `127.0.0.1:<port>`, con el Host que acepta el server y sin Origin.
+/// Con cuerpo, va como JSON.
+pub(crate) fn request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    timeout: Duration,
+) -> Get {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
         Ok(s) => s,
@@ -118,9 +130,15 @@ fn get(port: u16, path: &str, timeout: Duration) -> Get {
     };
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
-    );
+    let req = match body {
+        None => format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+        ),
+        Some(b) => format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{b}",
+            b.len()
+        ),
+    };
     if stream.write_all(req.as_bytes()).is_err() {
         return Get::Garbled;
     }

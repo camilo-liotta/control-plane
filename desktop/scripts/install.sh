@@ -6,7 +6,7 @@
 #   npm run app:install -- --no-install   compila y deja el paquete, sin instalarlo
 #
 # Solo para probar (ver CONTRIBUTING): CONTROL_PLANE_INSTALL_BIN=<binario> reinicia ese binario
-# como si actualizara (--quit --keep-server y volver a abrirlo), sin compilar ni instalar nada.
+# como si actualizara (--quit --restart-for-update y volver a abrirlo), sin compilar ni instalar nada.
 #
 # Correrlo de nuevo actualiza: compila lo que haya en el repo (después de un `git pull`) y reemplaza
 # la app instalada. Las sesiones no se cortan: el server sigue corriendo y la app lo adopta al abrir.
@@ -210,11 +210,13 @@ fi
 
 # ---- 3. Instalar ----
 
-# ¿El binario instalado entiende `--quit --keep-server` (salir dejando el server, sin preguntar)?
-# Se busca el texto en el binario, sin ejecutarlo: correrlo con un flag que no conoce le llegaría
-# a la app abierta como una segunda apertura.
-knows_keep_server() { grep -qaF -- "--quit --keep-server" "$1" 2>/dev/null; }
-WAIT_SECS=15
+# ¿El binario instalado sabe reiniciarse para actualizar (`--quit --restart-for-update`: el server
+# guarda las sesiones activas, se detiene y la app sale)? Se busca el texto en el binario, sin
+# ejecutarlo: correrlo con un flag que no conoce le llegaría a la app abierta como una segunda
+# apertura.
+knows_restart() { grep -qaF -- "--quit --restart-for-update" "$1" 2>/dev/null; }
+# Cerrar ahora incluye detener el server (el camino ordenado, hasta 15 s y lo que tarde en guardar).
+WAIT_SECS=45
 
 if [[ "$OS" == Darwin ]]; then
   DEST=/Applications
@@ -230,12 +232,15 @@ if [[ "$OS" == Darwin ]]; then
     if [[ -d "$TARGET" ]]; then
       EXE="$TARGET/Contents/MacOS/$(defaults read "$TARGET/Contents/Info" CFBundleExecutable 2>/dev/null)"
     fi
-    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-    if [[ -x "$EXE" ]] && knows_keep_server "$EXE"; then
-      run "$EXE" --quit --keep-server
+    if [[ -x "$EXE" ]] && knows_restart "$EXE"; then
+      say "Cierro la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+      run "$EXE" --quit --restart-for-update
     else
-      # Una app vieja no conoce --keep-server: salir como desde el Dock tampoco pregunta y deja
-      # el server corriendo.
+      # Una app de antes no sabe reiniciarse para actualizar: salir como desde el Dock deja su
+      # server corriendo. La nueva lo detecta al abrir y lo reinicia (sola si no hay sesiones
+      # trabajando; si hay, desde el menú del ícono).
+      say "La app abierta es de una versión anterior: la cierro, pero su server queda corriendo."
+      say "Al abrirse, la nueva lo reinicia sola (si hay sesiones trabajando, te lo ofrece en el menú del ícono → Reiniciar el server)."
       run osascript -e 'quit app "control-plane"'
     fi
     if ((!DRY)); then
@@ -258,31 +263,38 @@ else
   BIN="${TEST_BIN:-/usr/bin/control-plane-desktop}"
   # La app (no sus procesos de WebKit): el binario como primer argumento de la línea de comando.
   app_pids() { pgrep -f "^$(printf '%s' "$BIN" | sed 's/[.[\*^$]/\\&/g')( |$)"; }
-  RESTART=0
+  # Antes de instalar: ¿está abierta, y sabe reiniciarse para actualizar? (Después del apt, el
+  # binario ya es el nuevo.)
+  OPEN=0
+  KNOWS=0
   if app_pids >/dev/null; then
-    if knows_keep_server "$BIN"; then
-      say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-      run "$BIN" --quit --keep-server
-      RESTART=1
-      if ((!DRY)); then
-        for _ in $(seq $((WAIT_SECS * 2))); do
-          app_pids >/dev/null || break
-          sleep 0.5
-        done
-        if app_pids >/dev/null; then
-          warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
-          RESTART=0
-        fi
-      fi
-    else
-      say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
-    fi
+    OPEN=1
+    knows_restart "$BIN" && KNOWS=1
   fi
+  # 1. Instalar, con la app todavía abierta: si falla o se cancela, la app nunca se cerró.
   if [[ -n "$TEST_BIN" ]]; then
     say "Modo prueba: no instalo ningún paquete."
   else
     say "Instalo el paquete (te va a pedir la contraseña)…"
     run sudo apt install -y "$PKG"
+  fi
+  # 2. Cerrarla: el server guarda las sesiones activas y se detiene. La nueva lanza el server
+  #    nuevo y las retoma: app y server se actualizan juntos.
+  RESTART=0
+  if ((OPEN && KNOWS)); then
+    say "Cierro la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+    run "$BIN" --quit --restart-for-update
+    RESTART=1
+    if ((!DRY)); then
+      for _ in $(seq $((WAIT_SECS * 2))); do
+        app_pids >/dev/null || break
+        sleep 0.5
+      done
+      if app_pids >/dev/null; then
+        warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
+        RESTART=0
+      fi
+    fi
   fi
   WHERE="$BIN"
   if ((RESTART)); then
@@ -295,7 +307,7 @@ else
       UNSET=(-u NODE_ENV)
       while IFS= read -r v; do
         case "$v" in
-          npm_* | npm_config_*) UNSET+=(-u "$v") ;;
+          npm_*) UNSET+=(-u "$v") ;;
           CONTROL_PLANE_*) [[ -n "$TEST_BIN" ]] || UNSET+=(-u "$v") ;;
         esac
       done < <(compgen -e)
@@ -306,10 +318,12 @@ else
         env "${UNSET[@]}" setsid "$BIN" </dev/null >/dev/null 2>&1 &
       fi
     fi
-  elif app_pids >/dev/null 2>&1; then
-    say "La app sigue abierta con la versión anterior hasta que la reinicies. Para pasar a la nueva"
-    say "sin cortar las sesiones: menú del ícono → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a"
-    say "abrirla desde el lanzador (adopta el mismo server)."
+  elif ((OPEN)); then
+    say "La app abierta es de una versión anterior, que no sabe reiniciarse para actualizar: no la cierro."
+    say "Para pasar a la nueva: menú del ícono → Salir → \"Detener y salir\", y volvé a abrirla desde el"
+    say "lanzador: arranca con el server nuevo (las sesiones se reanudan cuando les escribís)."
+    say "Si la cerrás dejando el server, la nueva lo detecta y te ofrece reiniciarlo (menú del ícono →"
+    say "Reiniciar el server)."
   fi
 fi
 

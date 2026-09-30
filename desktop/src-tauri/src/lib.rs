@@ -14,6 +14,7 @@ mod macos;
 pub mod node;
 pub mod notify;
 pub mod policy;
+pub mod restart;
 pub mod screen;
 pub mod server_log;
 pub mod server_state;
@@ -101,6 +102,12 @@ fn hooks() -> Hooks {
                 .summary
                 .map(|s| s.running)
         }),
+        working: Box::new(|app| {
+            app.state::<DesktopWs>()
+                .snapshot()
+                .summary
+                .map(|s| s.working)
+        }),
     }
 }
 
@@ -138,11 +145,16 @@ pub fn run() {
         // Primero: una segunda apertura enfoca la ventana que ya está y termina.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // `control-plane --quit` desde una terminal: salir como con "Salir" (pasa por la
-            // decisión sobre el server). Con `--keep-server` (el instalador, al actualizar) sale
-            // dejando el server corriendo, sin preguntar y sin cambiar "Al salir".
+            // decisión sobre el server). Con `--restart-for-update` (el instalador, al actualizar)
+            // el server guarda las sesiones activas, se detiene y la app sale; con `--keep-server`
+            // sale dejándolo. Ninguno pregunta ni cambia "Al salir".
             if argv.iter().any(|a| a == "--quit") {
-                if argv.iter().any(|a| a == startup::KEEP_SERVER_ARG) {
-                    app.state::<Sidecar>().keep_server_on_exit();
+                if argv.iter().any(|a| a == startup::RESTART_FOR_UPDATE_ARG) {
+                    app.state::<Sidecar>()
+                        .set_quit_mode(policy::QuitMode::RestartForUpdate);
+                } else if argv.iter().any(|a| a == startup::KEEP_SERVER_ARG) {
+                    app.state::<Sidecar>()
+                        .set_quit_mode(policy::QuitMode::KeepServer);
                 }
                 app.exit(0);
                 return;

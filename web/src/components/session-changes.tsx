@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { api } from "@/lib/api"
 import { EDITOR_NAMES, useEditor } from "@/lib/editor"
 import { useSectionOpen } from "@/lib/panel-sections"
+import { isNotFound, STALE_SERVER } from "@/lib/server-version"
 import { cn } from "@/lib/utils"
 
 function Delta({ added, deleted, className }: { added: number; deleted: number; className?: string }) {
@@ -113,7 +114,7 @@ export function ChangesSection({ session }: { session: Session }) {
       setError(null)
     } catch (err) {
       if (current.current !== id) return
-      setError(err instanceof Error ? err.message : String(err))
+      setError(isNotFound(err) ? STALE_SERVER : err instanceof Error ? err.message : String(err))
     } finally {
       if (current.current === id) setLoading(false)
     }

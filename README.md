@@ -66,8 +66,8 @@ git pull && npm run app:install
   - En la Mac queda en `/Applications/control-plane.app`, o en `~/Applications` si no podés escribir en `/Applications`.
   - En Linux se instala el `.deb` con `sudo apt install`.
 - Antes revisa lo que hace falta (Node 24, Rust, y las herramientas de Xcode en la Mac o las librerías de Tauri en Linux). Si falta algo, te dice cómo instalarlo o te pregunta si lo instala.
-- **Actualizar no corta las sesiones**: si la app está abierta, la cierra dejando el server corriendo (`--quit --keep-server`, sin preguntar y sin tocar tu ajuste de **Al salir**), instala la nueva y la vuelve a abrir, y esa adopta el mismo server.
-  - La primera vez que actualizás en Linux una app instalada antes de este cambio, no la cierra, porque esa versión no sabe salir dejando el server. Reiniciala vos una vez: menú del ícono → Al salir ▸ "Dejarlo corriendo" → Salir, y abrila de nuevo. En la Mac, esa primera vez la cierra como desde el Dock, que también deja el server.
+- **App y server se actualizan juntos, y las sesiones siguen solas**: instala la nueva, cierra la app abierta con `--quit --restart-for-update` (el server guarda qué sesiones estaban activas y se detiene, sin preguntar y sin tocar tu ajuste de **Al salir**) y la vuelve a abrir. La nueva lanza el server nuevo, que retoma esas sesiones: las que estaban trabajando siguen desde donde quedaron.
+  - Si la app abierta es de antes de este cambio, no sabe reiniciarse para actualizar. En Linux no la cierra y te dice cómo hacerlo (menú del ícono → Salir → "Detener y salir"). En la Mac la cierra como desde el Dock, que deja su server: la nueva lo detecta y lo reinicia (ver [Un server más viejo que la app](#un-server-más-viejo-que-la-app)).
 - `npm run app:install -- --dry-run` muestra lo que haría sin tocar nada. `-- --no-install` compila y deja el paquete sin instalarlo.
 - Si falla, el detalle de la compilación queda en `/tmp/control-plane-install.log` (o en `$TMPDIR` en la Mac).
 
@@ -142,7 +142,8 @@ Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--qu
   - **Preguntar** (el default): "Hay N sesiones abiertas: detener el server las cierra (se reanudan después)", con **Detener y salir**, **Dejarlo corriendo** y **Cancelar**.
   - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en el menú del ícono.
   - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
-- `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia). Es lo que usa `npm run app:install` para actualizar sin cortar las sesiones.
+- `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia).
+- `--quit --restart-for-update` sale sin preguntar y detiene el server, que antes guarda las sesiones activas para que el próximo las retome. Es lo que usan el botón **Actualizar a…**, `get.sh` y `npm run app:install` al actualizar.
 - Al apagar el equipo o cerrar la sesión no pregunta: el sistema le avisa al server y se cierra ordenado.
 - **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o el menú del ícono.
 
@@ -172,12 +173,22 @@ El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú 
 - **Al actualizar**, la app lanza el instalador que vino con ella (`get.sh`), aparte de sí misma:
   1. Baja el paquete del release y lo verifica contra `SHA256SUMS`. Si no coincide, no instala nada.
   2. Instala.
-  3. Cierra la app sin cortar las sesiones (`--quit --keep-server`) y la vuelve a abrir. La nueva adopta el mismo server.
+  3. Cierra la app con `--quit --restart-for-update`: el server guarda las sesiones activas y se detiene. La vuelve a abrir, y la nueva lanza el server nuevo, que las retoma. **App y server se actualizan siempre juntos.**
+  - **Si hay sesiones trabajando**, antes de empezar pregunta: **Esperar a que terminen** (el menú del ícono dice "Actualizando cuando terminen…"; tocalo para cancelar, y a los 30 minutos actualiza igual), **Actualizar ahora** (lo que están haciendo se corta y siguen desde ahí) o **Cancelar**.
   - En Linux, el `.deb` necesita permisos de administrador: **el sistema te pide la contraseña** con su diálogo (`pkexec`). Si lo cancelás, no se instala nada y la app sigue como estaba.
   - Un AppImage se reemplaza en su lugar, sin contraseña.
   - En la Mac se reemplaza la `.app` que tenés abierta.
   - El instalador corre con el mismo entorno que el server: el PATH de tu shell de login y el `node` que encontró la app (en `CONTROL_PLANE_NODE`). Así encuentra el Node de nvm, Volta o Homebrew aunque hayas abierto la app desde el lanzador. Sin eso, busca en las mismas rutas de respaldo que la app.
 - Si algo falla, llega un aviso del sistema con el motivo, aunque tengas la ventana al frente (tocalo para ver el log, `update.log` en la carpeta de logs). En el dashboard aparece además un toast con **Ver log**, que muestra lo último del log. La app vieja sigue andando. Mientras actualiza, el menú del ícono dice **Actualizando…**.
+
+#### Un server más viejo que la app
+
+Si la app adopta un server de una versión anterior (el de una app vieja que se cerró dejándolo corriendo), lo compara con la suya:
+
+- **Si es de la app** y no hay sesiones trabajando, lo reinicia sola, con el mismo guardar y retomar de la actualización, y te avisa.
+- Si hay sesiones trabajando, te avisa y deja en el menú del ícono **Reiniciar el server (vA → vB)**.
+- Si no lo lanzó la app (un `npm start`), solo te avisa: reinicialo vos.
+- En el dashboard aparece un cartel si la versión del server no coincide con la de la app o la de la página. Si una función nueva (la terminal, **Cambios**) le pega a un server viejo, dice que el server es de una versión anterior en lugar de "no encontrado".
 
 ### Pantallas de error
 

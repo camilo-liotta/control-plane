@@ -10,8 +10,11 @@
 //! - La consulta la hace el `curl` del sistema: la app no trae un stack TLS propio y usa los
 //!   certificados del sistema (el mismo curl que usa `get.sh`).
 //! - Actualizar lanza el `get.sh` que vino empaquetado con la app (no uno bajado en el momento),
-//!   desacoplado de ella: baja el paquete, lo verifica contra SHA256SUMS, cierra la app con
-//!   `--quit --keep-server`, instala y la vuelve a abrir. Las sesiones siguen.
+//!   desacoplado de ella: baja el paquete, lo verifica contra SHA256SUMS, instala, cierra la app
+//!   con `--quit --restart-for-update` (el server guarda las sesiones activas y se detiene) y la
+//!   vuelve a abrir: la app nueva lanza el server nuevo, que retoma las sesiones. App y server se
+//!   actualizan siempre juntos.
+//! - Si hay sesiones trabajando, antes se pregunta: esperar a que terminen, actualizar ya o no.
 //! - Nada de esto se puede disparar desde el dashboard: la web solo recibe un cartel informativo.
 
 use std::collections::BTreeMap;
@@ -20,6 +23,7 @@ use std::fmt;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,6 +33,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::desktop_ws::{Local, Toast};
 use crate::launch_env::LaunchEnv;
+use crate::policy::{self, UpdateStart};
 use crate::AppState;
 
 /// De dónde salen las versiones. Un fork lo cambia acá.
@@ -219,6 +224,8 @@ pub fn last_line(log: &str) -> Option<String> {
 pub enum Status {
     Idle,
     Available(Version),
+    /// "Esperar a que terminen": se actualiza cuando no haya sesiones trabajando.
+    Waiting(Version),
     Updating(Version),
 }
 
@@ -231,6 +238,8 @@ enum Cmd {
 pub struct Updater {
     tx: Mutex<Sender<Cmd>>,
     status: Arc<Mutex<Status>>,
+    /// Tocar "Actualizando cuando terminen…" cancela la espera.
+    cancel_wait: Arc<AtomicBool>,
 }
 
 impl Updater {
@@ -243,6 +252,10 @@ impl Updater {
     }
     /// Actualizar a la versión encontrada (desde la bandeja o el aviso; nunca desde la web).
     pub fn update(&self) {
+        if matches!(self.status(), Status::Waiting(_)) {
+            self.cancel_wait.store(true, Ordering::SeqCst);
+            return;
+        }
         let _ = self.tx.lock().unwrap().send(Cmd::Update);
     }
 }
@@ -250,9 +263,11 @@ impl Updater {
 pub fn start<R: Runtime>(app: &AppHandle<R>) {
     let (tx, rx) = mpsc::channel();
     let status = Arc::new(Mutex::new(Status::Idle));
+    let cancel_wait = Arc::new(AtomicBool::new(false));
     app.manage(Updater {
         tx: Mutex::new(tx),
         status: status.clone(),
+        cancel_wait: cancel_wait.clone(),
     });
     let app = app.clone();
     let _ = std::thread::Builder::new()
@@ -262,7 +277,7 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
             loop {
                 match rx.recv_timeout(wait) {
                     Ok(Cmd::Update) => {
-                        run_update(&app, &status);
+                        run_update(&app, &status, &cancel_wait);
                         continue;
                     }
                     Ok(Cmd::CheckNow) | Err(RecvTimeoutError::Timeout) => {}
@@ -420,13 +435,29 @@ fn log_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
 
 /// Lanza el instalador desacoplado (su propia sesión: sobrevive a que la app salga) y espera.
 /// Si termina mal con la app todavía abierta, avisa con el motivo; la app vieja sigue igual.
-fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
-    let v = {
-        let mut st = status.lock().unwrap();
-        let Status::Available(v) = *st else { return };
-        *st = Status::Updating(v);
-        v
+fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>, cancel: &AtomicBool) {
+    let Status::Available(v) = *status.lock().unwrap() else {
+        return;
     };
+    // Actualizar reinicia el server: si hay sesiones trabajando, antes se pregunta.
+    if let UpdateStart::Ask { working } = policy::update_start(working_sessions(app)) {
+        match ask_update(app, working) {
+            UpdateChoice::Now => {}
+            UpdateChoice::Cancel => return,
+            UpdateChoice::Wait => {
+                if !wait_until_idle(app, status, v, cancel) {
+                    return;
+                }
+            }
+        }
+    }
+    {
+        let mut st = status.lock().unwrap();
+        if *st != Status::Available(v) && *st != Status::Waiting(v) {
+            return;
+        }
+        *st = Status::Updating(v);
+    }
     show(app, Status::Updating(v));
     let log = log_path(app);
     let result = spawn_installer(app, v, &log).and_then(|mut child| {
@@ -456,6 +487,73 @@ fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
                 ..Toast::default()
             },
         );
+    }
+}
+
+/// Cuántas sesiones están trabajando, según el último resumen del server (0 si no se sabe).
+fn working_sessions<R: Runtime>(app: &AppHandle<R>) -> u32 {
+    app.try_state::<crate::desktop_ws::DesktopWs>()
+        .and_then(|ws| ws.snapshot().summary.map(|s| s.working))
+        .unwrap_or(0)
+}
+
+enum UpdateChoice {
+    Wait,
+    Now,
+    Cancel,
+}
+
+fn ask_update<R: Runtime>(app: &AppHandle<R>, working: u32) -> UpdateChoice {
+    use tauri_plugin_dialog::{
+        DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
+    };
+    let (wait, now, cancel) = ("Esperar a que terminen", "Actualizar ahora", "Cancelar");
+    let result = app
+        .dialog()
+        .message(policy::update_question(working))
+        .title("Actualizar control-plane")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            wait.into(),
+            now.into(),
+            cancel.into(),
+        ))
+        .blocking_show_with_result();
+    match result {
+        MessageDialogResult::Yes => UpdateChoice::Wait,
+        MessageDialogResult::No => UpdateChoice::Now,
+        MessageDialogResult::Custom(s) if s == wait => UpdateChoice::Wait,
+        MessageDialogResult::Custom(s) if s == now => UpdateChoice::Now,
+        _ => UpdateChoice::Cancel,
+    }
+}
+
+/// "Esperar a que terminen": hasta que no haya sesiones trabajando, con tope. Devuelve false si
+/// se canceló (tocando "Actualizando cuando terminen…" en el menú).
+fn wait_until_idle<R: Runtime>(
+    app: &AppHandle<R>,
+    status: &Mutex<Status>,
+    v: Version,
+    cancel: &AtomicBool,
+) -> bool {
+    cancel.store(false, Ordering::SeqCst);
+    *status.lock().unwrap() = Status::Waiting(v);
+    show(app, Status::Waiting(v));
+    let until = std::time::Instant::now() + policy::WAIT_FOR_IDLE;
+    loop {
+        if cancel.swap(false, Ordering::SeqCst) {
+            *status.lock().unwrap() = Status::Available(v);
+            show(app, Status::Available(v));
+            return false;
+        }
+        if working_sessions(app) == 0 {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            eprintln!("Pasaron {} min y siguen sesiones trabajando: actualizo igual (se retoman después).", policy::WAIT_FOR_IDLE.as_secs() / 60);
+            return true;
+        }
+        std::thread::sleep(Duration::from_secs(3));
     }
 }
 
