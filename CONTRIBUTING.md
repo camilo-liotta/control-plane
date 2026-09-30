@@ -109,7 +109,9 @@ Cuidados:
 
 1. `npm run version:set X.Y.Z` (la cambia en todos lados; `npm test` falla si quedan desparejas) y commiteá en `main`.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`: el workflow [release](.github/workflows/release.yml) corre los tests, arma el `.dmg`, el `.deb` y el `.AppImage`, y deja un release **en borrador** con `SHA256SUMS`.
-3. Revisalo en GitHub → Releases y publicalo a mano: recién ahí lo ve `get.sh`.
+3. Verificalo: `gh release download vX.Y.Z` tiene que traer los 5 archivos (`.dmg`, `.app.tar.gz`, `.deb`, `.AppImage` y `SHA256SUMS`), `sha256sum -c SHA256SUMS` tiene que dar OK en todos y el release no tiene que ser prerelease.
+4. Sumá las novedades arriba de las notas del workflow, sin sacar el bloque de instalación (`gh release edit vX.Y.Z --notes-file <archivo>`), y publicalo: `gh release edit vX.Y.Z --draft=false --latest`. Recién ahí lo ven `get.sh` y el aviso de actualización de la app. No se dejan borradores: si algo de lo anterior no coincide, no se publica.
+5. Confirmá que `/releases/latest` devuelve la nueva: `curl -fsS -H "Accept: application/vnd.github+json" -A control-plane-desktop/X.Y.Z https://api.github.com/repos/camilo-liotta/control-plane/releases/latest`.
 
 Taggeá un commit de `main` con los mismos `.github/workflows/` que `main` tiene en ese momento: si difieren, GitHub no le deja al `GITHUB_TOKEN` crear el release (403). Para probar el workflow sin sacar una versión: Actions → release → Run workflow sobre `main`, con un tag que no empiece con `v` (por ejemplo `prueba-1`). Queda un borrador marcado como prerelease: borralo después.
 
