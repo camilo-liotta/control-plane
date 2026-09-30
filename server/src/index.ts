@@ -18,7 +18,7 @@ import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/loca
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
 import { Editor } from "./editor.ts"
-import { localOnly, registerHealth, registerWs } from "./http.ts"
+import { localOnly, registerDesktopShutdown, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
@@ -228,6 +228,7 @@ async function main() {
 
   registerApi(app, deps)
   registerMcp(app, deps)
+  registerDesktopShutdown(app, config.shutdownToken, () => void shutdown("desktop"))
 
   // Hooks de compactación de las sesiones (los llama compact-hook.mjs, desde esta máquina).
   app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/compact", async (req, reply) => {
@@ -250,12 +251,7 @@ async function main() {
     console.warn("No encontré web/dist: corré `npm run build` para servir el dashboard.")
   }
 
-  await app.listen({ host: config.host, port: config.port })
-  const ui = config.production || fs.existsSync(config.webDist) ? baseUrl : "http://localhost:4701"
-  console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
-  console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
-  console.log(`Datos: ${config.home}`)
-
+  // El apagado va antes de escuchar: la ruta de escritorio y las señales lo comparten.
   let closing = false
   const shutdown = async (signal: string) => {
     if (closing) return
@@ -274,6 +270,14 @@ async function main() {
   }
   process.on("SIGINT", () => void shutdown("SIGINT"))
   process.on("SIGTERM", () => void shutdown("SIGTERM"))
+  // Ctrl+Break es lo más parecido a SIGTERM que hay en Windows.
+  if (process.platform === "win32") process.on("SIGBREAK", () => void shutdown("SIGBREAK"))
+
+  await app.listen({ host: config.host, port: config.port })
+  const ui = config.production || fs.existsSync(config.webDist) ? baseUrl : "http://localhost:4701"
+  console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
+  console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
+  console.log(`Datos: ${config.home}`)
 }
 
 main().catch((err) => {
