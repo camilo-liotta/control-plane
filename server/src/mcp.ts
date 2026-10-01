@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
+import type { Apps } from "./apps.ts"
 import { version } from "./config.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
@@ -10,7 +11,7 @@ import type { Environments } from "./environments.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { ContextUsage, SessionStatus } from "./shared/types.ts"
+import type { AppInput, AppStatus, AppView, ContextUsage, SessionStatus } from "./shared/types.ts"
 import { errorMessage } from "./util.ts"
 
 const STATUS_ES: Record<SessionStatus, string> = {
@@ -73,6 +74,45 @@ function contextLine(ctx: ContextUsage | null): string | null {
   return `contexto: ${Math.round((ctx.tokens / ctx.max) * 100)}% (${Math.round(ctx.tokens / 1000)}k de ${Math.round(ctx.max / 1000)}k tokens)`
 }
 
+const APP_STATUS_ES: Record<AppStatus, string> = {
+  stopped: "detenida",
+  starting: "arrancando",
+  up: "levantada",
+  unresponsive: "sin responder (el proceso vive pero la salud no contesta)",
+  crashed: "se cayó",
+  external: "levantada afuera del dashboard (no la toca)",
+}
+
+/** Una app en una línea (y, si se cayó, las últimas líneas de su log). */
+function appLine(a: AppView): string {
+  const st = a.state
+  const health = a.health ? (a.health.kind === "http" ? `salud ${a.health.url}` : `puerto ${a.health.port}`) : "sin salud"
+  const crash =
+    st.status === "crashed"
+      ? ` (${st.error ?? (st.exitCode !== null ? `código ${st.exitCode}` : st.signal ?? "")})${st.tail.length ? `\n    últimas líneas:\n${st.tail.slice(-8).map((l) => `    | ${l}`).join("\n")}` : ""}`
+      : ""
+  return `- ${a.name} [${a.id}] · ${APP_STATUS_ES[st.status]}${crash} · \`${a.command}\`${a.shell ? " (shell)" : ""} en ${a.cwd || "."} · ${health}${a.url ? ` · ${a.url}` : ""}`
+}
+
+const healthSchema = z
+  .union([
+    z.object({ kind: z.literal("http"), url: z.string().describe("URL que responde cuando la app está levantada (ej. http://127.0.0.1:3000/health).") }),
+    z.object({ kind: z.literal("tcp"), port: z.number().int().describe("Puerto que acepta conexiones cuando está levantada."), host: z.string().optional() }),
+  ])
+  .nullable()
+  .optional()
+  .describe("Cómo saber que está levantada: una URL (http) o un puerto (tcp). Sin esto, cuenta como levantada si el proceso sigue vivo.")
+
+const appFields = {
+  command: z.string().describe("El comando, por ejemplo `npm run dev` o `uvicorn app:main --port 8000`. Corre sin shell: para && o pipes, poné shell: true."),
+  shell: z.boolean().optional().describe("true: el comando corre en /bin/sh -c (para &&, pipes o redirecciones)."),
+  cwd: z.string().optional().describe("Carpeta donde corre, relativa a la del proyecto (\"\" o sin poner: la raíz). Puede ser un subrepo o un worktree del proyecto."),
+  env: z.record(z.string(), z.string()).optional().describe("Variables de entorno extra."),
+  health: healthSchema,
+  url: z.string().nullable().optional().describe("La URL para abrir en el navegador, si no es la de salud."),
+  stopCommand: z.string().nullable().optional().describe("Cómo bajarla si no alcanza con terminar el proceso (ej. `docker compose down`)."),
+}
+
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean }
 
 const ok = (text: string): ToolResult => ({ content: [{ type: "text", text }] })
@@ -91,7 +131,7 @@ function wrap<A>(fn: (args: A) => string | Promise<string>) {
 /** Herramientas de control-plane que ve cada sesión según su rol. */
 function buildServer(
   self: SessionRecord,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments; apps?: Apps }
 ): McpServer {
   const { db, sessions, orchestration } = deps
   const server = new McpServer({ name: "control-plane", version })
@@ -415,6 +455,92 @@ function buildServer(
     )
   }
 
+  if (deps.apps) {
+    const apps = deps.apps
+    server.registerTool(
+      "list_apps",
+      {
+        title: "Apps del proyecto",
+        description: "Las apps del proyecto que se levantan localmente (backend, frontend, workers): su comando, carpeta, salud, URL y si están levantadas.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => {
+        const list = apps.list(self.projectId)
+        return list.length ? list.map(appLine).join("\n") : "El proyecto no tiene apps registradas. Si armaste algo que se levanta localmente, registralo con register_app."
+      })
+    )
+    server.registerTool(
+      "register_app",
+      {
+        title: "Registrar una app que se levanta localmente",
+        description:
+          "Registra una app del proyecto que se levanta localmente (un backend, un frontend, un worker) para que el usuario la levante y la baje con un botón y vea si está arriba. Registrala cuando armes algo así, con su salud (URL o puerto) para que se sepa cuándo está levantada.",
+        inputSchema: { name: z.string().describe("Nombre corto (ej. backend, web, worker)."), ...appFields },
+      },
+      wrap(async (args: AppInput & { name: string; command: string }) => {
+        const a = await apps.create(self.projectId, args, self.id)
+        return `App ${a.name} registrada (${a.id}). Para levantarla: start_app.`
+      })
+    )
+    server.registerTool(
+      "update_app",
+      {
+        title: "Cambiar una app",
+        description: "Cambia la definición de una app (vale desde el próximo levantar si ya está corriendo).",
+        inputSchema: {
+          app: z.string().describe("Nombre o id de la app."),
+          name: z.string().optional(),
+          ...appFields,
+          command: appFields.command.optional(),
+        },
+      },
+      wrap(async ({ app, ...args }: AppInput & { app: string }) => {
+        const a = await apps.update(apps.find(self.projectId, app).id, args)
+        return `App ${a.name} actualizada.`
+      })
+    )
+    server.registerTool(
+      "remove_app",
+      {
+        title: "Quitar una app",
+        description: "Quita una app del proyecto (si el dashboard la tenía levantada, primero la baja).",
+        inputSchema: { app: z.string().describe("Nombre o id de la app.") },
+      },
+      wrap(async ({ app }: { app: string }) => {
+        const a = apps.find(self.projectId, app)
+        await apps.remove(a.id)
+        return `App ${a.name} quitada.`
+      })
+    )
+    server.registerTool(
+      "start_app",
+      {
+        title: "Levantar una app",
+        description: "Levanta una app del proyecto (por ejemplo, el backend antes de probar algo) y espera a que su salud responda, hasta 60 segundos.",
+        inputSchema: { app: z.string().describe("Nombre o id de la app.") },
+      },
+      wrap(async ({ app }: { app: string }) => {
+        const a = apps.find(self.projectId, app)
+        await apps.start(a.id)
+        for (let i = 0; i < 120; i++) {
+          const st = apps.view(apps.find(self.projectId, a.id)).state.status
+          if (st !== "starting") break
+          await new Promise((r) => setTimeout(r, 500))
+        }
+        return appLine(apps.view(apps.find(self.projectId, a.id)))
+      })
+    )
+    server.registerTool(
+      "stop_app",
+      {
+        title: "Bajar una app",
+        description: "Baja una app que levantó el dashboard (con su comando de bajar, o terminando el proceso). Las levantadas afuera del dashboard no se tocan.",
+        inputSchema: { app: z.string().describe("Nombre o id de la app.") },
+      },
+      wrap(async ({ app }: { app: string }) => appLine(await apps.stop(apps.find(self.projectId, app).id)))
+    )
+  }
+
   return server
 }
 
@@ -435,7 +561,7 @@ function toWebRequest(req: FastifyRequest): Request {
 
 export function registerMcp(
   app: FastifyInstance,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments; apps?: Apps }
 ) {
   const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
     const self = deps.db.getSessionByToken(req.params.token)

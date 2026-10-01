@@ -5,6 +5,7 @@ import path from "node:path"
 import type { FastifyInstance, FastifyReply } from "fastify"
 
 import type { Accounts } from "./accounts.ts"
+import type { Apps } from "./apps.ts"
 import { toRef, type AttachmentStore } from "./attachments.ts"
 import { readSettings, writeSetting } from "./claude/config-settings.ts"
 import { sessionChanges } from "./changes.ts"
@@ -23,7 +24,7 @@ import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
 import type { Environments } from "./environments.ts"
 import type { SkillMarket } from "./skill-market.ts"
-import type { ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
+import type { AppInput, ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
 interface Deps {
@@ -41,6 +42,7 @@ interface Deps {
   tasks: UserTasks
   environments: Environments
   editor: Editor
+  apps: Apps
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -49,7 +51,7 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
-export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks, environments }: Deps): Snapshot {
+export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks, environments, apps }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
@@ -59,6 +61,7 @@ export function snapshot({ db, sessions, orchestration, accounts, compaction, ta
     compactions: compaction.list(),
     tasks: tasks.list(),
     environments: environments.list(),
+    apps: apps.all(),
     turns: sessions.turns(),
     meta: sessions.meta,
   }
@@ -82,7 +85,7 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, environments, editor } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, environments, editor, apps } = deps
   const fileRefs = new PathResolver()
 
   // ------------------------------------------------------------------ entornos (sin secretos, salvo /secret)
@@ -129,6 +132,27 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     reply.header("cache-control", "no-store")
     return guard(reply, () => ({ secret: environments.secret(req.params.id) }))
   })
+
+  // ------------------------------------------------------------------ apps (TRAY)
+
+  // `watch=1`: la web está mirando el proyecto; mientras dure, se mira la salud de las que no corren.
+  app.get<{ Params: { id: string }; Querystring: { watch?: string } }>("/api/projects/:id/apps", (req, reply) =>
+    guard(reply, () => {
+      requireProject(req.params.id)
+      if (req.query.watch) apps.watch(req.params.id)
+      return apps.list(req.params.id)
+    })
+  )
+  app.get<{ Params: { id: string } }>("/api/projects/:id/apps/suggestions", (req, reply) => guard(reply, () => apps.suggest(req.params.id)))
+  app.post<{ Params: { id: string }; Body: AppInput }>("/api/projects/:id/apps", (req, reply) => guard(reply, () => apps.create(req.params.id, req.body ?? {}, null)))
+  app.post<{ Params: { id: string } }>("/api/projects/:id/apps/start-all", (req, reply) => guard(reply, () => apps.startAll(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/projects/:id/apps/stop-all", (req, reply) => guard(reply, () => apps.stopAll(req.params.id)))
+  app.patch<{ Params: { id: string }; Body: AppInput }>("/api/apps/:id", (req, reply) => guard(reply, () => apps.update(req.params.id, req.body ?? {})))
+  app.delete<{ Params: { id: string } }>("/api/apps/:id", (req, reply) => guard(reply, () => apps.remove(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/apps/:id/start", (req, reply) => guard(reply, () => apps.start(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/apps/:id/stop", (req, reply) => guard(reply, () => apps.stop(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/apps/:id/restart", (req, reply) => guard(reply, () => apps.restart(req.params.id)))
+  app.get<{ Params: { id: string } }>("/api/apps/:id/log", (req, reply) => guard(reply, () => ({ lines: apps.log(req.params.id) })))
 
   // ------------------------------------------------------------------ tareas para vos
 

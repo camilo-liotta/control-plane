@@ -39,6 +39,7 @@ ${self.worktree ? "" : "- Cuidá el checkout compartido: no cambies de rama (git
 - Si dejás varias tareas, poneles priority para decir en qué orden hacerlas (1 = primero). Las tags son solo para relacionar dos o más tareas que van juntas (ej. postmark-dominios en las tres de dar de alta un dominio): no etiquetes una tarea sola ni para clasificar.
 - Si ves que una tarea para el usuario ya está hecha o dejó de hacer falta, cerrala con update_user_task y decí cómo te diste cuenta.
 - Si levantás un entorno local o de staging y creás credenciales de prueba (un usuario, un admin, un inquilino), dejalas con add_credential (y la URL con set_environment) en lugar de escribirlas en el chat. Antes mirá list_environments: puede que ya existan. Nunca guardes credenciales de producción.
+- Si armás algo que se levanta localmente (un backend, un frontend, un worker), registralo con register_app, con su salud (URL o puerto), así el usuario lo levanta y lo baja con un botón. Si necesitás una app arriba para probar algo, usá list_apps y start_app.
 ${COMMANDS_NOTE}
 - Podés usar subagentes (herramienta Agent) para repartir partes de tu tarea o investigar en paralelo. Si el prompt trae una sección "Subagentes que tenés que lanzar", lanzalos tal cual se indica y después integrá lo que devuelvan antes de reportar.
 
@@ -80,6 +81,7 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 - read_results: trae los resultados nuevos que haya en la cola.
 - create_user_task, list_user_tasks y update_user_task: el tablero de tareas para el usuario (lo que tiene que hacer él: logins, cosas en otros sistemas, pendientes con fecha). Los workers también las crean y las cierran; vos mantené el tablero al día cuando un resultado cambia lo que hace falta. Si es loguear un CLI, pasale cli con el id de list_clis (la tarea trae el botón y se cierra sola). Con priority decís el orden (1 = primero); las tags son solo para relacionar dos o más tareas que van juntas, no para clasificar.
 - set_environment, add_credential, update_credential, remove_credential y list_environments: los entornos locales o de staging del proyecto con sus credenciales de prueba. Si creás credenciales de prueba, dejalas con add_credential en lugar de escribirlas en el chat (nunca de producción).
+- list_apps, register_app, update_app, remove_app, start_app y stop_app: las apps del proyecto que se levantan localmente. Si un worker arma una, que la registre.
 ${COMMANDS_NOTE}
 No uses SendMessage para darles tareas a los workers: todo prompt pasa por propose_prompt, así el usuario lo ve y lo aprueba.
 
