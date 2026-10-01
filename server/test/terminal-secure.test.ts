@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { test } from "node:test"
+import { after, test } from "node:test"
 
 import { Terminals, type TerminalServerMessage } from "../src/terminal/manager.ts"
 import { hiddenInput, parseSttyMode, type Pty, type TermMode } from "../src/terminal/pty.ts"
@@ -70,6 +70,16 @@ test("entrada oculta: sin eco y por líneas (o con el Enter a la vista); el prom
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Tope por test con terminal: si algo se traba, falla rápido en vez de colgar el job. Y las que
+ * queden abiertas (un test que falló antes de cerrar la suya) se cierran al final.
+ */
+const TERM_TEST = { timeout: 30_000 }
+const opened = new Set<Terminals>()
+after(async () => {
+  await Promise.all([...opened].map((t) => t.closeAll()))
+})
+
 /** Un PTY de mentira: la salida y el modo los manejamos desde el test. */
 function fakePty() {
   const data: ((d: string) => void)[] = []
@@ -86,9 +96,10 @@ function fakePty() {
   return { pty, state, emit: (d: string) => data.forEach((cb) => cb(d)) }
 }
 
-test("el estado se manda solo cuando cambia, y sin actividad o sin nadie mirando no se consulta", async () => {
+test("el estado se manda solo cuando cambia, y sin actividad o sin nadie mirando no se consulta", TERM_TEST, async () => {
   const f = fakePty()
   const terminals = new Terminals({ sessionAlive: () => true, spawn: () => f.pty, probeQuietMs: 10, probeEnterMs: [10, 40] })
+  opened.add(terminals)
   try {
     const { token } = terminals.open("s", os.tmpdir())
     // Sin nadie conectado, la salida no dispara consultas.
@@ -161,6 +172,7 @@ async function realTerminal() {
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, LANG: "C.UTF-8" },
     sessionAlive: () => true,
   })
+  opened.add(terminals)
   const { token } = terminals.open("s", home)
   const got: TerminalServerMessage[] = []
   const link = terminals.attach("s", token, { send: (m) => got.push(m) })!
@@ -177,7 +189,7 @@ async function realTerminal() {
   return { terminals, link, out, secure, until, home }
 }
 
-test("de punta a punta: read -s pone el candado, Enter lo saca, y el secreto no queda en ningún lado", async () => {
+test("de punta a punta: read -s pone el candado, Enter lo saca, y el secreto no queda en ningún lado", TERM_TEST, async () => {
   const t = await realTerminal()
   try {
     // Con la shell en su prompt (readline sin eco ni modo canónico), no hay candado.
@@ -216,7 +228,7 @@ function noSudoPrompt() {
   return r.status === 0 ? "sudo no pide contraseña" : false
 }
 
-test("sudo pidiendo contraseña pone el candado, y cortarlo con Ctrl+C lo saca", { skip: noSudoPrompt() }, async () => {
+test("sudo pidiendo contraseña pone el candado, y cortarlo con Ctrl+C lo saca", { ...TERM_TEST, skip: noSudoPrompt() }, async () => {
   const t = await realTerminal()
   try {
     t.link.receive({ t: "i", d: "sudo -k; sudo true\r" })
