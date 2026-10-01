@@ -406,6 +406,7 @@ export class Apps {
       this.running.delete(id)
       // Lo que escribió la app (sin las marcas del dashboard), para ver por qué se cayó.
       const tail = log.tail(60).filter((l) => !l.startsWith("--- ")).slice(-40)
+      while (tail.length && !tail[0]!.trim()) tail.shift()
       log.write(`--- ${new Date().toISOString()} · terminó${code !== null ? ` con código ${code}` : signal ? ` por ${signal}` : ""} ---\n`)
       log.close()
       const def = this.db.getApp(id) ?? a
