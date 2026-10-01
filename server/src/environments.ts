@@ -1,7 +1,7 @@
 import type { CredentialRecord, Db, EnvironmentRecord, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { Credential, Environment } from "./shared/types.ts"
+import type { AppView, Credential, Environment } from "./shared/types.ts"
 import { now, oneLine, shortId } from "./util.ts"
 
 /**
@@ -16,7 +16,8 @@ import { now, oneLine, shortId } from "./util.ts"
 export interface EnvironmentInput {
   name: string
   url?: string | null
-  appId?: string | null
+  /** La app levantable que le da la URL (id o nombre de una app del proyecto); null la desconecta. */
+  app?: string | null
   notes?: string | null
 }
 
@@ -29,6 +30,17 @@ export interface CredentialInput {
 }
 
 type By = SessionRecord | "user"
+
+export interface EnvironmentsDeps {
+  db: Db
+  hub: Hub
+  sessions?: Pick<SessionManager, "addEvent">
+  /** La app levantable por id (su URL efectiva y su estado), para el resumen de las sesiones. */
+  app?: (id: string) => AppView | null
+}
+
+/** Una app está levantada si responde, la haya lanzado el dashboard o no. */
+const UP = new Set(["up", "external"])
 
 const text = (v: string | null | undefined, max: number) => (v === undefined ? undefined : v === null || !v.trim() ? null : v.trim().slice(0, max))
 const label = (v: string, what: string) => {
@@ -43,10 +55,26 @@ function view(c: CredentialRecord): Credential {
 }
 
 export class Environments {
-  private deps: { db: Db; hub: Hub; sessions?: Pick<SessionManager, "addEvent"> }
+  private deps: EnvironmentsDeps
 
-  constructor(deps: { db: Db; hub: Hub; sessions?: Pick<SessionManager, "addEvent"> }) {
+  constructor(deps: EnvironmentsDeps) {
     this.deps = deps
+  }
+
+  /** La app conectada, por id o nombre, del mismo proyecto. undefined: no se tocó; null: se desconecta. */
+  private resolveApp(projectId: string, ref: string | null | undefined): string | null | undefined {
+    if (ref === undefined) return undefined
+    if (ref === null || !ref.trim()) return null
+    const apps = this.deps.db.listApps(projectId)
+    const key = ref.trim().toLowerCase()
+    const app = apps.find((a) => a.id === ref.trim()) ?? apps.find((a) => a.name.toLowerCase() === key)
+    if (!app) throw new Error(`No hay una app "${ref}" en el proyecto${apps.length ? ` (están: ${apps.map((a) => a.name).join(", ")})` : ""}`)
+    return app.id
+  }
+
+  /** Se borró una app: sus entornos ya quedaron con su URL propia (ver Db.deleteApp); la web se entera. */
+  appRemoved(projectId: string) {
+    for (const e of this.deps.db.listEnvironments(projectId)) this.broadcast(e.id)
   }
 
   private full(e: EnvironmentRecord): Environment {
@@ -89,7 +117,7 @@ export class Environments {
     const name = label(input.name, "El entorno")
     const existing = this.deps.db.findEnvironment(projectId, name)
     if (existing) {
-      this.deps.db.updateEnvironment(existing.id, { url: text(input.url, 500), appId: text(input.appId, 80), notes: text(input.notes, 1000), updatedAt: now() })
+      this.deps.db.updateEnvironment(existing.id, { url: text(input.url, 500), appId: this.resolveApp(projectId, input.app), notes: text(input.notes, 1000), updatedAt: now() })
       return { environment: this.broadcast(existing.id), created: false }
     }
     const e: EnvironmentRecord = {
@@ -97,7 +125,7 @@ export class Environments {
       projectId,
       name,
       url: text(input.url, 500) ?? null,
-      appId: text(input.appId, 80) ?? null,
+      appId: this.resolveApp(projectId, input.app) ?? null,
       notes: text(input.notes, 1000) ?? null,
       createdBy: by === "user" ? null : by.id,
       createdAt: now(),
@@ -113,7 +141,7 @@ export class Environments {
     const e = this.environment(id, by)
     const name = patch.name !== undefined ? label(patch.name, "El entorno") : undefined
     if (name && name.toLowerCase() !== e.name.toLowerCase() && this.deps.db.findEnvironment(e.projectId, name)) throw new Error(`Ya hay un entorno "${name}"`)
-    this.deps.db.updateEnvironment(id, { name, url: text(patch.url, 500), appId: text(patch.appId, 80), notes: text(patch.notes, 1000), updatedAt: now() })
+    this.deps.db.updateEnvironment(id, { name, url: text(patch.url, 500), appId: this.resolveApp(e.projectId, patch.app), notes: text(patch.notes, 1000), updatedAt: now() })
     return this.broadcast(id)
   }
 
@@ -242,7 +270,16 @@ export class Environments {
     return list
       .map((e) => {
         const creds = this.deps.db.listCredentials(e.id)
-        const head = [`## ${e.name} [${e.id}]`, e.url ? `URL: ${e.url}` : null, e.appId ? `app: ${e.appId}` : null, e.notes ? `notas: ${e.notes}` : null].filter(Boolean).join("\n")
+        const app = e.appId ? (this.deps.app?.(e.appId) ?? null) : null
+        const url = app?.url ?? e.url
+        const head = [
+          `## ${e.name} [${e.id}]`,
+          url ? `URL: ${url}` : null,
+          app ? `app: ${app.name} (${UP.has(app.state.status) ? "levantada" : "bajada: levantala con start_app"})` : null,
+          e.notes ? `notas: ${e.notes}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
         const rows = creds.length
           ? creds
               .map((c) =>

@@ -20,7 +20,7 @@ import type { Tone } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
-const STATUS: Record<AppStatus, { label: string; tone: Tone; pulse?: boolean }> = {
+export const APP_STATUS: Record<AppStatus, { label: string; tone: Tone; pulse?: boolean }> = {
   stopped: { label: "detenida", tone: "idle" },
   starting: { label: "arrancando", tone: "working", pulse: true },
   up: { label: "levantada", tone: "done" },
@@ -65,7 +65,7 @@ function healthText(h: AppHealth | null) {
 
 function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLog: () => void }) {
   const [busy, setBusy] = useState<"start" | "stop" | "restart" | null>(null)
-  const st = STATUS[app.state.status]
+  const st = APP_STATUS[app.state.status]
   const run = (what: "start" | "stop" | "restart") => async () => {
     setBusy(what)
     try {
@@ -424,7 +424,7 @@ export function ProjectApps({ project }: { project: Project }) {
             {apps.length ? (
               <>
                 <Lamp tone={summaryTone} className="size-1.5" />
-                {apps.length === 1 ? (up ? "levantada" : STATUS[apps[0]!.state.status].label) : `${up} de ${apps.length} levantadas`}
+                {apps.length === 1 ? (up ? "levantada" : APP_STATUS[apps[0]!.state.status].label) : `${up} de ${apps.length} levantadas`}
                 {crashed > 0 && apps.length > 1 && <span className="font-medium text-status-error">· {crashed === 1 ? "1 se cayó" : `${crashed} se cayeron`}</span>}
               </>
             ) : (

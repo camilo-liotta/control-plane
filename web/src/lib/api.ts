@@ -39,6 +39,8 @@ import type { ResolvedRef } from "@shared/file-refs"
 export interface EnvironmentFields {
   name: string
   url?: string | null
+  /** Id de la app del proyecto que le da la URL; "" o null la desconecta. */
+  app?: string | null
   notes?: string | null
 }
 export interface CredentialFields {

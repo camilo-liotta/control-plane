@@ -218,8 +218,13 @@ async function main() {
   })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
   const tasks = new UserTasks({ db, hub, sessions, clis })
-  const environments = new Environments({ db, hub, sessions })
-  const apps = new Apps({ db, hub, home: config.home })
+  // Los entornos toman la URL de su app levantada; si la app se borra, quedan con la suya.
+  const apps: Apps = new Apps({ db, hub, home: config.home, onRemove: (a) => environments.appRemoved(a.projectId) })
+  const appView = (id: string) => {
+    const a = db.getApp(id)
+    return a ? apps.view(a) : null
+  }
+  const environments = new Environments({ db, hub, sessions, app: appView })
   const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }), apps }
   hub.setSummary(() => desktopSummary(deps))
 
