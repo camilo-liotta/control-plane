@@ -45,6 +45,28 @@ const freshSchema = z
     "true: la sesión empieza de cero (/clear) antes de este prompt. Para una tarea que no necesita lo que la sesión trae en contexto, con lo anterior cerrado. El prompt tiene que ser autocontenido."
   )
 
+const taskCliSchema = z
+  .object({
+    id: z.string().min(1).describe("El id del CLI en el catálogo, tal como lo da list_clis (gh, gcloud, aws, vercel…)."),
+    credential: z.number().int().min(0).optional().describe("Qué credencial, si el CLI tiene más de una (gcloud: 0 tu usuario, 1 las credenciales de aplicación). Por defecto, 0."),
+  })
+  .optional()
+  .describe("Si la tarea es loguearse o reautenticarse en un CLI del catálogo: cuál. La tarea muestra el botón para hacerlo ahí mismo y, si sale bien, se cierra sola y te aviso.")
+
+const prioritySchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(999)
+  .optional()
+  .describe("En qué orden hacerla, sobre todo si hay varias: 1 = primero, 2 = después, y así. Número menor = va primero. Sin prioridad va después de las que tienen.")
+
+const tagsSchema = z
+  .array(z.string().min(1).max(32))
+  .max(4)
+  .optional()
+  .describe("Etiquetas cortas, en minúsculas y con guiones (ej. postmark-dominios). Solo para relacionar dos o más tareas que van juntas; no etiquetes una tarea sola ni para clasificar.")
+
 /** Cuánto contexto usa una sesión, para que la orquestadora sepa si conviene empezar de cero. */
 function contextLine(ctx: ContextUsage | null): string | null {
   if (!ctx || !ctx.max) return null
@@ -109,22 +131,25 @@ function buildServer(
       {
         title: "Crear una tarea para el usuario",
         description:
-          "Deja en el tablero del proyecto algo que necesitás que haga el usuario y no podés hacer vos (loguearse en un CLI o una web, aprobar o configurar algo en otro sistema, conseguir un dato). Mejor que pedírselo en el chat: ahí se pierde. Si ya hay una abierta para lo mismo, se suma a esa.",
+          "Deja en el tablero del proyecto algo que necesitás que haga el usuario y no podés hacer vos (loguearse en un CLI o una web, aprobar o configurar algo en otro sistema, conseguir un dato). Mejor que pedírselo en el chat: ahí se pierde. Si ya hay una abierta para lo mismo, se suma a esa. Si es loguearse en un CLI, mirá su id con list_clis y pasalo en `cli`: la tarea trae el botón para loguearlo y se cierra sola cuando sale bien.",
         inputSchema: {
           title: z.string().min(1).describe("Qué hay que hacer, en pocas palabras (ej. \"Reautenticar gcloud\")."),
           steps: z.array(z.string().min(1)).min(1).max(12).describe("Pasos cortos y en orden: qué abrir, qué comando correr (entre `backticks`: el dashboard lo lleva a su terminal con un clic), qué elegir. Si el comando tiene un valor que pone el usuario, marcalo con {{NOMBRE: qué es}} o {{NOMBRE: qué es = sugerido}}, sin comillas alrededor. Sin explicaciones largas."),
           why: z.string().optional().describe("Para qué hace falta, en una línea."),
           blocking: z.boolean().optional().describe("true si estás frenado esperando esto. Cuando el usuario la marque hecha, te llega un aviso."),
           due: z.string().optional().describe("Para cuándo, si tiene fecha (ISO 8601, ej. 2026-09-30T23:40:00Z)."),
+          cli: taskCliSchema,
+          priority: prioritySchema,
+          tags: tagsSchema,
         },
       },
-      wrap((args: { title: string; steps: string[]; why?: string; blocking?: boolean; due?: string }) => {
+      wrap((args: { title: string; steps: string[]; why?: string; blocking?: boolean; due?: string; cli?: { id: string; credential?: number }; priority?: number; tags?: string[] }) => {
         const due = args.due ? Date.parse(args.due) : null
         if (args.due && (due === null || Number.isNaN(due))) throw new Error("La fecha no se entiende: usá ISO 8601 (2026-09-30T23:40:00Z)")
         const { task, existing } = tasks.create(self.projectId, { ...args, due }, self)
         return existing
           ? `Ya había una tarea abierta para eso: ${task.id} "${task.title}". Sumé tu pedido; no hace falta crear otra.`
-          : `Tarea ${task.id} creada en el tablero del proyecto. ${task.blocking ? "Cuando el usuario la marque hecha te llega un aviso." : "Seguí con lo que no dependa de esto."}`
+          : `Tarea ${task.id} creada en el tablero del proyecto.${task.cli ? ` Tiene el botón para loguear ${task.cli.id}: si el login sale bien, se cierra sola y te aviso.` : ""} ${task.blocking ? "Cuando el usuario la marque hecha te llega un aviso." : "Seguí con lo que no dependa de esto."}`
       })
     )
     server.registerTool(
@@ -141,16 +166,28 @@ function buildServer(
       {
         title: "Actualizar una tarea para el usuario",
         description:
-          "Cerrá una tarea si ves que ya está hecha (por ejemplo, el login ya anda) o que dejó de hacer falta, con una nota que diga cómo te diste cuenta. También sirve para corregir sus pasos o marcar que te está frenando.",
+          "Cerrá una tarea si ves que ya está hecha (por ejemplo, el login ya anda) o que dejó de hacer falta, con una nota que diga cómo te diste cuenta. También sirve para corregir sus pasos, marcar que te está frenando, cambiar su prioridad (1 = primero) o sus etiquetas.",
         inputSchema: {
           id: z.string().describe("Id de la tarea (ej. t_ab12cd)."),
           status: z.enum(["done", "dismissed", "open"]).optional().describe("done: ya está hecha; dismissed: ya no hace falta; open: volverla a abrir."),
           note: z.string().optional().describe("Por qué la cerrás o qué cambió, en una línea."),
           steps: z.array(z.string().min(1)).max(12).optional(),
           blocking: z.boolean().optional(),
+          cli: taskCliSchema.nullable(),
+          priority: prioritySchema.nullable().describe("En qué orden hacerla: 1 = primero, 2 = después… null la deja sin prioridad."),
+          tags: tagsSchema.describe("Reemplaza las etiquetas de la tarea ([] las saca). Solo para relacionar dos o más tareas que van juntas; no etiquetes una tarea sola ni para clasificar."),
         },
       },
-      wrap((args: { id: string; status?: "done" | "dismissed" | "open"; note?: string; steps?: string[]; blocking?: boolean }) => {
+      wrap((args: {
+        id: string
+        status?: "done" | "dismissed" | "open"
+        note?: string
+        steps?: string[]
+        blocking?: boolean
+        cli?: { id: string; credential?: number } | null
+        priority?: number | null
+        tags?: string[]
+      }) => {
         const t = tasks.update(args.id, args, self)
         return `Tarea ${t.id} ${t.status === "open" ? "actualizada" : t.status === "done" ? "cerrada como hecha" : "descartada"}.`
       })

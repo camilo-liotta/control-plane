@@ -840,6 +840,22 @@ export interface UserTask {
   createdAt: number
   updatedAt: number
   closedAt: number | null
+  /**
+   * Si la tarea es loguearse en un CLI del catálogo: cuál (y qué credencial, si tiene más de una).
+   * La tarea muestra el botón para hacerlo y se cierra sola si el login sale bien.
+   */
+  cli: UserTaskCli | null
+  /** En qué orden hacerla: 1 va primero. null: sin orden (va después de las que tienen). */
+  priority: number | null
+  /** Para relacionar dos o más tareas que van juntas (ej. postmark-dominios). No para clasificar. */
+  tags: string[]
+}
+
+export interface UserTaskCli {
+  /** El id del catálogo de CLIs (gh, gcloud, aws…). */
+  id: string
+  /** Qué credencial, si tiene más de una (gcloud: 0 tu usuario, 1 las de aplicación). */
+  credential: number
 }
 
 export type CliAuthState = "ok" | "expired" | "logged_out" | "unknown"

@@ -559,6 +559,23 @@ export function loginHints(output: string): { urls: string[]; code: string | nul
   return { urls, code }
 }
 
+/**
+ * Cuando el proceso terminó y ya se leyó lo que imprimió. "exit" puede llegar antes que el final de
+ * la salida (con varios CLIs a la vez quedaba vacía: gcloud parecía sin login teniendo cuenta), y
+ * "close" puede no llegar nunca si un hijo suyo se quedó con la salida (el navegador que abre un
+ * login): se espera a "close", y si no llega, un momento después de "exit".
+ */
+function onFinished(child: ChildProcess, cb: (code: number | null) => void) {
+  let done = false
+  const once = (code: number | null) => {
+    if (done) return
+    done = true
+    cb(code)
+  }
+  child.on("close", (code) => once(code))
+  child.on("exit", (code) => setTimeout(() => once(code), 500).unref())
+}
+
 function runCommand(file: string, args: string[], timeoutMs = 10_000): Promise<Run> {
   return new Promise((resolve) => {
     let out = ""
@@ -577,7 +594,7 @@ function runCommand(file: string, args: string[], timeoutMs = 10_000): Promise<R
     child.stdout.on("data", (d) => (out = (out + String(d)).slice(-20_000)))
     child.stderr.on("data", (d) => (out = (out + String(d)).slice(-20_000)))
     child.on("error", () => finish(-1))
-    child.on("exit", (code) => finish(code))
+    onFinished(child, finish)
   })
 }
 
@@ -587,6 +604,8 @@ const JOB_MAX_MS = 15 * 60_000
 interface JobRuntime {
   job: CliJob
   child: ChildProcess | null
+  /** Quienes esperan que termine (una tarea que se cierra sola si el login sale bien). */
+  waiters: ((job: CliJob) => void)[]
 }
 
 export class Clis {
@@ -748,7 +767,7 @@ export class Clis {
       startedAt: now(),
       endedAt: null,
     }
-    const rt: JobRuntime = { job, child: null }
+    const rt: JobRuntime = { job, child: null, waiters: [] }
     this.jobs.set(job.id, rt)
     const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"], env: childEnv({ NO_COLOR: "1" }) })
     rt.child = child
@@ -772,9 +791,10 @@ export class Clis {
       // Después de un login o una instalación el estado cambió: la próxima vista lo vuelve a consultar.
       this.cache = null
       this.opts.onChange?.()
+      for (const w of rt.waiters.splice(0)) w(job)
     }
     child.on("error", (err) => end(-1, err.message))
-    child.on("exit", (code) => end(code))
+    onFinished(child, (code) => end(code))
     return job
   }
 
@@ -782,6 +802,25 @@ export class Clis {
     const rt = this.jobs.get(id)
     if (!rt) throw new Error("No existe ese proceso")
     return rt.job
+  }
+
+  /** Cuando el proceso termina (bien o mal). Si ya terminó, enseguida. */
+  whenDone(id: string): Promise<CliJob> {
+    const rt = this.jobs.get(id)
+    if (!rt) return Promise.reject(new Error("No existe ese proceso"))
+    if (rt.job.status !== "running") return Promise.resolve(rt.job)
+    return new Promise((resolve) => rt.waiters.push(resolve))
+  }
+
+  /** El estado de una credencial, consultado de nuevo (después de un login). */
+  async credential(id: string, index = 0, refresh = false): Promise<{ cli: CliInfo; credential: CliCredential | null } | null> {
+    const cli = (await this.scan(refresh)).find((c) => c.id === id)
+    return cli ? { cli, credential: cli.credentials[index] ?? null } : null
+  }
+
+  /** Los del catálogo, para reconocer de qué CLI habla una tarea. */
+  specs(): readonly CliSpec[] {
+    return this.catalog
   }
 
   /** Algunos logins preguntan algo (Y/n, elegir una opción): la respuesta va a su entrada. */

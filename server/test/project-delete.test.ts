@@ -96,7 +96,7 @@ describe("borrar un proyecto", () => {
     const t = 10
     db.insertDraft({ id: `d-${projectId}`, projectId, kind: "prompt", targetSessionId: worker.id, newSession: null, title: "t", prompt: "p", state: "ready", createdBy: orch.id, createdAt: t, updatedAt: t, decidedAt: null, edited: false, revision: 1, subagents: [], fresh: false })
     db.insertReport({ id: `r-${projectId}`, projectId, sessionId: worker.id, taskTitle: "t", status: "done", summary: "s", details: null, state: "reviewed", createdAt: t, deliveredAt: t, reviewedAt: t })
-    db.insertTask({ id: `t-${projectId}`, projectId, title: "t", steps: ["a"], why: null, blocking: true, due: null, createdBy: worker.id, alsoBy: [], status: "open", note: null, closedBy: null, createdAt: t, updatedAt: t, closedAt: null })
+    db.insertTask({ id: `t-${projectId}`, projectId, title: "t", steps: ["a"], why: null, blocking: true, due: null, createdBy: worker.id, alsoBy: [], status: "open", note: null, closedBy: null, createdAt: t, updatedAt: t, closedAt: null, cli: null, priority: null, tags: [] })
   }
 
   beforeEach(async () => {

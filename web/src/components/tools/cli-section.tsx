@@ -1,33 +1,17 @@
-import { Check, Copy, Download, ExternalLink, KeyRound, LogIn, RefreshCw, Search, Square, TerminalSquare } from "lucide-react"
+import { Copy, Download, ExternalLink, RefreshCw, Search } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { CliCredential, CliInfo, CliJob, CliView } from "@shared/types"
 
-import { TonePill } from "@/components/status"
+import { copy, CredentialState, JobPanel, LoginButton, TerminalLoginButton } from "@/components/tools/cli-login"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
-import type { Tone } from "@/lib/status"
 import { useStore } from "@/lib/store"
-import { cn } from "@/lib/utils"
-
-const STATE: Record<CliCredential["state"], { label: string; tone: Tone }> = {
-  ok: { label: "Logueado", tone: "done" },
-  expired: { label: "Vencido", tone: "attention" },
-  logged_out: { label: "Sin login", tone: "idle" },
-  unknown: { label: "No se sabe", tone: "idle" },
-}
-
-function copy(text: string) {
-  void navigator.clipboard.writeText(text).then(
-    () => toast.success("Copiado"),
-    () => toast.error("No pude copiar")
-  )
-}
 
 /**
  * Los CLIs de la máquina, como un marketplace: los instalados con su login (y el botón para
@@ -200,31 +184,11 @@ function InstalledCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
       {cli.credentials.map((k) => (
         <div key={k.index} className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           {k.label && <span className="text-muted-foreground">{k.label}</span>}
-          <TonePill tone={STATE[k.state].tone}>{STATE[k.state].label}</TonePill>
-          {k.account && <span className="font-mono text-xs">{k.account}</span>}
+          <CredentialState credential={k} />
           {k.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{k.detail}</span>}
-          {k.state !== "ok" && k.terminalLogin && (
-            <button
-              type="button"
-              className="ml-auto inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 font-mono text-[0.7rem] hover:bg-muted/70"
-              title="El login pide pegar una credencial: corrélo en una terminal"
-              onClick={() => copy(k.terminalLogin!)}
-            >
-              <Copy className="size-3" />
-              {k.terminalLogin}
-            </button>
-          )}
+          {k.state !== "ok" && k.terminalLogin && <TerminalLoginButton command={k.terminalLogin} className="ml-auto" />}
           {k.state !== "ok" && !k.terminalLogin && (
-            <Button
-              size="xs"
-              variant={k.state === "expired" ? "default" : "outline"}
-              className="ml-auto"
-              disabled={busy || starting !== null}
-              onClick={() => void login(k)}
-            >
-              {starting === k.index ? <Spinner /> : k.state === "expired" ? <KeyRound /> : <LogIn />}
-              {k.state === "expired" ? "Reautenticar" : "Iniciar sesión"}
-            </Button>
+            <LoginButton state={k.state} disabled={busy || starting !== null} starting={starting === k.index} className="ml-auto" onClick={() => void login(k)} />
           )}
         </div>
       ))}
@@ -282,86 +246,6 @@ function AvailableCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
       )}
       {cli.install && !cli.install.runnable && <p className="mt-1 text-[0.7rem] text-muted-foreground">Pide sudo: copialo y corrélo en una terminal.</p>}
       {job && <JobPanel job={job} />}
-    </div>
-  )
-}
-
-/** Un login o una instalación en curso: links, el código si hay, lo que imprime y para contestarle. */
-function JobPanel({ job }: { job: CliJob }) {
-  const [answer, setAnswer] = useState("")
-  const [open, setOpen] = useState(job.status !== "done")
-  const running = job.status === "running"
-  const send = async () => {
-    try {
-      await api.cliAnswer(job.id, answer)
-      setAnswer("")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
-  const head = running
-    ? job.kind === "login"
-      ? "Terminá el login en el navegador…"
-      : "Instalando…"
-    : job.status === "done"
-      ? job.kind === "login"
-        ? "Login terminado"
-        : "Instalado"
-      : `Terminó con error${job.exitCode !== null ? ` (código ${job.exitCode})` : ""}`
-  return (
-    <div className={cn("mt-3 rounded-lg border p-3 text-sm", running ? "border-claude/40 bg-claude/5" : job.status === "failed" ? "border-status-error/30" : "")}>
-      <div className="flex items-center gap-2">
-        {running ? <Spinner className="size-3.5" /> : job.status === "done" ? <Check className="size-3.5 text-status-done" /> : <TerminalSquare className="size-3.5 text-status-error" />}
-        <span className="font-medium">{head}</span>
-        <code className="min-w-0 truncate font-mono text-[0.7rem] text-muted-foreground">{job.command}</code>
-        {running ? (
-          <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => void api.cliCancel(job.id)}>
-            <Square />
-            Cancelar
-          </Button>
-        ) : (
-          <button type="button" className="ml-auto text-xs text-muted-foreground hover:text-foreground" onClick={() => setOpen((v) => !v)}>
-            {open ? "Ocultar" : "Ver salida"}
-          </button>
-        )}
-      </div>
-      {running && job.code && (
-        <div className="mt-2 flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Código:</span>
-          <code className="rounded bg-muted px-2 py-0.5 font-mono text-base font-semibold tracking-widest">{job.code}</code>
-          <Button size="xs" variant="outline" onClick={() => copy(job.code!)}>
-            <Copy />
-            Copiar
-          </Button>
-        </div>
-      )}
-      {running && job.urls.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {job.urls.map((u) => (
-            <a key={u} href={u} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 truncate text-xs text-claude hover:underline">
-              <ExternalLink className="size-3 shrink-0" />
-              <span className="truncate">{u}</span>
-            </a>
-          ))}
-        </div>
-      )}
-      {open && job.output.trim() && (
-        <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-2 font-mono text-[0.7rem] whitespace-pre-wrap">{job.output.trim()}</pre>
-      )}
-      {running && (
-        <form
-          className="mt-2 flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void send()
-          }}
-        >
-          <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Si pregunta algo (Y/n, una opción), contestale acá" className="h-8 text-xs" />
-          <Button size="xs" variant="outline" type="submit">
-            Enviar
-          </Button>
-        </form>
-      )}
     </div>
   )
 }
