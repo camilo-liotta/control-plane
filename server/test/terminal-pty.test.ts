@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { test } from "node:test"
+import { after, test } from "node:test"
 
 import { descendants, innerScript, shQuote, spawnPty, type Pty } from "../src/terminal/pty.ts"
 
@@ -12,6 +12,26 @@ const alive = (pid: number) => {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Cada test con PTY tiene un tope: si algo se traba, falla rápido en vez de colgar el job. Y las
+ * PTY que queden abiertas (porque un test falló antes de cerrar la suya) se cierran al final: un
+ * hijo vivo deja el proceso de tests esperando para siempre.
+ */
+const PTY_TEST = { timeout: 30_000 }
+const opened = new Set<Pty>()
+after(async () => {
+  await Promise.all([...opened].map((p) => p.kill()))
+})
+
+/** Espera a que `ok` se cumpla, o falla con `what`. */
+async function waitUntil(ok: () => boolean, what: string, ms = 5000) {
+  const end = Date.now() + ms
+  while (!ok()) {
+    if (Date.now() > end) throw new Error(`no pasó: ${what}`)
+    await new Promise((r) => setTimeout(r, 30))
   }
 }
 
@@ -26,6 +46,7 @@ function open(cols = 100, rows = 30) {
     cols,
     rows,
   })
+  opened.add(pty)
   let out = ""
   pty.onData((d) => (out += d))
   return {
@@ -53,7 +74,7 @@ async function run(t: ReturnType<typeof open>, cmd: string, re: RegExp) {
   return t.until(re, from)
 }
 
-test("la shell arranca en un PTY con el tamaño pedido y se puede cambiar", async () => {
+test("la shell arranca en un PTY con el tamaño pedido y se puede cambiar", PTY_TEST, async () => {
   const t = open(100, 30)
   try {
     await t.until(/LISTO\$ /)
@@ -69,7 +90,7 @@ test("la shell arranca en un PTY con el tamaño pedido y se puede cambiar", asyn
   }
 })
 
-test("Ctrl+C corta el comando en primer plano y los colores pasan tal cual", async () => {
+test("Ctrl+C corta el comando en primer plano y los colores pasan tal cual", PTY_TEST, async () => {
   const t = open()
   try {
     await t.until(/LISTO\$ /)
@@ -85,26 +106,40 @@ test("Ctrl+C corta el comando en primer plano y los colores pasan tal cual", asy
   }
 })
 
-test("cerrar la terminal mata la shell, lo que corre y los jobs de fondo", async () => {
+test("cerrar la terminal mata la shell, lo que corre y los jobs de fondo", PTY_TEST, async () => {
   const t = open()
-  await t.until(/LISTO\$ /)
-  const bg = Number((await run(t, "sleep 300 & echo bg=$!", /bg=(\d+)/))[1])
-  // Uno en primer plano que ignora SIGHUP: igual tiene que morir.
-  const fgFile = path.join(t.home, "fg.pid")
-  t.pty.write(`sh -c 'trap "" HUP; echo $$ > ${fgFile}; exec sleep 300'\r`)
-  const end = Date.now() + 5000
-  while (!fs.existsSync(fgFile) && Date.now() < end) await new Promise((r) => setTimeout(r, 30))
-  const fg = Number(fs.readFileSync(fgFile, "utf8"))
-  const shell = t.pty.pid
-  assert.ok(shell > 0 && alive(shell) && alive(bg) && alive(fg))
+  const pids: number[] = []
+  try {
+    await t.until(/LISTO\$ /)
+    const bg = Number((await run(t, "sleep 300 & echo bg=$!", /bg=(\d+)/))[1])
+    pids.push(bg)
+    // Uno en primer plano que ignora SIGHUP: igual tiene que morir.
+    const fgFile = path.join(t.home, "fg.pid")
+    t.pty.write(`sh -c 'trap "" HUP; echo $$ > ${fgFile}; exec sleep 300'\r`)
+    // El archivo existe apenas la shell lo abre, antes de que tenga el pid; y el pid de la shell se
+    // conoce recién cuando `ps` la encuentra (en la Mac puede tardar más que el primer prompt).
+    const fgPid = () => Number(fs.existsSync(fgFile) ? fs.readFileSync(fgFile, "utf8").trim() : "")
+    await waitUntil(() => fgPid() > 0, "el pid del comando en primer plano")
+    await waitUntil(() => t.pty.pid > 0, "el pid de la shell")
+    const fg = fgPid()
+    pids.push(fg)
+    const shell = t.pty.pid
+    assert.ok(alive(shell), "la shell está viva")
+    assert.ok(alive(bg), "el job de fondo está vivo")
+    assert.ok(alive(fg), "el comando en primer plano está vivo")
 
-  let exited = false
-  t.pty.onExit(() => (exited = true))
-  await t.pty.kill()
-  assert.ok(exited, "script terminó")
-  assert.ok(!alive(shell), "la shell murió")
-  assert.ok(!alive(bg), "el job de fondo murió")
-  assert.ok(!alive(fg), "el comando en primer plano murió")
+    let exited = false
+    t.pty.onExit(() => (exited = true))
+    await t.pty.kill()
+    assert.ok(exited, "script terminó")
+    assert.ok(!alive(shell), "la shell murió")
+    assert.ok(!alive(bg), "el job de fondo murió")
+    assert.ok(!alive(fg), "el comando en primer plano murió")
+  } finally {
+    await t.pty.kill()
+    // Si falló a mitad de camino, que no queden sleeps de 5 minutos.
+    for (const pid of pids) if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL")
+  }
 })
 
 test("la shell va citada y el tamaño es un número", () => {
