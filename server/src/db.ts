@@ -709,6 +709,15 @@ export class Db {
     return rows.map((r) => this.toStored(r))
   }
 
+  /** Cuándo se reinició la conversación de la sesión (los avisos del chat con ese texto). */
+  noticeTimes(sessionId: string, text: string): number[] {
+    return (
+      this.db
+        .prepare("SELECT ts FROM events WHERE session_id = ? AND kind = 'notice' AND json_extract(data, '$.text') = ? ORDER BY id")
+        .all(sessionId, text) as Row[]
+    ).map((r) => Number(r.ts))
+  }
+
   /** Último texto de la sesión (para resúmenes en tarjetas). */
   lastText(sessionId: string): string | null {
     const r = this.db
