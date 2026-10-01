@@ -12,6 +12,7 @@ import type { Compaction, CompactionSelection } from "./compaction.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
 import { projectFolder, type Editor } from "./editor.ts"
+import { PathResolver } from "./file-refs.ts"
 import type { Hub } from "./hub.ts"
 import { importSession, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
@@ -79,6 +80,7 @@ function isGitRepo(dir: string) {
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
   const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, editor } = deps
+  const fileRefs = new PathResolver()
 
   // ------------------------------------------------------------------ tareas para vos
 
@@ -459,6 +461,30 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       const dir = await projectFolder(p.repoPath, req.body?.path)
       await editor.openFolder(dir)
       return { dir }
+    })
+  )
+
+  // Rutas a archivos que mencionan las sesiones: cuáles existen (en lote) y abrir una en el editor.
+  const refBase = (projectId: string, sessionId?: string) => {
+    const p = requireProject(projectId)
+    const s = sessionId ? db.getSession(sessionId) : null
+    return { projectRoot: p.repoPath, sessionCwd: s && s.projectId === p.id ? s.cwd : undefined }
+  }
+
+  app.post<{ Params: { id: string }; Body: { paths?: unknown; sessionId?: string } }>("/api/projects/:id/resolve-paths", (req, reply) =>
+    guard(reply, async () => {
+      const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter((x): x is string => typeof x === "string") : []
+      const found = await fileRefs.resolve(paths, refBase(req.params.id, req.body?.sessionId))
+      return { ok: found.map(({ abs: _abs, root: _root, ...r }) => r) }
+    })
+  )
+
+  app.post<{ Params: { id: string }; Body: { path?: string; sessionId?: string } }>("/api/projects/:id/open-path", (req, reply) =>
+    guard(reply, async () => {
+      const f = await fileRefs.one(String(req.body?.path ?? ""), refBase(req.params.id, req.body?.sessionId))
+      if (f.kind === "dir") await editor.openFolder(f.abs)
+      else await editor.openAt(f.root, f.abs, f.line, f.col)
+      return { rel: f.rel, kind: f.kind }
     })
   )
 

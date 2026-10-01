@@ -9,6 +9,7 @@ import { ModelPicker, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
 import { SessionLamp, StatusPill } from "@/components/status"
+import { FileRefScope } from "@/components/file-ref"
 import { TerminalTargetProvider } from "@/components/take-to-terminal"
 import { TerminalPanel } from "@/components/terminal-panel"
 import { Timeline } from "@/components/timeline/timeline"
@@ -312,57 +313,59 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
         }
       />
       <TerminalTargetProvider value={terminalTarget}>
-        <div className="flex min-h-0 flex-1">
-        <div ref={column} className="relative flex min-w-0 flex-1 flex-col">
-          <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-            <div ref={content} className="mx-auto max-w-3xl px-4 py-6">
-              {hasMore && (
-                <div className="mb-4 flex justify-center">
-                  <Button size="xs" variant="ghost" onClick={older} disabled={loadingOlder}>
-                    {loadingOlder && <Spinner />}
-                    Cargar mensajes anteriores
-                  </Button>
-                </div>
-              )}
-              {!events ? (
-                <div className="space-y-3">
-                  <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
-                  <Skeleton className="h-4 w-5/6" />
-                  <Skeleton className="h-4 w-3/5" />
-                </div>
-              ) : events.length === 0 && session.status !== "working" ? (
-                <Empty className="border-0">
-                  <EmptyHeader>
-                    <EmptyTitle>{isOrch ? "Empezá por el objetivo" : `${session.name} está lista`}</EmptyTitle>
-                    <EmptyDescription>
-                      {isOrch
-                        ? "Contale qué querés lograr. Va a proponer las sesiones y los prompts de cada una; vos los aprobás antes de que salgan."
-                        : "Escribile directo, o esperá a que la orquestadora le proponga una tarea."}
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <Timeline session={session} events={events} />
-              )}
+        <FileRefScope projectId={session.projectId} sessionId={session.id}>
+          <div className="flex min-h-0 flex-1">
+          <div ref={column} className="relative flex min-w-0 flex-1 flex-col">
+            <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+              <div ref={content} className="mx-auto max-w-3xl px-4 py-6">
+                {hasMore && (
+                  <div className="mb-4 flex justify-center">
+                    <Button size="xs" variant="ghost" onClick={older} disabled={loadingOlder}>
+                      {loadingOlder && <Spinner />}
+                      Cargar mensajes anteriores
+                    </Button>
+                  </div>
+                )}
+                {!events ? (
+                  <div className="space-y-3">
+                    <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
+                    <Skeleton className="h-4 w-5/6" />
+                    <Skeleton className="h-4 w-3/5" />
+                  </div>
+                ) : events.length === 0 && session.status !== "working" ? (
+                  <Empty className="border-0">
+                    <EmptyHeader>
+                      <EmptyTitle>{isOrch ? "Empezá por el objetivo" : `${session.name} está lista`}</EmptyTitle>
+                      <EmptyDescription>
+                        {isOrch
+                          ? "Contale qué querés lograr. Va a proponer las sesiones y los prompts de cada una; vos los aprobás antes de que salgan."
+                          : "Escribile directo, o esperá a que la orquestadora le proponga una tarea."}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <Timeline session={session} events={events} />
+                )}
+              </div>
             </div>
+            {showJump && (
+              <button
+                type="button"
+                onClick={jump}
+                className={cn(
+                  "absolute bottom-32 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-xs font-medium shadow-md hover:bg-muted"
+                )}
+              >
+                <ArrowDown className="size-3.5" />
+                Ir a lo último
+              </button>
+            )}
+            <Composer session={session} dropTarget={column} />
+            <TerminalPanel session={session} />
           </div>
-          {showJump && (
-            <button
-              type="button"
-              onClick={jump}
-              className={cn(
-                "absolute bottom-32 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-xs font-medium shadow-md hover:bg-muted"
-              )}
-            >
-              <ArrowDown className="size-3.5" />
-              Ir a lo último
-            </button>
-          )}
-          <Composer session={session} dropTarget={column} />
-          <TerminalPanel session={session} />
-        </div>
-        <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
-        </div>
+          <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
+          </div>
+        </FileRefScope>
       </TerminalTargetProvider>
 
       <Sheet open={panelOpen} onOpenChange={setPanelOpen}>

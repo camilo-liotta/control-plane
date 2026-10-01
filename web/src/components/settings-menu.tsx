@@ -48,7 +48,7 @@ export function SettingsMenu() {
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
               Editor
-              <span className="block text-[0.7rem] text-muted-foreground">Para "Cambios" y "Abrir en el editor"</span>
+              <span className="block text-[0.7rem] text-muted-foreground">Para "Cambios", "Abrir en el editor" y las rutas a archivos</span>
             </span>
             <Select
               value={settings?.kind ?? "code"}
@@ -90,7 +90,8 @@ export function SettingsMenu() {
               </div>
               <p className="text-[0.7rem] leading-snug text-muted-foreground">
                 Se corre sin shell. <code>{"{file}"}</code> es el archivo, <code>{"{base}"}</code> la versión anterior (para el diff) y{" "}
-                <code>{"{dir}"}</code> la carpeta de la sesión. Sin <code>{"{file}"}</code>, el archivo va al final. Al abrir un
+                <code>{"{dir}"}</code> la carpeta de la sesión y <code>{"{line}"}</code> la línea (al abrir una ruta que nombra una sesión; si
+                no tiene, 1). Sin <code>{"{file}"}</code>, el archivo va al final. Al abrir un
                 proyecto entero, la carpeta va en <code>{"{dir}"}</code> (o en <code>{"{file}"}</code>, si es lo único que tiene).
               </p>
             </form>

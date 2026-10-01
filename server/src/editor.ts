@@ -93,20 +93,28 @@ export function splitCommand(cmd: string): string[] {
   return out
 }
 
-/** El binario y los argumentos para abrir `file` (con el diff contra `base`, si hay). */
-export function editorCommand(s: EditorSettings, opts: { dir: string; file: string; base: string | null }): { bin: string; args: string[] } {
+/**
+ * El binario y los argumentos para abrir `file` (con el diff contra `base`, si hay), en la línea y la
+ * columna indicadas. En un comando propio, `{line}` es la línea (1 si no hay).
+ */
+export function editorCommand(
+  s: EditorSettings,
+  opts: { dir: string; file: string; base: string | null; line?: number; col?: number }
+): { bin: string; args: string[] } {
   if (s.kind === "custom") {
     const [bin, ...rest] = splitCommand(s.command)
     if (!bin) throw new Error("Falta el comando del editor. Configuralo en Ajustes")
-    const vars: Record<string, string> = { file: opts.file, dir: opts.dir, base: opts.base ?? "" }
+    const vars: Record<string, string> = { file: opts.file, dir: opts.dir, base: opts.base ?? "", line: String(opts.line ?? 1) }
     const args = rest
       .filter((a) => opts.base !== null || !a.includes("{base}"))
-      .map((a) => a.replace(/\{(file|dir|base)\}/g, (_, k: string) => vars[k]!))
+      .map((a) => a.replace(/\{(file|dir|base|line)\}/g, (_, k: string) => vars[k]!))
     if (!rest.some((a) => a.includes("{file}"))) args.push(opts.file)
     return { bin, args }
   }
   // La carpeta primero: el editor usa (o abre) la ventana de ese repo.
-  return { bin: s.kind, args: opts.base ? [opts.dir, "--diff", opts.base, opts.file] : [opts.dir, "-g", opts.file] }
+  if (opts.base) return { bin: s.kind, args: [opts.dir, "--diff", opts.base, opts.file] }
+  const at = opts.line ? `${opts.file}:${opts.line}${opts.col ? `:${opts.col}` : ""}` : opts.file
+  return { bin: s.kind, args: [opts.dir, "-g", at] }
 }
 
 /**
@@ -117,7 +125,7 @@ export function folderCommand(s: EditorSettings, dir: string): { bin: string; ar
   if (s.kind === "custom") {
     const [bin, ...rest] = splitCommand(s.command)
     if (!bin) throw new Error("Falta el comando del editor. Configuralo en Ajustes")
-    const args = rest.filter((a) => !a.includes("{base}")).map((a) => a.replace(/\{(file|dir)\}/g, dir))
+    const args = rest.filter((a) => !a.includes("{base}")).map((a) => a.replace(/\{(file|dir)\}/g, dir).replace(/\{line\}/g, "1"))
     if (!rest.some((a) => /\{(file|dir)\}/.test(a))) args.push(dir)
     return { bin, args }
   }
@@ -190,6 +198,12 @@ export class Editor {
   /** Abre una carpeta (la del proyecto o uno de sus worktrees) en el editor. */
   async openFolder(dir: string): Promise<void> {
     const cmd = folderCommand(this.settings(), dir)
+    await this.launch(cmd.bin, cmd.args, dir)
+  }
+
+  /** Abre un archivo ya resuelto (ver file-refs.ts) en la línea indicada, en la ventana de `dir`. */
+  async openAt(dir: string, file: string, line?: number, col?: number): Promise<void> {
+    const cmd = editorCommand(this.settings(), { dir, file, base: null, line, col })
     await this.launch(cmd.bin, cmd.args, dir)
   }
 

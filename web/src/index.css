@@ -341,6 +341,16 @@
 .md pre {
   @apply max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 font-mono text-[0.8rem] leading-relaxed;
 }
+/* Una ruta a un archivo que se abre en el editor: subrayado punteado, sin cambiar el texto ni el código. */
+a.file-ref {
+  @apply cursor-pointer underline decoration-muted-foreground/50 decoration-dotted underline-offset-[3px] hover:decoration-foreground hover:decoration-solid;
+}
+a.file-ref > code {
+  @apply transition-colors;
+}
+a.file-ref:hover > code {
+  @apply bg-accent text-accent-foreground;
+}
 .md table {
   @apply block w-full overflow-x-auto text-[0.85rem];
   border-collapse: collapse;

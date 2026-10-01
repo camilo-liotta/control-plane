@@ -29,6 +29,7 @@ import type {
   ToolsView,
 } from "@shared/types"
 import { NetworkError } from "@shared/deliver"
+import type { ResolvedRef } from "@shared/file-refs"
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   let res: Response
@@ -151,6 +152,10 @@ export const api = {
     request<{ diff: boolean }>("POST", `/api/sessions/${id}/open-file`, { path, side }),
   editor: () => request<EditorSettings>("GET", "/api/editor"),
   openProjectInEditor: (projectId: string, path?: string) => request<{ dir: string }>("POST", `/api/projects/${projectId}/open-in-editor`, { path }),
+  resolvePaths: (projectId: string, paths: string[], sessionId?: string) =>
+    request<{ ok: ResolvedRef[] }>("POST", `/api/projects/${projectId}/resolve-paths`, { paths, sessionId }),
+  openPath: (projectId: string, path: string, sessionId?: string) =>
+    request<{ rel: string; kind: "file" | "dir" }>("POST", `/api/projects/${projectId}/open-path`, { path, sessionId }),
   saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
   cancelScheduled: (id: string, itemId: string, clientId: string) =>
     request<{ sent: boolean }>("POST", `/api/sessions/${id}/scheduled/${encodeURIComponent(itemId)}/cancel`, { clientId }),
