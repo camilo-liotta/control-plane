@@ -32,6 +32,7 @@ import { Overview } from "./overview.ts"
 import { CliUsage } from "./cli-usage.ts"
 import { Clis } from "./clis.ts"
 import { UserTasks } from "./user-tasks.ts"
+import { Environments } from "./environments.ts"
 import { SkillMarket } from "./skill-market.ts"
 import { Tools } from "./tools.ts"
 
@@ -216,7 +217,8 @@ async function main() {
   })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
   const tasks = new UserTasks({ db, hub, sessions })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, editor: new Editor({ home: config.home }) }
+  const environments = new Environments({ db, hub, sessions })
+  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }) }
   hub.setSummary(() => desktopSummary(deps))
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.

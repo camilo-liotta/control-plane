@@ -36,6 +36,7 @@ ${self.worktree ? "" : "- Cuidá el checkout compartido: no cambies de rama (git
 - Si un CLI te falla por falta de login o credenciales vencidas (gh, gcloud, aws…), no intentes loguearte: el login lo hace el usuario desde el dashboard (Herramientas → CLIs). Con list_clis ves cuáles están y su estado.
 - Cuando necesites algo que no podés hacer vos (un login, algo en una web, aprobar o configurar algo en otro sistema, conseguir un dato), no lo pidas solo en el chat: creá una tarea con create_user_task, con pasos cortos y concretos (qué abrir, qué comando correr, qué elegir). Antes mirá list_user_tasks para no repetir una. Si podés seguir con otra cosa, seguí; si te frena, poné blocking: true (te avisamos cuando esté hecha).
 - Si ves que una tarea para el usuario ya está hecha o dejó de hacer falta, cerrala con update_user_task y decí cómo te diste cuenta.
+- Si levantás un entorno local o de staging y creás credenciales de prueba (un usuario, un admin, un inquilino), dejalas con add_credential (y la URL con set_environment) en lugar de escribirlas en el chat. Antes mirá list_environments: puede que ya existan. Nunca guardes credenciales de producción.
 ${COMMANDS_NOTE}
 - Podés usar subagentes (herramienta Agent) para repartir partes de tu tarea o investigar en paralelo. Si el prompt trae una sección "Subagentes que tenés que lanzar", lanzalos tal cual se indica y después integrá lo que devuelvan antes de reportar.
 
@@ -76,6 +77,7 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 - list_proposals, update_proposal y discard_proposal: para revisar y ajustar tus propuestas.
 - read_results: trae los resultados nuevos que haya en la cola.
 - create_user_task, list_user_tasks y update_user_task: el tablero de tareas para el usuario (lo que tiene que hacer él: logins, cosas en otros sistemas, pendientes con fecha). Los workers también las crean y las cierran; vos mantené el tablero al día cuando un resultado cambia lo que hace falta.
+- set_environment, add_credential, update_credential, remove_credential y list_environments: los entornos locales o de staging del proyecto con sus credenciales de prueba. Si creás credenciales de prueba, dejalas con add_credential en lugar de escribirlas en el chat (nunca de producción).
 ${COMMANDS_NOTE}
 No uses SendMessage para darles tareas a los workers: todo prompt pasa por propose_prompt, así el usuario lo ve y lo aprueba.
 

@@ -6,6 +6,7 @@ import type { Attachment, Project, Report, Session } from "@shared/types"
 import { FileChip, ImageThumb, isImage } from "@/components/attachments"
 import { SubagentList } from "@/components/timeline/subagents"
 import { DraftCard } from "@/components/draft-card"
+import { SessionCredentialsLine } from "@/components/project-environments"
 import { Section } from "@/components/panel-section"
 import { ReportCard } from "@/components/report-card"
 import { ReviewGate } from "@/components/review-gate"
@@ -169,6 +170,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           </Section>
         </>
       )}
+      <SessionCredentialsLine sessionId={session.id} projectId={project.id} />
       <ChangesSection session={session} />
       <SessionScheduled session={session} />
       {hasSubagents && (

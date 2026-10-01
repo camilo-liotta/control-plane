@@ -7,6 +7,7 @@ import { buildLaunch } from "./claude/args.ts"
 import { lastCostState, transcriptDir, type RestoredSpend } from "./claude/local.ts"
 import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
 import { findLostConversation } from "./claude/recover.ts"
+import { HIDDEN_RESULT, hidesResult, redactInput } from "./secrets.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
@@ -216,6 +217,8 @@ export class SessionManager extends EventEmitter<{
   private launchFor: (session: SessionRecord) => LaunchContext
   private accountIdFor: (session: SessionRecord) => string
   private liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
+  /** Llamadas a list_environments: su resultado (con secretos) no se guarda en el chat. */
+  private hiddenResults = new Set<string>()
   /** Conversaciones del dashboard que hoy están abiertas en otro lado (se refresca periódicamente). */
   private external = new Map<string, ExternalSession>()
   /** Envíos recientes por id de cliente (sesión + id): el evento que ya se guardó. */
@@ -667,6 +670,15 @@ export class SessionManager extends EventEmitter<{
               // si no se puede guardar, la imagen queda como "[imagen]" en el texto
             }
           }
+          // Lo que llevan secretos (credenciales de prueba) no se guarda tal cual en el chat.
+          if (event.kind === "tool_use") {
+            event.input = redactInput(event.name, event.input)
+            if (hidesResult(event.name)) this.hiddenResults.add(event.id)
+          }
+          if (event.kind === "tool_result" && this.hiddenResults.delete(event.toolUseId)) {
+            event.content = HIDDEN_RESULT
+            delete event.structured
+          }
           if (event.kind === "tool_use" && AGENT_TOOLS.has(event.name)) {
             rt.agentCalls.set(event.id, { input: (event.input ?? {}) as Record<string, unknown>, parent: event.parent })
           }
@@ -889,7 +901,7 @@ export class SessionManager extends EventEmitter<{
           kind: "permission",
           requestId,
           toolName: String(req.tool_name ?? "herramienta"),
-          input: clampJson(input, 20_000),
+          input: clampJson(redactInput(String(req.tool_name ?? ""), input), 20_000),
           state: "pending",
         })
         rt.pendingControl.set(requestId, {

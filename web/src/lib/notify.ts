@@ -121,6 +121,7 @@ function open(msg: Pick<ToastMessage, "projectId" | "sessionId" | "open">) {
   // La página de destino baja hasta lo que hay que mirar (ver `reveal` en ui.ts).
   if (msg.open === "proposals" && msg.sessionId) set({ reveal: { kind: "proposals", id: msg.sessionId, at: Date.now() } })
   if (msg.open === "tasks" && msg.projectId) set({ reveal: { kind: "tasks", id: msg.projectId, at: Date.now() } })
+  if (msg.open === "environments" && msg.projectId) set({ reveal: { kind: "environments", id: msg.projectId, at: Date.now() } })
 }
 
 /**

@@ -9,6 +9,8 @@ import type {
   CliJob,
   CliView,
   UserTask,
+  Environment,
+  Credential,
   CompactionState,
   ContextUsage,
   Draft,
@@ -30,6 +32,19 @@ import type {
 } from "@shared/types"
 import { NetworkError } from "@shared/deliver"
 import type { ResolvedRef } from "@shared/file-refs"
+
+export interface EnvironmentFields {
+  name: string
+  url?: string | null
+  notes?: string | null
+}
+export interface CredentialFields {
+  name: string
+  username?: string | null
+  secret?: string | null
+  loginUrl?: string | null
+  notes?: string | null
+}
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   let res: Response
@@ -191,6 +206,14 @@ export const api = {
     request<UserTask>("POST", `/api/projects/${projectId}/tasks`, task),
   updateTask: (id: string, patch: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] }) =>
     request<UserTask>("PATCH", `/api/tasks/${id}`, patch),
+  createEnvironment: (projectId: string, env: EnvironmentFields) => request<Environment>("POST", `/api/projects/${projectId}/environments`, env),
+  updateEnvironment: (id: string, patch: Partial<EnvironmentFields>) => request<Environment>("PATCH", `/api/environments/${id}`, patch),
+  deleteEnvironment: (id: string) => request("DELETE", `/api/environments/${id}`),
+  createCredential: (environmentId: string, c: CredentialFields) => request<Credential>("POST", `/api/environments/${environmentId}/credentials`, c),
+  updateCredential: (id: string, patch: Partial<CredentialFields>) => request<Credential>("PATCH", `/api/credentials/${id}`, patch),
+  deleteCredential: (id: string) => request("DELETE", `/api/credentials/${id}`),
+  /** El secreto de una credencial: solo al mostrarlo o copiarlo (no se guarda en el store). */
+  credentialSecret: (id: string) => request<{ secret: string | null }>("GET", `/api/credentials/${id}/secret`),
   clis: (refresh = false) => request<CliView>("GET", `/api/clis${refresh ? "?refresh=1" : ""}`),
   cliLogin: (id: string, credential = 0) => request<CliJob>("POST", `/api/clis/${id}/login`, { credential }),
   cliInstall: (id: string) => request<CliJob>("POST", `/api/clis/${id}/install`),

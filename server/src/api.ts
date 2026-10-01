@@ -21,6 +21,7 @@ import type { Overview } from "./overview.ts"
 import { deleteProject } from "./project-delete.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
+import type { Environments } from "./environments.ts"
 import type { SkillMarket } from "./skill-market.ts"
 import type { ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
@@ -38,6 +39,7 @@ interface Deps {
   skillMarket: SkillMarket
   clis: Clis
   tasks: UserTasks
+  environments: Environments
   editor: Editor
 }
 
@@ -47,7 +49,7 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
-export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks }: Deps): Snapshot {
+export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks, environments }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
@@ -56,6 +58,7 @@ export function snapshot({ db, sessions, orchestration, accounts, compaction, ta
     accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
     compactions: compaction.list(),
     tasks: tasks.list(),
+    environments: environments.list(),
     turns: sessions.turns(),
     meta: sessions.meta,
   }
@@ -79,8 +82,53 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, editor } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, environments, editor } = deps
   const fileRefs = new PathResolver()
+
+  // ------------------------------------------------------------------ entornos (sin secretos, salvo /secret)
+
+  type EnvBody = { name?: string; url?: string | null; appId?: string | null; notes?: string | null }
+  type CredBody = { name?: string; username?: string | null; secret?: string | null; loginUrl?: string | null; notes?: string | null }
+  app.post<{ Params: { id: string }; Body: EnvBody }>("/api/projects/:id/environments", (req, reply) =>
+    guard(reply, () => {
+      if (environments.list(req.params.id).some((e) => e.name.toLowerCase() === String(req.body?.name ?? "").trim().toLowerCase()))
+        throw new Error(`Ya hay un entorno "${String(req.body?.name).trim()}"`)
+      return environments.setEnvironment(req.params.id, { ...req.body, name: String(req.body?.name ?? "") }, "user").environment
+    })
+  )
+  app.patch<{ Params: { id: string }; Body: EnvBody }>("/api/environments/:id", (req, reply) =>
+    guard(reply, () => environments.updateEnvironment(req.params.id, req.body ?? {}, "user"))
+  )
+  app.delete<{ Params: { id: string } }>("/api/environments/:id", (req, reply) => guard(reply, () => environments.removeEnvironment(req.params.id, "user")))
+  app.post<{ Params: { id: string }; Body: CredBody }>("/api/environments/:id/credentials", (req, reply) =>
+    guard(reply, () => {
+      const env = db.getEnvironment(req.params.id)
+      if (!env) throw new Error("No existe el entorno")
+      if (db.findCredential(env.id, String(req.body?.name ?? "").trim())) throw new Error(`Ya hay una credencial "${String(req.body?.name).trim()}" en ese entorno`)
+      return environments.addCredential(env.projectId, env.id, { ...req.body, name: String(req.body?.name ?? "") }, "user").credential
+    })
+  )
+  app.patch<{ Params: { id: string }; Body: CredBody }>("/api/credentials/:id", (req, reply) =>
+    guard(reply, () => {
+      const c = db.getCredential(req.params.id)
+      const env = c && db.getEnvironment(c.environmentId)
+      if (!env) throw new Error("No existe la credencial")
+      return environments.updateCredential(env.projectId, { id: req.params.id }, req.body ?? {}, "user")
+    })
+  )
+  app.delete<{ Params: { id: string } }>("/api/credentials/:id", (req, reply) =>
+    guard(reply, () => {
+      const c = db.getCredential(req.params.id)
+      const env = c && db.getEnvironment(c.environmentId)
+      if (!env) throw new Error("No existe la credencial")
+      environments.removeCredential(env.projectId, { id: req.params.id }, "user")
+    })
+  )
+  // El secreto, solo al mostrarlo o copiarlo. Sin caché: no queda en el navegador.
+  app.get<{ Params: { id: string } }>("/api/credentials/:id/secret", (req, reply) => {
+    reply.header("cache-control", "no-store")
+    return guard(reply, () => ({ secret: environments.secret(req.params.id) }))
+  })
 
   // ------------------------------------------------------------------ tareas para vos
 

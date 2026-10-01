@@ -6,6 +6,7 @@ import type {
   CompactionState,
   Draft,
   UserTask,
+  Environment,
   Meta,
   ModelOption,
   Project,
@@ -34,6 +35,8 @@ interface State {
   sessions: Record<string, Session>
   drafts: Record<string, Draft>
   tasks: Record<string, UserTask>
+  /** Entornos con sus credenciales (sin los secretos: se piden aparte). */
+  environments: Record<string, Environment>
   reports: Record<string, Report>
   events: Record<string, StoredEvent[]>
   hasMore: Record<string, boolean>
@@ -77,6 +80,7 @@ export const useStore = create<State>((set, get) => ({
   sessions: {},
   drafts: {},
   tasks: {},
+  environments: {},
   reports: {},
   events: {},
   hasMore: {},
@@ -106,6 +110,7 @@ export const useStore = create<State>((set, get) => ({
           sessions: byId(snapshot.sessions),
           drafts: byId(snapshot.drafts),
           tasks: byId(snapshot.tasks ?? []),
+          environments: byId(snapshot.environments ?? []),
           reports: byId(snapshot.reports),
           accounts: byId(snapshot.accounts),
           compactions: Object.fromEntries((snapshot.compactions ?? []).map((c) => [c.sessionId, c])),
@@ -140,6 +145,7 @@ export const useStore = create<State>((set, get) => ({
             sessions: keep(s.sessions),
             drafts: keep(s.drafts),
             tasks: keep(s.tasks),
+            environments: keep(s.environments),
             reports: keep(s.reports),
             events: bySession(s.events),
             hasMore: bySession(s.hasMore),
@@ -206,6 +212,16 @@ export const useStore = create<State>((set, get) => ({
         break
       case "task":
         set((s) => ({ tasks: { ...s.tasks, [msg.task.id]: msg.task } }))
+        break
+      case "environment":
+        set((s) => ({ environments: { ...s.environments, [msg.environment.id]: msg.environment } }))
+        break
+      case "environment_removed":
+        set((s) => {
+          const environments = { ...s.environments }
+          delete environments[msg.id]
+          return { environments }
+        })
         break
       case "report":
         set((s) => ({ reports: { ...s.reports, [msg.report.id]: msg.report } }))
