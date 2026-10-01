@@ -75,3 +75,45 @@ describe("get.sh encuentra Node aunque la app no tenga el PATH de tu shell", { s
     assert.match(run({}), /No encuentro Node/)
   })
 })
+
+describe("apt instala sin preguntar (sin terminal, debconf solo llenaría el log)", { skip: !linux && "el .deb es de Linux" }, () => {
+  let dir: string
+  const debian = spawnSync("sh", ["-c", "command -v apt-get && command -v dpkg && test -x /usr/bin/apt"]).status === 0
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-get-sh-deb-"))
+    fs.mkdirSync(path.join(dir, "from"))
+    fs.mkdirSync(path.join(dir, "bin"))
+    const file = "control-plane_9.9.9_amd64.deb"
+    fs.writeFileSync(path.join(dir, "from", file), "deb de prueba")
+    const sum = createHash("sha256").update("deb de prueba").digest("hex")
+    fs.writeFileSync(path.join(dir, "from", "SHA256SUMS"), `${sum}  ${file}\n`)
+    // Un pkexec de mentira (con --dry-run no se corre: alcanza con que exista).
+    fs.writeFileSync(path.join(dir, "bin", "pkexec"), "#!/bin/sh\nexit 1\n", { mode: 0o755 })
+  })
+  after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const args = () => [GET_SH, "--dry-run", "--from", path.join(dir, "from")]
+  const env = () => ({ HOME: dir, PATH: `${path.join(dir, "bin")}:/usr/bin:/bin`, CONTROL_PLANE_NODE: process.execPath })
+
+  it("lanzado por la app (sin terminal): pkexec con DEBIAN_FRONTEND=noninteractive", { skip: !debian && "sin apt" }, () => {
+    const r = spawnSync("bash", args(), { env: env(), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] })
+    assert.match(r.stdout + r.stderr, /\(haría\) pkexec \/usr\/bin\/env DEBIAN_FRONTEND=noninteractive \/usr\/bin\/apt install -y \S+control-plane_9\.9\.9_amd64\.deb/)
+  })
+
+  it("desde una terminal: sudo con DEBIAN_FRONTEND=noninteractive", { skip: (!debian && "sin apt") || (!fs.existsSync("/usr/bin/script") && "sin script(1)") }, () => {
+    // script(1) le da una terminal de verdad a la entrada.
+    const cmd = ["bash", ...args()].map((a) => `'${a}'`).join(" ")
+    const r = spawnSync("script", ["-qec", cmd, "/dev/null"], { env: env(), encoding: "utf8" })
+    assert.match(r.stdout + r.stderr, /\(haría\) sudo env DEBIAN_FRONTEND=noninteractive apt install -y \S+control-plane_9\.9\.9_amd64\.deb/)
+  })
+
+  it("en get.sh e install.sh, ningún apt install sin DEBIAN_FRONTEND=noninteractive", () => {
+    for (const f of ["desktop/scripts/get.sh", "desktop/scripts/install.sh"]) {
+      const lines = fs.readFileSync(path.join(root, f), "utf8").split("\n")
+      const installs = lines.filter((l) => /\bapt(-get)? install\b/.test(l) && !/^\s*#/.test(l) && !/\b(say|die|warn)\b/.test(l))
+      assert.ok(installs.length > 0, `${f} instala con apt`)
+      for (const l of installs) assert.match(l, /DEBIAN_FRONTEND=noninteractive/, `${f}: ${l.trim()}`)
+    }
+  })
+})

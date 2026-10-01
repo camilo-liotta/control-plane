@@ -155,7 +155,7 @@ if [[ "$OS" == Linux && -z "$TEST_BIN" ]]; then
     if ((DRY)); then
       printf '  (preguntaría si las instalo)\n'
     elif ask "¿Las instalo ahora? (te va a pedir la contraseña)"; then
-      sudo apt install -y "${MISSING[@]}"
+      sudo env DEBIAN_FRONTEND=noninteractive apt install -y "${MISSING[@]}"
     else
       die "Instalalas con el comando de arriba y volvé a correr \`npm run app:install\`."
     fi
@@ -276,7 +276,7 @@ else
     say "Modo prueba: no instalo ningún paquete."
   else
     say "Instalo el paquete (te va a pedir la contraseña)…"
-    run sudo apt install -y "$PKG"
+    run sudo env DEBIAN_FRONTEND=noninteractive apt install -y "$PKG"
   fi
   # 2. Cerrarla: el server guarda las sesiones activas y se detiene. La nueva lanza el server
   #    nuevo y las retoma: app y server se actualizan juntos.
