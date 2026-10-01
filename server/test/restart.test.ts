@@ -8,9 +8,9 @@ import { AttachmentStore } from "../src/attachments.ts"
 import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import { Hub } from "../src/hub.ts"
 import { Orchestration } from "../src/orchestration.ts"
-import { ARM_MS, CONTINUE_PROMPT, MAX_AGE_MS, Restart, RESUME_FILE } from "../src/restart.ts"
+import { ARM_MS, CONTINUE_PROMPT, MAX_AGE_MS, Restart, RESUME_FILE, resumeSummary } from "../src/restart.ts"
 import { SessionManager } from "../src/sessions.ts"
-import type { ServerMessage } from "../src/shared/types.ts"
+import type { ExternalSession, ServerMessage } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
 
 const until = async (check: () => boolean, what = "no llegó a tiempo") => {
@@ -37,21 +37,23 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
   let sessions: SessionManager
   let managers: SessionManager[]
 
-  const manager = () => {
+  const manager = (opts: { strict?: boolean; liveElsewhere?: (s: SessionRecord) => Promise<ExternalSession | null> } = {}) => {
     const m = new SessionManager({
+      liveElsewhere: opts.liveElsewhere,
       db,
       hub,
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
-      launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir, FAKE_LONG_MS: "60000" }, bin, accountId: "acc" }),
+      launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir, FAKE_LONG_MS: "60000", ...(opts.strict ? { FAKE_STRICT_RESUME: "1" } : {}) }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
     })
     managers.push(m)
     return m
   }
-  const restartOf = (m: SessionManager, clock?: () => number) => new Restart({ home: dir, version: "9.9.9", sessions: m, hub, clientWaitMs: 0, ...(clock ? { clock } : {}) })
+  const restartOf = (m: SessionManager, clock?: () => number) =>
+    new Restart({ home: dir, version: "9.9.9", sessions: m, hub, clientWaitMs: 0, retryDelaysMs: [50, 100], ...(clock ? { clock } : {}) })
   const create = (name: string, kind: "worker" | "orchestrator" = "worker", cwd = dir) =>
     sessions.create({ projectId: "p1", kind, name, role: "", cwd, claudeSessionId: `c-${name}` })
   const texts = (id: string) => db.listEvents(id).map((e) => e.event)
@@ -126,6 +128,130 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
     assert.deepEqual(await restartOf(sessions).resumePending(), { resumed: [], failed: [] }, "no hay nada pendiente")
   })
 
+  /** Apaga como lo hace el server al actualizar y arranca uno nuevo que retoma. */
+  async function restartAll(opts: Parameters<typeof manager>[0] = {}) {
+    const restart = restartOf(sessions)
+    restart.prepare("update")
+    const saved = restart.onShutdown()!
+    await sessions.shutdown()
+    sessions = manager(opts)
+    const result = await restartOf(sessions).resumePending()
+    return { saved, result }
+  }
+  /** Cuántas veces le pidió que siga (en el chat se ve el aviso en lugar del mensaje). */
+  const continued = (id: string) => texts(id).filter((e) => e.kind === "notice" && e.text.includes("le pedí que revise lo que quedó a medias")).length
+
+  it("retoma varias a la vez: las que trabajaban (con la orquestadora) siguen y las que esperaban vuelven", async () => {
+    const orch = create("ORQ", "orchestrator")
+    const busy = ["UNO", "DOS", "TRES"].map((n) => create(n))
+    const quiet = ["CUATRO", "CINCO"].map((n) => create(n))
+    for (const s of [orch, ...busy]) await sessions.send(s.id, "LARGO", { origin: "user" })
+    for (const s of quiet) await sessions.send(s.id, "hola", { origin: "user" })
+    await until(() => [orch, ...busy].every((s) => sessions.statusOf(s.id) === "working") && quiet.every((s) => sessions.statusOf(s.id) === "idle"))
+
+    const { saved, result } = await restartAll({ strict: true })
+    assert.equal(saved.sessions.filter((s) => s.status === "working").length, 4)
+    assert.equal(result.resumed.length, 6)
+    assert.deepEqual(result.failed, [])
+    for (const s of [orch, ...busy, ...quiet]) assert.ok(sessions.isRunning(s.id), `${s.name} volvió`)
+    for (const s of [orch, ...busy]) await until(() => continued(s.id) === 1, `${s.name} recibió el seguí`)
+    for (const s of quiet) assert.equal(continued(s.id), 0)
+  })
+
+  it("una que falla al arrancar se reintenta y, cuando arranca, recibe el seguí", async () => {
+    const flaky = create("FALLA1")
+    fs.writeFileSync(path.join(dir, "falla1-FALLA1"), "") // el primer arranque anda: falla el del server nuevo
+    await sessions.send(flaky.id, "LARGO", { origin: "user" })
+    await until(() => sessions.statusOf(flaky.id) === "working")
+    const logs: string[] = []
+    const log = console.log
+    console.log = (...a: unknown[]) => void logs.push(a.join(" "))
+    let result
+    try {
+      fs.rmSync(path.join(dir, "falla1-FALLA1"), { force: true })
+      ;({ result } = await restartAll())
+    } finally {
+      console.log = log
+    }
+    assert.deepEqual(result.resumed, [flaky.id])
+    assert.deepEqual(result.failed, [])
+    assert.ok(logs.some((l) => /No arrancaron FALLA1 \(.*529 Overloaded.*\): reintento/.test(l)), "el log dice cuál y por qué")
+    await until(() => continued(flaky.id) === 1, "le llegó el seguí")
+  })
+
+  it("si todavía figura abierta en otro lado (el proceso viejo), espera y la retoma", async () => {
+    const s = create("PEGADA")
+    await sessions.send(s.id, "LARGO", { origin: "user" })
+    await until(() => sessions.statusOf(s.id) === "working")
+    let calls = 0
+    const { result } = await restartAll({
+      liveElsewhere: async () => (++calls <= 2 ? { pid: 4242, kind: "interactive", id: null } : null),
+    })
+    assert.ok(calls >= 3, "volvió a mirar")
+    assert.deepEqual(result.resumed, [s.id])
+    await until(() => continued(s.id) === 1)
+  })
+
+  it("si sigue abierta en otro lado después de los reintentos, dice cuál y por qué", async () => {
+    const s = create("AJENA")
+    await sessions.send(s.id, "hola", { origin: "user" })
+    await until(() => sessions.statusOf(s.id) === "idle")
+    const { result } = await restartAll({ liveElsewhere: async () => ({ pid: 4242, kind: "interactive", id: null }) })
+    assert.deepEqual(result.failed.map((f) => f.name), ["AJENA"])
+    assert.match(result.failed[0]!.error, /abierta en una terminal \(pid 4242\)/)
+  })
+
+  it("el estado guardado es el que ves: con un subagente andando o una herramienta larga, está trabajando", async () => {
+    const sub = create("CONSUB")
+    const tool = create("HERRAMIENTA")
+    await sessions.send(sub.id, "SUBAGENTE", { origin: "user" })
+    await sessions.send(tool.id, "LARGO", { origin: "user" })
+    await until(() => sessions.list().find((x) => x.id === sub.id)?.subagentsRunning === 1 && sessions.statusOf(sub.id) === "idle")
+    await until(() => sessions.statusOf(tool.id) === "working")
+    const { saved, result } = await restartAll()
+    assert.deepEqual(Object.fromEntries(saved.sessions.map((x) => [x.id, x.status])), { [sub.id]: "working", [tool.id]: "working" })
+    assert.equal(result.resumed.length, 2)
+    for (const s of [sub, tool]) await until(() => continued(s.id) === 1, `${s.name} recibió el seguí`)
+  })
+
+  it("después de un /clear se retoma la conversación nueva (el id real, no el new_conversation_id)", async () => {
+    const s = create("LIMPIA")
+    await sessions.send(s.id, "hola", { origin: "user" })
+    await until(() => sessions.statusOf(s.id) === "idle")
+    const before = db.getSession(s.id)!.claudeSessionId
+    await sessions.clearConversation(s.id)
+    const after = db.getSession(s.id)!.claudeSessionId
+    assert.notEqual(after, before)
+    assert.match(after, /^clear-/, "el session_id de lo que siguió al reset")
+    await sessions.send(s.id, "LARGO tarea nueva", { origin: "user" })
+    await until(() => sessions.statusOf(s.id) === "working")
+
+    const { result } = await restartAll({ strict: true })
+    assert.deepEqual(result.resumed, [s.id])
+    assert.deepEqual(result.failed, [])
+    assert.equal(db.getSession(s.id)!.claudeSessionId, after)
+    await until(() => continued(s.id) === 1)
+  })
+
+  it("si Claude Code no encuentra su conversación, no le pide que siga y avisa que arrancó de cero", async () => {
+    const s = create("PERDIDA")
+    await sessions.send(s.id, "LARGO", { origin: "user" })
+    await until(() => sessions.statusOf(s.id) === "working")
+    const restart = restartOf(sessions)
+    restart.prepare("update")
+    restart.onShutdown()
+    await sessions.shutdown()
+    // Como pasaba tras un /clear con 0.4.x: el id guardado no tiene transcript.
+    db.updateSession(s.id, { claudeSessionId: "no-existe" })
+    sessions = manager({ strict: true })
+    const result = await restartOf(sessions).resumePending()
+    assert.deepEqual(result.resumed, [])
+    assert.deepEqual(result.failed.map((f) => f.name), ["PERDIDA"])
+    assert.match(result.failed[0]!.error, /no encontró su conversación \(no-existe\)/)
+    assert.equal(continued(s.id), 0, "no le manda el seguí a una conversación vacía")
+    assert.ok(texts(s.id).some((e) => e.kind === "notice" && e.level === "warn" && e.text.includes("arrancó una nueva, sin el contexto de antes")))
+  })
+
   it("un Detener normal (sin prepare), un pedido vencido o cancelado no guardan nada", async () => {
     await liveSessions()
     assert.equal(restartOf(sessions).onShutdown(), null, "sin prepare")
@@ -158,9 +284,15 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
 
     write(Date.now())
     const result = await restartOf(sessions).resumePending()
-    assert.deepEqual(result, { resumed: [fine.id], failed: [broken.id] })
+    assert.deepEqual(result.resumed, [fine.id])
+    assert.deepEqual(result.failed.map((f) => [f.id, f.name]), [[broken.id, "ROTA"]])
+    assert.match(result.failed[0]!.error, /ENOENT/, "con el motivo")
     assert.ok(sessions.isRunning(fine.id))
-    assert.ok(hub.sent.some((m) => m.type === "toast" && m.title === "No pude retomar ROTA después de reiniciar"))
+    // Se ve cuál y por qué: en el log, en el toast y en su chat.
+    assert.match(resumeSummary(result)!, /^Retomé 1 sesión; 1 no arrancó: ROTA \(.*ENOENT.*\)\.$/)
+    const toast = hub.sent.find((m) => m.type === "toast" && m.title === "No pude retomar ROTA después de reiniciar")
+    assert.ok(toast && toast.type === "toast" && /ENOENT/.test(toast.body ?? ""))
+    assert.ok(texts(broken.id).some((e) => e.kind === "notice" && e.level === "error" && e.text.includes("no pude retomar esta sesión")))
   })
 
   it("la cola de la orquestadora sigue igual y no recibe dos veces el mismo lote", async () => {

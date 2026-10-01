@@ -80,9 +80,11 @@ export class ClaudeProcess extends EventEmitter<{
   private finish(code: number | null, signal: NodeJS.Signals | null) {
     if (this.exited) return
     this.exited = true
+    // Lo último que dijo por stderr explica por qué (p. ej. "No conversation found with session ID: …").
+    const why = this.stderrLines.at(-1)?.trim()
     for (const [id, p] of this.pending) {
       clearTimeout(p.timer)
-      p.reject(new Error("La sesión terminó"))
+      p.reject(new Error(why ? `La sesión terminó: ${why.slice(0, 300)}` : "La sesión terminó"))
       this.pending.delete(id)
     }
     this.emit("exit", {

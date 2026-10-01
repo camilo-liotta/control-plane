@@ -19,7 +19,7 @@ import { desktopSummary } from "./desktop.ts"
 import { Editor } from "./editor.ts"
 import { localOnly, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
-import { registerRestart, Restart } from "./restart.ts"
+import { registerRestart, Restart, resumeSummary } from "./restart.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
@@ -263,8 +263,9 @@ async function main() {
   console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
   console.log(`Datos: ${config.home}`)
   // Las sesiones que estaban vivas antes de reiniciar para actualizar.
-  void restart.resumePending().then(({ resumed, failed }) => {
-    if (resumed.length || failed.length) console.log(`Retomé ${resumed.length} sesiones${failed.length ? ` (${failed.length} no arrancaron)` : ""}.`)
+  void restart.resumePending().then((outcome) => {
+    const line = resumeSummary(outcome)
+    if (line) console.log(line)
   })
 
   let closing = false
