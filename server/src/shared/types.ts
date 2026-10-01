@@ -712,6 +712,8 @@ export interface Snapshot {
   compactions: CompactionState[]
   turns: { sessionId: string; turn: TurnProgress }[]
   tasks: UserTask[]
+  /** Entornos con sus credenciales, sin los secretos. */
+  environments: Environment[]
   meta: Meta
 }
 
@@ -723,8 +725,9 @@ export type ToastLevel = "info" | "success" | "warn" | "error"
  * - compaction: el panel de compactación de la sesión.
  * - proposals: en el chat de la orquestadora, baja hasta la primera propuesta lista.
  * - tasks: el tablero del proyecto, en "Tareas para vos" (aunque venga la sesión que la pidió).
+ * - environments: el resumen del proyecto, con "Entornos" abierto.
  */
-export type NoticeOpen = "compaction" | "proposals" | "tasks"
+export type NoticeOpen = "compaction" | "proposals" | "tasks" | "environments"
 
 /** Lo que muestra la app de escritorio en la bandeja: cuántas te necesitan y cuántas trabajan. */
 export interface DesktopSummary {
@@ -787,6 +790,9 @@ export type ServerMessage =
   /** Solo a la web: si hay una app de escritorio conectada (al conectar y cuando cambia). */
   | { type: "desktop"; connected: boolean }
   | { type: "task"; task: UserTask }
+  /** Cambió un entorno o sus credenciales (sin los secretos). */
+  | { type: "environment"; environment: Environment }
+  | { type: "environment_removed"; id: string; projectId: string }
   | {
       type: "toast"
       level: ToastLevel
@@ -900,4 +906,42 @@ export interface CliView {
   used: UsedProgram[]
   /** Todavía está leyendo los transcripts (la primera vez tarda). */
   usageScanning: boolean
+}
+
+// ------------------------------------------------------------------ Entornos
+
+/**
+ * Una credencial de prueba de un entorno, como la ve la web: **sin el secreto**. El secreto se pide
+ * aparte (GET /api/credentials/:id/secret) solo al mostrarlo o copiarlo.
+ */
+export interface Credential {
+  id: string
+  environmentId: string
+  /** Para qué es ("Inquilino", "Usuario admin"). Único dentro del entorno. */
+  name: string
+  username: string | null
+  /** Si tiene contraseña o token guardado. */
+  hasSecret: boolean
+  loginUrl: string | null
+  notes: string | null
+  /** La sesión que la dejó, o null si la cargaste vos. */
+  createdBy: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** Un entorno local o de staging del proyecto ("Local", "Staging"), con sus credenciales de prueba. */
+export interface Environment {
+  id: string
+  projectId: string
+  /** Único dentro del proyecto. */
+  name: string
+  url: string | null
+  /** Una app levantable del proyecto (ver "Apps"): si está, su URL manda sobre `url`. */
+  appId: string | null
+  notes: string | null
+  createdBy: string | null
+  createdAt: number
+  updatedAt: number
+  credentials: Credential[]
 }

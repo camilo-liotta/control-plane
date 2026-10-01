@@ -4,6 +4,8 @@ import { DatabaseSync } from "node:sqlite"
 
 import type {
   Attachment,
+  Credential,
+  Environment,
   ContextUsage,
   Draft,
   DraftKind,
@@ -210,6 +212,33 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX user_tasks_project ON user_tasks(project_id, status);
   `,
+  `
+  CREATE TABLE environments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    url TEXT,
+    app_id TEXT,
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (project_id, name)
+  );
+  CREATE TABLE credentials (
+    id TEXT PRIMARY KEY,
+    environment_id TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    username TEXT,
+    secret TEXT,
+    login_url TEXT,
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (environment_id, name)
+  );
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -330,6 +359,43 @@ function toDraft(r: Row): Draft {
   }
 }
 
+/** Un entorno tal como está en la base (las credenciales van aparte). */
+export type EnvironmentRecord = Omit<Environment, "credentials">
+
+/** Una credencial tal como está en la base: con el secreto. No sale del server salvo pedido explícito. */
+export interface CredentialRecord extends Omit<Credential, "hasSecret"> {
+  secret: string | null
+}
+
+function toEnvironment(r: Row): EnvironmentRecord {
+  return {
+    id: String(r.id),
+    projectId: String(r.project_id),
+    name: String(r.name),
+    url: str(r.url),
+    appId: str(r.app_id),
+    notes: str(r.notes),
+    createdBy: str(r.created_by),
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+  }
+}
+
+function toCredential(r: Row): CredentialRecord {
+  return {
+    id: String(r.id),
+    environmentId: String(r.environment_id),
+    name: String(r.name),
+    username: str(r.username),
+    secret: str(r.secret),
+    loginUrl: str(r.login_url),
+    notes: str(r.notes),
+    createdBy: str(r.created_by),
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+  }
+}
+
 export interface AttachmentRecord extends Attachment {
   path: string
 }
@@ -447,14 +513,28 @@ function sqlValue(v: unknown): SqlValue {
   return JSON.stringify(v)
 }
 
+/**
+ * La base guarda credenciales de prueba: solo la lee tu usuario. La carpeta queda en 0700 y la base
+ * (con su -wal y -shm) en 0600, también las que se crearon antes con los permisos por defecto.
+ */
+function restrict(file: string) {
+  try {
+    fs.chmodSync(path.dirname(file), 0o700)
+    for (const f of [file, `${file}-wal`, `${file}-shm`]) if (fs.existsSync(f)) fs.chmodSync(f, 0o600)
+  } catch {
+    // otro dueño o un sistema de archivos sin permisos: se sigue igual
+  }
+}
+
 export class Db {
   private db: DatabaseSync
 
   constructor(file: string) {
-    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(file)
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
     this.migrate()
+    restrict(file)
   }
 
   private migrate() {
@@ -635,6 +715,8 @@ export class Db {
       this.db.prepare("DELETE FROM reports WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM drafts WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM credentials WHERE environment_id IN (SELECT id FROM environments WHERE project_id = ?)").run(id)
+      this.db.prepare("DELETE FROM environments WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM sessions WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM projects WHERE id = ?").run(id)
       this.db.exec("COMMIT")
@@ -743,6 +825,84 @@ export class Db {
   }
 
   // ------------------------------------------------------------------ tareas para vos
+
+  // ---------------------------------------------------------------- entornos
+
+  insertEnvironment(e: EnvironmentRecord) {
+    this.db
+      .prepare("INSERT INTO environments (id, project_id, name, url, app_id, notes, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(e.id, e.projectId, e.name, e.url, e.appId, e.notes, e.createdBy, e.createdAt, e.updatedAt)
+  }
+
+  updateEnvironment(id: string, patch: Partial<Pick<EnvironmentRecord, "name" | "url" | "appId" | "notes" | "updatedAt">>) {
+    const cols = { name: "name", url: "url", appId: "app_id", notes: "notes", updatedAt: "updated_at" } as const
+    const keys = (Object.keys(patch) as (keyof typeof cols)[]).filter((k) => cols[k] && patch[k] !== undefined)
+    if (!keys.length) return
+    this.db.prepare(`UPDATE environments SET ${keys.map((k) => `${cols[k]} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => sqlValue(patch[k])), id)
+  }
+
+  getEnvironment(id: string): EnvironmentRecord | null {
+    const r = this.db.prepare("SELECT * FROM environments WHERE id = ?").get(id) as Row | undefined
+    return r ? toEnvironment(r) : null
+  }
+
+  /** Por nombre, sin distinguir mayúsculas. */
+  findEnvironment(projectId: string, name: string): EnvironmentRecord | null {
+    const r = this.db.prepare("SELECT * FROM environments WHERE project_id = ? AND name = ?").get(projectId, name) as Row | undefined
+    return r ? toEnvironment(r) : null
+  }
+
+  listEnvironments(projectId?: string): EnvironmentRecord[] {
+    const rows = projectId
+      ? this.db.prepare("SELECT * FROM environments WHERE project_id = ? ORDER BY created_at").all(projectId)
+      : this.db.prepare("SELECT * FROM environments ORDER BY created_at").all()
+    return (rows as Row[]).map(toEnvironment)
+  }
+
+  deleteEnvironment(id: string) {
+    this.db.exec("BEGIN")
+    try {
+      this.db.prepare("DELETE FROM credentials WHERE environment_id = ?").run(id)
+      this.db.prepare("DELETE FROM environments WHERE id = ?").run(id)
+      this.db.exec("COMMIT")
+    } catch (err) {
+      this.db.exec("ROLLBACK")
+      throw err
+    }
+  }
+
+  insertCredential(c: CredentialRecord) {
+    this.db
+      .prepare(
+        "INSERT INTO credentials (id, environment_id, name, username, secret, login_url, notes, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      )
+      .run(c.id, c.environmentId, c.name, c.username, c.secret, c.loginUrl, c.notes, c.createdBy, c.createdAt, c.updatedAt)
+  }
+
+  updateCredential(id: string, patch: Partial<Pick<CredentialRecord, "environmentId" | "name" | "username" | "secret" | "loginUrl" | "notes" | "updatedAt">>) {
+    const cols = { environmentId: "environment_id", name: "name", username: "username", secret: "secret", loginUrl: "login_url", notes: "notes", updatedAt: "updated_at" } as const
+    const keys = (Object.keys(patch) as (keyof typeof cols)[]).filter((k) => cols[k] && patch[k] !== undefined)
+    if (!keys.length) return
+    this.db.prepare(`UPDATE credentials SET ${keys.map((k) => `${cols[k]} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => sqlValue(patch[k])), id)
+  }
+
+  getCredential(id: string): CredentialRecord | null {
+    const r = this.db.prepare("SELECT * FROM credentials WHERE id = ?").get(id) as Row | undefined
+    return r ? toCredential(r) : null
+  }
+
+  findCredential(environmentId: string, name: string): CredentialRecord | null {
+    const r = this.db.prepare("SELECT * FROM credentials WHERE environment_id = ? AND name = ?").get(environmentId, name) as Row | undefined
+    return r ? toCredential(r) : null
+  }
+
+  listCredentials(environmentId: string): CredentialRecord[] {
+    return (this.db.prepare("SELECT * FROM credentials WHERE environment_id = ? ORDER BY created_at").all(environmentId) as Row[]).map(toCredential)
+  }
+
+  deleteCredential(id: string) {
+    this.db.prepare("DELETE FROM credentials WHERE id = ?").run(id)
+  }
 
   insertTask(t: UserTask) {
     this.db

@@ -9,6 +9,7 @@ describe("a dónde lleva un aviso", () => {
     assert.equal(noticeHref({ projectId: "p1", sessionId: "s1", open: "proposals" }), "/p/p1/s/s1")
     assert.equal(noticeHref({ projectId: "p1", sessionId: "s1", open: "compaction" }), "/p/p1/s/s1")
     assert.equal(noticeHref({ projectId: "p1" }), "/p/p1")
+    assert.equal(noticeHref({ projectId: "p1", sessionId: "s1", open: "environments" }), "/p/p1")
     assert.equal(noticeHref({ sessionId: "s1" }), null)
     assert.equal(noticeHref({}), null)
   })

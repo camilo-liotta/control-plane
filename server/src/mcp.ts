@@ -6,6 +6,7 @@ import { z } from "zod"
 import { version } from "./config.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
+import type { Environments } from "./environments.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
@@ -68,7 +69,7 @@ function wrap<A>(fn: (args: A) => string | Promise<string>) {
 /** Herramientas de control-plane que ve cada sesión según su rol. */
 function buildServer(
   self: SessionRecord,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments }
 ): McpServer {
   const { db, sessions, orchestration } = deps
   const server = new McpServer({ name: "control-plane", version })
@@ -167,6 +168,96 @@ function buildServer(
         annotations: { readOnlyHint: true },
       },
       wrap(() => clis.summary())
+    )
+  }
+
+  if (deps.environments) {
+    const envs = deps.environments
+    const testOnly =
+      "Solo para entornos locales o de staging con credenciales de prueba que creaste vos o que existen para probar: nunca de producción ni personales."
+    const credentialFields = {
+      username: z.string().optional().describe("Usuario, email o id con que se entra."),
+      secret: z.string().optional().describe("Contraseña o token. Se guarda en el dashboard (el usuario lo ve si lo pide); no lo repitas en el chat."),
+      loginUrl: z.string().optional().describe("URL de login, si no es la del entorno."),
+      notes: z.string().optional().describe("Qué permisos tiene, con qué datos viene, en una línea."),
+    }
+    server.registerTool(
+      "set_environment",
+      {
+        title: "Crear o actualizar un entorno",
+        description: `Deja en el dashboard un entorno del proyecto ("Local", "Staging") con su URL. Si ya hay uno con ese nombre, lo actualiza (no se duplica). ${testOnly}`,
+        inputSchema: {
+          name: z.string().min(1).describe('Nombre del entorno (ej. "Local", "Staging"). Sin distinguir mayúsculas.'),
+          url: z.string().optional().describe("URL donde se abre (ej. http://localhost:3000)."),
+          notes: z.string().optional().describe("Cómo se levanta o algo que haga falta saber, en una línea."),
+        },
+      },
+      wrap((args: { name: string; url?: string; notes?: string }) => {
+        const { environment, created } = envs.setEnvironment(self.projectId, args, self)
+        return `Entorno "${environment.name}" ${created ? "creado" : "actualizado"} [${environment.id}].`
+      })
+    )
+    server.registerTool(
+      "add_credential",
+      {
+        title: "Dejar una credencial de prueba",
+        description: `Guarda en el dashboard una credencial de prueba de un entorno (un usuario que creaste, un admin, un inquilino), para que el usuario la vea y la copie sin buscarla en el chat. Si el entorno no existe, se crea. Si ya hay una credencial con ese nombre en el entorno, se actualiza (no se duplica). ${testOnly}`,
+        inputSchema: {
+          environment: z.string().min(1).describe('Nombre (o id) del entorno, ej. "Local".'),
+          name: z.string().min(1).describe('Para qué es, ej. "Inquilino", "Usuario admin".'),
+          ...credentialFields,
+        },
+      },
+      wrap((args: { environment: string; name: string; username?: string; secret?: string; loginUrl?: string; notes?: string }) => {
+        const { environment, ...input } = args
+        const res = envs.addCredential(self.projectId, environment, input, self)
+        return `Credencial "${res.credential.name}" ${res.created ? "guardada" : "actualizada"} en "${res.environment.name}" [${res.credential.id}]. Ya se ve en el dashboard: no hace falta repetirla en el chat.`
+      })
+    )
+    server.registerTool(
+      "update_credential",
+      {
+        title: "Actualizar una credencial",
+        description: `Cambia una credencial guardada (por ejemplo, si reseteaste la contraseña). Indicá el id, o el entorno y el nombre. Solo cambia los campos que pases; un secreto vacío lo borra. ${testOnly}`,
+        inputSchema: {
+          id: z.string().optional().describe("Id de la credencial (ej. k_ab12cd)."),
+          environment: z.string().optional().describe("Entorno, si no pasás el id."),
+          name: z.string().optional().describe("Nombre actual de la credencial, si no pasás el id."),
+          newName: z.string().optional().describe("Nombre nuevo, si cambia."),
+          ...credentialFields,
+        },
+      },
+      wrap((args: { id?: string; environment?: string; name?: string; newName?: string; username?: string; secret?: string; loginUrl?: string; notes?: string }) => {
+        const { id, environment, name, newName, ...patch } = args
+        const c = envs.updateCredential(self.projectId, { id, environment, name }, { ...patch, ...(newName ? { name: newName } : {}) }, self)
+        return `Credencial "${c.name}" actualizada [${c.id}].`
+      })
+    )
+    server.registerTool(
+      "remove_credential",
+      {
+        title: "Borrar una credencial",
+        description: "Borra una credencial que ya no sirve (el usuario de prueba se borró, el entorno se bajó). Indicá el id, o el entorno y el nombre.",
+        inputSchema: {
+          id: z.string().optional(),
+          environment: z.string().optional(),
+          name: z.string().optional(),
+        },
+      },
+      wrap((args: { id?: string; environment?: string; name?: string }) => {
+        const r = envs.removeCredential(self.projectId, args, self)
+        return `Borré la credencial "${r.name}" de "${r.environment}".`
+      })
+    )
+    server.registerTool(
+      "list_environments",
+      {
+        title: "Entornos y credenciales del proyecto",
+        description:
+          "Los entornos del proyecto (locales o de staging) con su URL y sus credenciales de prueba, con usuario y secreto para que puedas usarlas. Miralo antes de crear un usuario de prueba nuevo: puede que ya haya uno.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => envs.summary(self.projectId))
     )
   }
 
@@ -307,7 +398,7 @@ function toWebRequest(req: FastifyRequest): Request {
 
 export function registerMcp(
   app: FastifyInstance,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks }
+  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments }
 ) {
   const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
     const self = deps.db.getSessionByToken(req.params.token)

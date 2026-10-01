@@ -6,6 +6,7 @@ import { useLocation } from "wouter"
 import type { Project, ProjectOverview, RepoInfo } from "@shared/types"
 
 import { GithubMark } from "@/components/github-mark"
+import { ProjectEnvironments } from "@/components/project-environments"
 import { ProjectScheduled } from "@/components/scheduled"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -291,6 +292,8 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
     <section className="rounded-xl border bg-card">
       <Repos data={data} projectId={project.id} />
       <ProjectScheduled sessions={projectSessionsList} />
+      {/* Entornos (SERVER) */}
+      <ProjectEnvironments project={project} />
       <div className="grid divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <Stat
           label="Tokens del proyecto"

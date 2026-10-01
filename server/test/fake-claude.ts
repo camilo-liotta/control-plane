@@ -11,6 +11,7 @@ import path from "node:path"
  * - `--version` contesta una versión y los otros subcomandos (auth status, agents) salen sin nada;
  * - "CRON …", "CRONDEL …", "WAKEUP …" y "FIRE …" programan, cancelan y disparan tareas (ver el script);
  * - "PREGUNTA" deja una pregunta pendiente y "LARGO" hace un turno que tarda (para los reinicios);
+ *   "SECRETO <valor>" llama add_credential y list_environments con ese secreto;
  *   "SUBAGENTE" cierra el turno con un subagente en segundo plano que sigue andando;
  * - como el de verdad, --resume de una conversación sin transcript sale con "No conversation found";
  * - con FALLA1 en el --name, el primer arranque sale con error (los siguientes andan).
@@ -176,6 +177,15 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       tool("RemoteTrigger", { action: "update", trigger_id: trigger, body: { enabled: false } }, "HTTP 200\n" + JSON.stringify({ trigger: { id: trigger, enabled: false } }))
       say("Apagué la rutina.")
     }
+    result({})
+    continue
+  }
+  // "SECRETO <valor>": deja una credencial y lista los entornos, como haría una sesión de verdad.
+  if (text.startsWith("SECRETO ")) {
+    const secret = text.slice(8).trim()
+    tool("mcp__control-plane__add_credential", { environment: "Local", name: "Inquilino", username: "inq", secret }, "Credencial guardada.")
+    tool("mcp__control-plane__list_environments", {}, "## Local\n- Inquilino | usuario: inq | secreto: " + secret)
+    say("Listo.")
     result({})
     continue
   }
