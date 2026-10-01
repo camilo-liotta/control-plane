@@ -7,6 +7,7 @@ import { after, before, describe, it } from "node:test"
 import Fastify, { type FastifyInstance } from "fastify"
 
 import { snapshot } from "../src/api.ts"
+import { Apps } from "../src/apps.ts"
 import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import { desktopSummary } from "../src/desktop.ts"
 import { Environments } from "../src/environments.ts"
@@ -240,6 +241,62 @@ describe("el chat de una sesión que deja credenciales", () => {
       assert.ok(!JSON.stringify(sent).includes(SECRET), "ni viaja por el WS")
     } finally {
       await sessions.shutdown()
+      db.close()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("un entorno conectado a una app levantable", () => {
+  it("toma la app por nombre o id (solo del proyecto), muestra su URL y su estado, y si la app se borra queda con su URL", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-envs-app-"))
+    const db = new Db(path.join(dir, "t.db"))
+    for (const id of ["p1", "p2"]) db.insertProject({ id, name: id, repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 1, archivedAt: null })
+    const sent: ServerMessage[] = []
+    const hub = { broadcast: (m: ServerMessage) => sent.push(m), size: 1 } as unknown as Hub
+    const apps: Apps = new Apps({ db, hub, home: dir, onRemove: (a) => envs.appRemoved(a.projectId) })
+    const envs = new Environments({ db, hub, app: (id) => {
+      const a = db.getApp(id)
+      return a ? apps.view(a) : null
+    } })
+    const self = session("ALFA", "p1")
+    db.insertSession(self)
+    try {
+      const web = await apps.create("p1", { name: "web", command: "node server.js", url: "http://127.0.0.1:5173" }, null)
+      const ajena = await apps.create("p2", { name: "api", command: "node api.js" }, null)
+
+      // Por nombre (sin distinguir mayúsculas), con una URL propia de respaldo.
+      const { environment } = envs.setEnvironment("p1", { name: "Local", url: "http://localhost:3000", app: "WEB" }, self)
+      assert.equal(environment.appId, web.id)
+      assert.equal(environment.url, "http://localhost:3000", "la URL propia queda")
+      // Lo que ve la sesión: la URL de la app y si está levantada.
+      const text = envs.summary("p1")
+      assert.match(text, /URL: http:\/\/127\.0\.0\.1:5173/)
+      assert.match(text, /app: web \(bajada: levantala con start_app\)/)
+
+      // Una app de otro proyecto o que no existe no se conecta.
+      assert.throws(() => envs.setEnvironment("p1", { name: "Local", app: ajena.id }, self), /No hay una app/)
+      assert.throws(() => envs.setEnvironment("p1", { name: "Local", app: "mobile" }, self), /No hay una app "mobile" en el proyecto \(están: web\)/)
+      assert.equal(db.findEnvironment("p1", "Local")!.appId, web.id, "un error no la desconecta")
+      // Sin pasar app, queda conectada; con "" se desconecta; por id se vuelve a conectar.
+      envs.setEnvironment("p1", { name: "Local", notes: "x" }, self)
+      assert.equal(db.findEnvironment("p1", "Local")!.appId, web.id)
+      envs.updateEnvironment(environment.id, { app: "" }, "user")
+      assert.equal(db.findEnvironment("p1", "Local")!.appId, null)
+      envs.updateEnvironment(environment.id, { app: web.id }, "user")
+      assert.equal(db.findEnvironment("p1", "Local")!.appId, web.id)
+
+      // La app se borra: el entorno queda con su URL propia y la web se entera.
+      sent.length = 0
+      await apps.remove(web.id)
+      const after = db.findEnvironment("p1", "Local")!
+      assert.equal(after.appId, null)
+      assert.equal(after.url, "http://localhost:3000")
+      const msg = sent.find((m) => m.type === "environment" && m.environment.id === environment.id)
+      assert.ok(msg && msg.type === "environment" && msg.environment.appId === null, "le llega el entorno sin app")
+      assert.match(envs.summary("p1"), /URL: http:\/\/localhost:3000/)
+    } finally {
+      await apps.shutdown().catch(() => {})
       db.close()
       fs.rmSync(dir, { recursive: true, force: true })
     }

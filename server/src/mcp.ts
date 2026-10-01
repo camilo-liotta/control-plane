@@ -262,16 +262,18 @@ function buildServer(
       "set_environment",
       {
         title: "Crear o actualizar un entorno",
-        description: `Deja en el dashboard un entorno del proyecto ("Local", "Staging") con su URL. Si ya hay uno con ese nombre, lo actualiza (no se duplica). ${testOnly}`,
+        description: `Deja en el dashboard un entorno del proyecto ("Local", "Staging") con su URL. Si ya hay uno con ese nombre, lo actualiza (no se duplica). Con app, lo conecta a una app levantable del proyecto (ver list_apps): su URL pasa a ser la de la app y en el dashboard se ve si está levantada. ${testOnly}`,
         inputSchema: {
           name: z.string().min(1).describe('Nombre del entorno (ej. "Local", "Staging"). Sin distinguir mayúsculas.'),
-          url: z.string().optional().describe("URL donde se abre (ej. http://localhost:3000)."),
+          url: z.string().optional().describe("URL donde se abre (ej. http://localhost:3000). Si está conectado a una app, queda como respaldo."),
+          app: z.string().optional().describe('Id o nombre de una app del proyecto (list_apps) que le da la URL. "" lo desconecta.'),
           notes: z.string().optional().describe("Cómo se levanta o algo que haga falta saber, en una línea."),
         },
       },
-      wrap((args: { name: string; url?: string; notes?: string }) => {
+      wrap((args: { name: string; url?: string; app?: string; notes?: string }) => {
         const { environment, created } = envs.setEnvironment(self.projectId, args, self)
-        return `Entorno "${environment.name}" ${created ? "creado" : "actualizado"} [${environment.id}].`
+        const app = environment.appId ? deps.db.getApp(environment.appId) : null
+        return `Entorno "${environment.name}" ${created ? "creado" : "actualizado"} [${environment.id}]${app ? `, conectado a la app "${app.name}"` : ""}.`
       })
     )
     server.registerTool(

@@ -1035,6 +1035,8 @@ export class Db {
 
   deleteApp(id: string) {
     this.db.prepare("DELETE FROM apps WHERE id = ?").run(id)
+    // Los entornos que tomaban la URL de esta app quedan con la suya propia.
+    this.db.prepare("UPDATE environments SET app_id = NULL WHERE app_id = ?").run(id)
   }
 
   getApp(id: string): AppDef | null {

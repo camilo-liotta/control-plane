@@ -231,6 +231,8 @@ export interface AppsDeps {
   startTimeoutMs?: number
   healthEveryMs?: number
   stopGraceMs?: number
+  /** Se borró una app (para que los entornos conectados a ella se actualicen en la web). */
+  onRemove?: (app: AppDef) => void
 }
 
 export class Apps {
@@ -247,8 +249,10 @@ export class Apps {
   private timer: ReturnType<typeof setInterval> | null = null
   private probing = new Set<string>()
   private disposed = false
+  private onRemove?: (app: AppDef) => void
 
-  constructor({ db, hub, home, repos, startTimeoutMs = START_TIMEOUT_MS, healthEveryMs = HEALTH_EVERY_MS, stopGraceMs = STOP_GRACE_MS }: AppsDeps) {
+  constructor({ db, hub, home, repos, startTimeoutMs = START_TIMEOUT_MS, healthEveryMs = HEALTH_EVERY_MS, stopGraceMs = STOP_GRACE_MS, onRemove }: AppsDeps) {
+    this.onRemove = onRemove
     this.db = db
     this.hub = hub
     this.logDir = path.join(home, "apps")
@@ -351,6 +355,7 @@ export class Apps {
     this.states.delete(id)
     for (const f of [this.logFile(id), this.logFile(id) + ".1"]) fs.rmSync(f, { force: true })
     this.broadcast(a.projectId)
+    this.onRemove?.(a)
   }
 
   /** Baja y borra las apps de un proyecto que se va a borrar. */

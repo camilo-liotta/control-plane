@@ -90,7 +90,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ------------------------------------------------------------------ entornos (sin secretos, salvo /secret)
 
-  type EnvBody = { name?: string; url?: string | null; appId?: string | null; notes?: string | null }
+  type EnvBody = { name?: string; url?: string | null; app?: string | null; notes?: string | null }
   type CredBody = { name?: string; username?: string | null; secret?: string | null; loginUrl?: string | null; notes?: string | null }
   app.post<{ Params: { id: string }; Body: EnvBody }>("/api/projects/:id/environments", (req, reply) =>
     guard(reply, () => {

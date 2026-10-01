@@ -1,9 +1,12 @@
-import { ChevronRight, Copy, Eye, EyeOff, KeyRound, Pencil, Plus, Server, SquareArrowOutUpRight, Trash2 } from "lucide-react"
+import { ChevronRight, Copy, Eye, EyeOff, KeyRound, Pencil, Play, Plus, Server, SquareArrowOutUpRight, Trash2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
-import type { Credential, Environment, Project } from "@shared/types"
+import type { AppView, Credential, Environment, Project } from "@shared/types"
+
+import { APP_STATUS } from "@/components/project-apps"
+import { TonePill } from "@/components/status"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -192,21 +195,61 @@ function CredentialRow({ credential: c, projectId }: { credential: Credential; p
   )
 }
 
+/** Las apps levantables del proyecto (las de TRAY, en el store). */
+function useProjectApps(projectId: string): AppView[] {
+  return useStore((s) => s.apps[projectId]) ?? NO_APPS
+}
+const NO_APPS: AppView[] = []
+
+/** El estado de la app conectada y, si está bajada, "Levantar" ahí mismo. */
+function AppState({ app }: { app: AppView }) {
+  const [starting, setStarting] = useState(false)
+  const st = APP_STATUS[app.state.status]
+  const down = app.state.status === "stopped" || app.state.status === "crashed"
+  const start = async () => {
+    setStarting(true)
+    try {
+      await api.startApp(app.id)
+    } catch (err) {
+      fail(err)
+    } finally {
+      setStarting(false)
+    }
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      <TonePill tone={st.tone} className={st.pulse ? "animate-pulse" : undefined}>
+        {app.name} · {st.label}
+      </TonePill>
+      {down && (
+        <Button size="xs" variant="outline" onClick={() => void start()} disabled={starting}>
+          {starting ? <Spinner /> : <Play />}
+          Levantar
+        </Button>
+      )}
+    </span>
+  )
+}
+
 function EnvironmentBlock({ env }: { env: Environment }) {
   const [editing, setEditing] = useState(false)
   const [adding, setAdding] = useState(false)
+  // Conectado a una app: su URL manda. Si la app ya no está, queda la URL propia del entorno.
+  const app = useProjectApps(env.projectId).find((a) => a.id === env.appId)
+  const url = app?.url ?? env.url
   if (editing) return <EnvironmentForm projectId={env.projectId} environment={env} onDone={() => setEditing(false)} />
   return (
     <div className="min-w-0 space-y-1.5">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <Server className="size-4 shrink-0 text-muted-foreground" />
         <span className="font-medium">{env.name}</span>
-        {env.url && (
-          <a href={env.url} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline">
-            <span className="truncate">{env.url}</span>
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline">
+            <span className="truncate">{url}</span>
             <SquareArrowOutUpRight className="size-3 shrink-0" />
           </a>
         )}
+        {app && <AppState app={app} />}
         <Author projectId={env.projectId} by={env.createdBy} at={env.createdAt} />
         <span className="ml-auto flex items-center gap-0.5">
           <Button size="xs" variant="ghost" onClick={() => setAdding(true)}>
@@ -237,12 +280,14 @@ function EnvironmentBlock({ env }: { env: Environment }) {
 function EnvironmentForm({ projectId, environment, onDone }: { projectId: string; environment?: Environment; onDone: () => void }) {
   const [name, setName] = useState(environment?.name ?? "")
   const [url, setUrl] = useState(environment?.url ?? "")
+  const apps = useProjectApps(projectId)
+  const [app, setApp] = useState(environment?.appId && apps.some((a) => a.id === environment.appId) ? environment.appId : "")
   const [notes, setNotes] = useState(environment?.notes ?? "")
   const [saving, setSaving] = useState(false)
   const save = async () => {
     setSaving(true)
     try {
-      const fields = { name, url: url.trim() || null, notes: notes.trim() || null }
+      const fields = { name, url: url.trim() || null, notes: notes.trim() || null, app: app || null }
       if (environment) await api.updateEnvironment(environment.id, fields)
       else await api.createEnvironment(projectId, fields)
       onDone()
@@ -262,8 +307,33 @@ function EnvironmentForm({ projectId, environment, onDone }: { projectId: string
     >
       <div className="grid gap-2 sm:grid-cols-[12rem_1fr]">
         <Input aria-label="Nombre del entorno" value={name} onChange={(e) => setName(e.target.value)} placeholder="Local, Staging…" autoFocus />
-        <Input aria-label="URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://localhost:3000" className="font-mono text-xs" />
+        <Input
+          aria-label="URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder={app ? "URL propia (si la app no está)" : "http://localhost:3000"}
+          className="font-mono text-xs"
+        />
       </div>
+      {apps.length > 0 && (
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          La URL la da la app
+          <select
+            aria-label="App conectada"
+            value={app}
+            onChange={(e) => setApp(e.target.value)}
+            className="h-8 rounded-md border bg-transparent px-2 text-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+          >
+            <option value="">ninguna (uso la URL de arriba)</option>
+            {apps.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {a.url ? ` · ${a.url}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <Textarea aria-label="Notas" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (cómo se levanta, qué datos tiene)" className="min-h-14 text-sm" />
       <FormButtons saving={saving} disabled={!name.trim()} onCancel={onDone} label={environment ? "Guardar" : "Crear entorno"} />
     </form>
