@@ -262,6 +262,8 @@ async function main() {
   console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
   console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
   console.log(`Datos: ${config.home}`)
+  // Las que un /clear de antes de 0.4.3 dejó apuntando a una conversación que no existe.
+  for (const r of sessions.repairConversations()) console.log(`Recuperé la conversación de ${r.name}: ${r.from} → ${r.to}.`)
   // Las sesiones que estaban vivas antes de reiniciar para actualizar.
   void restart.resumePending().then((outcome) => {
     const line = resumeSummary(outcome)

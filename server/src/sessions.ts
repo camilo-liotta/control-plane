@@ -1,10 +1,12 @@
 import { EventEmitter } from "node:events"
 import fs from "node:fs"
+import path from "node:path"
 
 import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
-import { lastCostState, type RestoredSpend } from "./claude/local.ts"
-import { isContextFull, parseCommands, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
+import { lastCostState, transcriptDir, type RestoredSpend } from "./claude/local.ts"
+import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
+import { findLostConversation } from "./claude/recover.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
@@ -462,6 +464,37 @@ export class SessionManager extends EventEmitter<{
   }
 
   // ------------------------------------------------------------------ ciclo
+
+  /**
+   * Repara las sesiones que quedaron apuntando a una conversación que no existe por un /clear de
+   * antes de 0.4.3 (ver claude/recover.ts): si el transcript del /clear está, lo adopta. No toca las
+   * que tienen su transcript ni las que no tienen un candidato claro. Se corre al arrancar el server.
+   */
+  repairConversations(): { id: string; name: string; from: string; to: string }[] {
+    const out: { id: string; name: string; from: string; to: string }[] = []
+    const all = this.db.listSessions()
+    const taken = new Set(all.map((s) => s.claudeSessionId))
+    for (const rec of all) {
+      if (rec.archivedAt || !rec.startedOnce || this.runtimes.has(rec.id)) continue
+      try {
+        const dir = transcriptDir(rec.cwd, this.launchFor(rec).env.CLAUDE_CONFIG_DIR)
+        if (fs.existsSync(path.join(dir, `${rec.claudeSessionId}.jsonl`))) continue
+        const found = findLostConversation({ dir, name: rec.name, resets: this.db.noticeTimes(rec.id, RESET_NOTICE), taken })
+        if (!found) continue
+        taken.add(found)
+        this.db.updateSession(rec.id, { claudeSessionId: found })
+        this.addEvent(rec.id, {
+          kind: "notice",
+          level: "info",
+          text: `Recuperé la conversación después de un /clear: seguía apuntando a ${rec.claudeSessionId}, que no existe, y ahora usa ${found}.`,
+        })
+        out.push({ id: rec.id, name: rec.name, from: rec.claudeSessionId, to: found })
+      } catch {
+        // sin proyecto o sin carpeta: queda como está
+      }
+    }
+    return out
+  }
 
   /** Lanza el proceso si no está corriendo. Resuelve cuando el CLI terminó el handshake. */
   async start(id: string): Promise<void> {

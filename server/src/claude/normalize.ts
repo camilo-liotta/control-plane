@@ -245,6 +245,9 @@ function usageFrom(info: Record<string, unknown> | undefined): UsageInfo | null 
  * Convierte el stream del CLI en eventos de timeline y acciones de estado.
  * Guarda el tipo de cada bloque en streaming para rutear los deltas parciales.
  */
+/** El aviso del chat cuando la conversación se reinicia (también marca cuándo fue cada /clear). */
+export const RESET_NOTICE = "La conversación se reinició (/clear)."
+
 export class StreamNormalizer {
   private currentMessageId: string | null = null
   private blockKinds = new Map<number, "text" | "thinking" | "other">()
@@ -280,7 +283,7 @@ export class StreamNormalizer {
               { type: "reset", newSessionId: msg.new_conversation_id },
               {
                 type: "event",
-                event: { kind: "notice", level: "info", text: "La conversación se reinició (/clear)." },
+                event: { kind: "notice", level: "info", text: RESET_NOTICE },
               },
             ]
           : []
