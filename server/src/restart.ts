@@ -44,6 +44,14 @@ export interface ResumeFile {
   reason: RestartReason
   at: number
   sessions: { id: string; status: LiveStatus }[]
+  /** Las apps del proyecto que el dashboard tenía levantadas (ver apps.ts): se relanzan antes que las sesiones. */
+  apps?: string[]
+}
+
+/** Lo que necesita el reinicio de las apps levantadas: cuáles corren y cómo relanzarlas. */
+export interface RestartApps {
+  runningIds(): string[]
+  resume(ids: string[]): Promise<{ name: string; error: string }[]>
 }
 
 /** El mensaje que reciben las que estaban trabajando (Claude lo lee; en el chat se ve el aviso de abajo). */
@@ -60,6 +68,7 @@ interface Deps {
   clientWaitMs?: number
   /** Las esperas antes de cada reintento de las que no arrancaron. */
   retryDelaysMs?: number[]
+  apps?: RestartApps
 }
 
 /** Esperas entre reintentos: en total ~17 s, lo que tardan en irse los procesos del server viejo. */
@@ -73,11 +82,13 @@ export class Restart {
   private clock: () => number
   private clientWaitMs: number
   private retryDelaysMs: number[]
+  private apps: RestartApps | null
   private armed: { until: number; reason: RestartReason } | null = null
   /** Retomando las sesiones de un reinicio (lo muestra /api/health). */
   resuming = false
 
-  constructor({ home, version, sessions, hub, clock = now, clientWaitMs = 20_000, retryDelaysMs = RETRY_DELAYS_MS }: Deps) {
+  constructor({ home, version, sessions, hub, clock = now, clientWaitMs = 20_000, retryDelaysMs = RETRY_DELAYS_MS, apps }: Deps) {
+    this.apps = apps ?? null
     this.clientWaitMs = clientWaitMs
     this.retryDelaysMs = retryDelaysMs
     this.file = path.join(home, RESUME_FILE)
@@ -117,6 +128,7 @@ export class Restart {
       reason: armed.reason,
       at: this.clock(),
       sessions: this.sessions.liveSessions().map((s) => ({ id: s.id, status: s.status })),
+      ...(this.apps ? { apps: this.apps.runningIds() } : {}),
     }
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true })
@@ -151,9 +163,21 @@ export class Restart {
   async resumePending(): Promise<ResumeOutcome> {
     const pending = this.takePending()
     const out: ResumeOutcome = { resumed: [], failed: [] }
-    if (!pending?.sessions.length) return out
-    this.resuming = true
+    if (!pending) return out
     const toasts: Parameters<Hub["broadcast"]>[0][] = []
+    // Primero las apps: así las sesiones que trabajaban encuentran su backend levantado. Una que no
+    // levanta no frena a las demás ni a las sesiones; queda en un aviso.
+    if (pending.apps?.length && this.apps) {
+      const failed = await this.apps.resume(pending.apps).catch((err: unknown) => [{ name: "las apps", error: errorMessage(err) }])
+      out.apps = { resumed: pending.apps.length - failed.length, failed }
+      for (const f of failed)
+        toasts.push({ type: "toast", level: "error", title: `No pude volver a levantar ${f.name}`, body: `Después de reiniciar para actualizar: ${f.error}` })
+    }
+    if (!pending.sessions.length) {
+      await this.sendToasts(toasts)
+      return out
+    }
+    this.resuming = true
     try {
       let todo = pending.sessions.filter(({ id }) => {
         const rec = this.sessions.get(id)
@@ -186,13 +210,16 @@ export class Restart {
     } finally {
       this.resuming = false
     }
-    // Los avisos van cuando hay alguien mirando: el server recién arranca y la web se conecta después.
-    if (toasts.length) {
-      const until = Date.now() + this.clientWaitMs
-      while (this.hub.size === 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 250))
-      for (const t of toasts) this.hub.broadcast(t)
-    }
+    await this.sendToasts(toasts)
     return out
+  }
+
+  /** Los avisos van cuando hay alguien mirando: el server recién arranca y la web se conecta después. */
+  private async sendToasts(toasts: Parameters<Hub["broadcast"]>[0][]) {
+    if (!toasts.length) return
+    const until = Date.now() + this.clientWaitMs
+    while (this.hub.size === 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 250))
+    for (const t of toasts) this.hub.broadcast(t)
   }
 
   /** Un intento de retomar una sesión. `final`: no tiene sentido reintentar. */
@@ -275,17 +302,22 @@ export class Restart {
 export interface ResumeOutcome {
   resumed: string[]
   failed: { id: string; name: string; error: string }[]
+  /** Las apps que se volvieron a levantar (si había). */
+  apps?: { resumed: number; failed: { name: string; error: string }[] }
 }
 
 const lostMessage = (claudeId: string) =>
   `Claude Code no encontró su conversación (${claudeId}) y arrancó una nueva, sin el contexto de antes`
 
 /** La línea del log al terminar de retomar: cuántas volvieron y cuáles no, con el motivo. */
-export function resumeSummary({ resumed, failed }: ResumeOutcome): string | null {
-  if (!resumed.length && !failed.length) return null
+export function resumeSummary({ resumed, failed, apps }: ResumeOutcome): string | null {
+  const appsLine = apps
+    ? `Volví a levantar ${apps.resumed} ${apps.resumed === 1 ? "app" : "apps"}${apps.failed.length ? `; no pude con ${apps.failed.map((f) => `${f.name} (${f.error})`).join("; ")}` : ""}.`
+    : null
+  if (!resumed.length && !failed.length) return appsLine
   const head = `Retomé ${resumed.length} ${resumed.length === 1 ? "sesión" : "sesiones"}`
-  if (!failed.length) return `${head}.`
-  return `${head}; ${failed.length} no ${failed.length === 1 ? "arrancó" : "arrancaron"}: ${failed.map((f) => `${f.name} (${f.error})`).join("; ")}.`
+  const line = !failed.length ? `${head}.` : `${head}; ${failed.length} no ${failed.length === 1 ? "arrancó" : "arrancaron"}: ${failed.map((f) => `${f.name} (${f.error})`).join("; ")}.`
+  return appsLine ? `${appsLine} ${line}` : line
 }
 
 /** Las rutas del reinicio (pasan por el mismo chequeo de Host y Origin que el resto de la API). */

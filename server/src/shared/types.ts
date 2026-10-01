@@ -714,6 +714,7 @@ export interface Snapshot {
   tasks: UserTask[]
   /** Entornos con sus credenciales, sin los secretos. */
   environments: Environment[]
+  apps: AppView[]
   meta: Meta
 }
 
@@ -793,6 +794,8 @@ export type ServerMessage =
   /** Cambió un entorno o sus credenciales (sin los secretos). */
   | { type: "environment"; environment: Environment }
   | { type: "environment_removed"; id: string; projectId: string }
+  /** Cambiaron las apps de un proyecto (una definición o un estado): todas las del proyecto. */
+  | { type: "apps"; projectId: string; apps: AppView[] }
   | {
       type: "toast"
       level: ToastLevel
@@ -960,4 +963,79 @@ export interface Environment {
   createdAt: number
   updatedAt: number
   credentials: Credential[]
+}
+
+// ------------------------------------------------------------------ Apps (TRAY)
+
+/** Cómo se verifica que una app está levantada: una URL que responde o un puerto que acepta conexiones. */
+export type AppHealth = { kind: "http"; url: string } | { kind: "tcp"; port: number; host?: string }
+
+/** Una app del proyecto que se levanta localmente (un backend, un frontend, un worker). */
+export interface AppDef {
+  id: string
+  projectId: string
+  name: string
+  /** Se parte en argumentos y se corre sin shell, salvo que `shell` sea true (para && o pipes). */
+  command: string
+  shell: boolean
+  /** La carpeta donde corre, relativa a la del proyecto ("" es la raíz); puede ser un worktree o un subrepo. */
+  cwd: string
+  env: Record<string, string>
+  health: AppHealth | null
+  /** La URL para abrir en el navegador, si no es la de salud. */
+  url: string | null
+  /** Cómo se baja, si no alcanza con terminar el proceso (ej. `docker compose down`). */
+  stopCommand: string | null
+  /** La sesión que la registró (null: el usuario). */
+  createdBy: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/**
+ * - stopped: no corre. - starting: la lanzó el dashboard y espera a que la salud responda.
+ * - up: levantada (la salud responde, o sin salud definida, el proceso vive).
+ * - unresponsive: el proceso vive pero la salud no contesta. - crashed: el proceso terminó solo.
+ * - external: la salud responde pero no la lanzó el dashboard (no se toca).
+ */
+export type AppStatus = "stopped" | "starting" | "up" | "unresponsive" | "crashed" | "external"
+
+export interface AppState {
+  status: AppStatus
+  pid: number | null
+  startedAt: number | null
+  /** Si se cayó: el código de salida o la señal, y las últimas líneas del log. */
+  exitCode: number | null
+  signal: string | null
+  error: string | null
+  tail: string[]
+  checkedAt: number | null
+}
+
+export interface AppView extends Omit<AppDef, "url"> {
+  /** La URL para abrir: la definida, la de salud o http://127.0.0.1:<puerto>. */
+  url: string | null
+  /** La que se definió (para editarla). */
+  definedUrl: string | null
+  state: AppState
+}
+
+/** Lo que se pide para registrar o cambiar una app. */
+export interface AppInput {
+  name?: string
+  command?: string
+  shell?: boolean
+  cwd?: string
+  env?: Record<string, string>
+  health?: AppHealth | null
+  url?: string | null
+  stopCommand?: string | null
+}
+
+/** Una app que parece haber en el repo (scripts de package.json, docker compose, Procfile): el usuario la confirma. */
+export interface AppSuggestion extends AppInput {
+  name: string
+  command: string
+  /** De dónde salió (ej. "package.json: dev"). */
+  source: string
 }

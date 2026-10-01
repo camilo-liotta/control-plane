@@ -157,6 +157,7 @@ describe("entornos y credenciales", () => {
       accounts: { list: () => [], view: () => null },
       compaction: { list: () => [] },
       tasks: { list: () => [] },
+      apps: { all: () => [] },
       environments: envs,
     } as unknown as Parameters<typeof snapshot>[0]
     const snap = JSON.stringify(snapshot(deps))

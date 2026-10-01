@@ -3,6 +3,8 @@ import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 import type {
+  AppDef,
+  AppHealth,
   Attachment,
   Credential,
   Environment,
@@ -245,11 +247,54 @@ const MIGRATIONS: string[] = [
   ALTER TABLE user_tasks ADD COLUMN priority INTEGER;
   ALTER TABLE user_tasks ADD COLUMN tags TEXT;
   `,
+  `
+  CREATE TABLE apps (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    command TEXT NOT NULL,
+    shell INTEGER NOT NULL DEFAULT 0,
+    cwd TEXT NOT NULL DEFAULT '',
+    env TEXT NOT NULL DEFAULT '{}',
+    health TEXT,
+    url TEXT,
+    stop_command TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX apps_project ON apps(project_id);
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v))
+
+function toApp(r: Row): AppDef {
+  const json = <T>(v: unknown, fallback: T): T => {
+    try {
+      return v === null || v === undefined ? fallback : (JSON.parse(String(v)) as T)
+    } catch {
+      return fallback
+    }
+  }
+  return {
+    id: String(r.id),
+    projectId: String(r.project_id),
+    name: String(r.name),
+    command: String(r.command),
+    shell: bool(r.shell),
+    cwd: String(r.cwd ?? ""),
+    env: json<Record<string, string>>(r.env, {}),
+    health: json<AppHealth | null>(r.health, null),
+    url: str(r.url),
+    stopCommand: str(r.stop_command),
+    createdBy: str(r.created_by),
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+  }
+}
 
 function toProject(r: Row): ProjectRecord {
   let settings: Partial<ProjectSettings> = {}
@@ -736,6 +781,7 @@ export class Db {
       this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM credentials WHERE environment_id IN (SELECT id FROM environments WHERE project_id = ?)").run(id)
       this.db.prepare("DELETE FROM environments WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM apps WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM sessions WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM projects WHERE id = ?").run(id)
       this.db.exec("COMMIT")
@@ -968,6 +1014,39 @@ export class Db {
 
   markReminded(id: string, at: number) {
     this.db.prepare("UPDATE user_tasks SET reminded_at = ? WHERE id = ?").run(at, id)
+  }
+
+  // ------------------------------------------------------------------ apps (TRAY)
+
+  insertApp(a: AppDef) {
+    this.db
+      .prepare(
+        `INSERT INTO apps (id, project_id, name, command, shell, cwd, env, health, url, stop_command, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(a.id, a.projectId, a.name, a.command, a.shell ? 1 : 0, a.cwd, JSON.stringify(a.env), a.health ? JSON.stringify(a.health) : null, a.url, a.stopCommand, a.createdBy, a.createdAt, a.updatedAt)
+  }
+
+  updateApp(a: AppDef) {
+    this.db
+      .prepare("UPDATE apps SET name = ?, command = ?, shell = ?, cwd = ?, env = ?, health = ?, url = ?, stop_command = ?, updated_at = ? WHERE id = ?")
+      .run(a.name, a.command, a.shell ? 1 : 0, a.cwd, JSON.stringify(a.env), a.health ? JSON.stringify(a.health) : null, a.url, a.stopCommand, a.updatedAt, a.id)
+  }
+
+  deleteApp(id: string) {
+    this.db.prepare("DELETE FROM apps WHERE id = ?").run(id)
+  }
+
+  getApp(id: string): AppDef | null {
+    const r = this.db.prepare("SELECT * FROM apps WHERE id = ?").get(id) as Row | undefined
+    return r ? toApp(r) : null
+  }
+
+  listApps(projectId?: string): AppDef[] {
+    const rows = (
+      projectId ? this.db.prepare("SELECT * FROM apps WHERE project_id = ? ORDER BY created_at").all(projectId) : this.db.prepare("SELECT * FROM apps ORDER BY created_at").all()
+    ) as Row[]
+    return rows.map(toApp)
   }
 
   // ------------------------------------------------------------------ drafts

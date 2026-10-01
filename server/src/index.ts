@@ -16,6 +16,7 @@ import { config, repoUrl, version } from "./config.ts"
 import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
+import { Apps } from "./apps.ts"
 import { Editor } from "./editor.ts"
 import { localOnly, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
@@ -218,7 +219,8 @@ async function main() {
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
   const tasks = new UserTasks({ db, hub, sessions, clis })
   const environments = new Environments({ db, hub, sessions })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }) }
+  const apps = new Apps({ db, hub, home: config.home })
+  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }), apps }
   hub.setSummary(() => desktopSummary(deps))
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
@@ -228,7 +230,7 @@ async function main() {
 
   await app.register(fastifyWebsocket)
   registerWs(app, hub, () => ({ type: "hello", snapshot: snapshot(deps) }))
-  const restart = new Restart({ home: config.home, version, sessions, hub })
+  const restart = new Restart({ home: config.home, version, sessions, hub, apps })
   registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId }, () => restart.resuming)
   registerRestart(app, restart)
 
@@ -279,7 +281,9 @@ async function main() {
     console.log(`\n${signal}: cerrando sesiones…`)
     // Si la app pidió reiniciar para actualizar, anota qué sesiones retomar antes de cerrarlas.
     const saved = restart.onShutdown()
-    if (saved) console.log(`Guardé ${saved.sessions.length} sesiones para retomar al volver.`)
+    if (saved) console.log(`Guardé ${saved.sessions.length} sesiones${saved.apps?.length ? ` y ${saved.apps.length} apps` : ""} para retomar al volver.`)
+    // Las apps levantadas desde el dashboard se bajan ordenadas (su comando de bajar, o SIGTERM y SIGKILL).
+    await apps.shutdown().catch(() => {})
     orchestration.dispose()
     compaction.dispose()
     clis.dispose()

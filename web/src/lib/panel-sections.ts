@@ -19,6 +19,8 @@ export type PanelSection =
   | "project-scheduled"
   /** Los entornos y sus credenciales, en la vista del proyecto. */
   | "project-environments"
+  /** Las apps levantables del proyecto, en su vista. */
+  | "project-apps"
 
 const KEY = "session-panel-open"
 

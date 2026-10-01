@@ -1,5 +1,8 @@
 import type {
   Account,
+  AppInput,
+  AppSuggestion,
+  AppView,
   AccountAuth,
   Attachment,
   CatalogPlugin,
@@ -171,6 +174,18 @@ export const api = {
     request<{ ok: ResolvedRef[] }>("POST", `/api/projects/${projectId}/resolve-paths`, { paths, sessionId }),
   openPath: (projectId: string, path: string, sessionId?: string) =>
     request<{ rel: string; kind: "file" | "dir" }>("POST", `/api/projects/${projectId}/open-path`, { path, sessionId }),
+  apps: (projectId: string, watch = false) => request<AppView[]>("GET", `/api/projects/${projectId}/apps${watch ? "?watch=1" : ""}`),
+  appSuggestions: (projectId: string) => request<AppSuggestion[]>("GET", `/api/projects/${projectId}/apps/suggestions`),
+  createApp: (projectId: string, input: AppInput) => request<AppView>("POST", `/api/projects/${projectId}/apps`, input),
+  updateApp: (id: string, input: AppInput) => request<AppView>("PATCH", `/api/apps/${id}`, input),
+  removeApp: (id: string) => request("DELETE", `/api/apps/${id}`),
+  startApp: (id: string) => request<AppView>("POST", `/api/apps/${id}/start`),
+  stopApp: (id: string) => request<AppView>("POST", `/api/apps/${id}/stop`),
+  restartApp: (id: string) => request<AppView>("POST", `/api/apps/${id}/restart`),
+  appLog: (id: string) => request<{ lines: string[] }>("GET", `/api/apps/${id}/log`),
+  startAllApps: (projectId: string) =>
+    request<{ started: string[]; failed: { name: string; error: string }[] }>("POST", `/api/projects/${projectId}/apps/start-all`),
+  stopAllApps: (projectId: string) => request("POST", `/api/projects/${projectId}/apps/stop-all`),
   saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
   cancelScheduled: (id: string, itemId: string, clientId: string) =>
     request<{ sent: boolean }>("POST", `/api/sessions/${id}/scheduled/${encodeURIComponent(itemId)}/cancel`, { clientId }),

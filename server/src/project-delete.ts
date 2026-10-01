@@ -1,3 +1,4 @@
+import type { Apps } from "./apps.ts"
 import type { AttachmentStore } from "./attachments.ts"
 import type { Compaction } from "./compaction.ts"
 import type { Db } from "./db.ts"
@@ -12,6 +13,8 @@ export interface DeleteProjectDeps {
   orchestration: Pick<Orchestration, "forgetProject">
   compaction: Pick<Compaction, "forget">
   attachments: Pick<AttachmentStore, "removeSession">
+  /** Para bajar las apps del proyecto que estén levantadas antes de borrarlas. */
+  apps?: Pick<Apps, "removeProject">
 }
 
 /** Cuánto esperamos a que se detengan las sesiones (el cierre de siempre llega a SIGKILL a los 8 s). */
@@ -45,6 +48,7 @@ export async function deleteProject(
       throw new Error(`No pude detener ${names.join(", ")}: no borré nada. Detenelas y probá de nuevo.`)
     }
     for (const sid of ids) deps.compaction.forget(sid)
+    await deps.apps?.removeProject(id)
     db.purgeProject(id)
   } finally {
     sessions.setDeleting(id, false)
