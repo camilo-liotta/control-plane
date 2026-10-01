@@ -382,12 +382,14 @@ install_linux() {
   if [[ "$mode" == deb ]]; then
     if [[ -t 0 ]]; then
       say "Instalo el paquete (te va a pedir la contraseña)…"
-      run sudo apt install -y "$pkg"
+      run sudo env DEBIAN_FRONTEND=noninteractive apt install -y "$pkg"
     elif command -v pkexec >/dev/null && [[ -x /usr/bin/apt ]]; then
       # Sin terminal (la lanzó la app): el sistema muestra su diálogo para la contraseña. apt por
-      # su ruta: corre como root, no puede ser el primero que aparezca en el PATH.
+      # su ruta: corre como root, no puede ser el primero que aparezca en el PATH. Y sin terminal
+      # debconf no puede preguntar nada: que no lo intente (si no, llena el log de "unable to
+      # initialize frontend").
       say "Instalo el paquete (el sistema te va a pedir la contraseña)…"
-      run pkexec /usr/bin/apt install -y "$pkg"
+      run pkexec /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt install -y "$pkg"
     else
       die "Para instalar el .deb hace falta pkexec o correr esto desde una terminal."
     fi
