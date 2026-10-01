@@ -10,7 +10,10 @@ import path from "node:path"
  * - con FAKE_NO_COMPACT=1, /compact contesta "No messages to compact" sin compactar;
  * - `--version` contesta una versión y los otros subcomandos (auth status, agents) salen sin nada;
  * - "CRON …", "CRONDEL …", "WAKEUP …" y "FIRE …" programan, cancelan y disparan tareas (ver el script);
- * - "PREGUNTA" deja una pregunta pendiente y "LARGO" hace un turno que tarda (para los reinicios).
+ * - "PREGUNTA" deja una pregunta pendiente y "LARGO" hace un turno que tarda (para los reinicios);
+ *   "SUBAGENTE" cierra el turno con un subagente en segundo plano que sigue andando;
+ * - como el de verdad, --resume de una conversación sin transcript sale con "No conversation found";
+ * - con FALLA1 en el --name, el primer arranque sale con error (los siguientes andan).
  */
 const SCRIPT = String.raw`#!/usr/bin/env node
 import fs from "node:fs"
@@ -24,7 +27,21 @@ if (args[0] === "--version") { console.log("0.0.0-fake (Claude Code)"); process.
 if (!args.includes("-p")) process.exit(0)
 let sid = flag("--resume") ?? flag("--session-id")
 const dir = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"))
-const file = path.join(dir, sid + ".jsonl")
+let file = path.join(dir, sid + ".jsonl")
+const name = flag("--name") ?? ""
+if (name.includes("FALLA1")) {
+  const mark = path.join(process.env.CLAUDE_CONFIG_DIR, "falla1-" + name.replace(/[^A-Za-z0-9]/g, "-"))
+  if (!fs.existsSync(mark)) {
+    fs.writeFileSync(mark, "")
+    process.stderr.write("API Error: 529 Overloaded\n")
+    process.exit(1)
+  }
+}
+if (flag("--resume") && process.env.FAKE_STRICT_RESUME === "1" && !fs.existsSync(file)) {
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sid, total_cost_usd: 0, usage: {}, modelUsage: {}, errors: ["No conversation found with session ID: " + sid] }) + "\n")
+  process.stderr.write("No conversation found with session ID: " + sid + "\n")
+  process.exit(1)
+}
 let usd = 0
 let tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
 try {
@@ -36,7 +53,7 @@ try {
   }
 } catch {}
 let full = process.env.FAKE_FULL === "1"
-const out = (m) => process.stdout.write(JSON.stringify(m) + "\n")
+const out = (m) => process.stdout.write(JSON.stringify({ session_id: sid, ...m }) + "\n")
 let saved = false
 const save = () => {
   if (saved) return
@@ -61,14 +78,19 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   const c = msg.message?.content
   const text = typeof c === "string" ? c : (c?.find?.((b) => b.type === "text")?.text ?? "")
   state("running")
+  // Como Claude Code 2.1.285: el conversation_reset sale con el session_id de antes y un
+  // new_conversation_id que no es el del transcript; el id nuevo es el session_id de lo que sigue.
   if (text === "/clear") {
     save()
     saved = false
+    const before = sid
     sid = "clear-" + Math.random().toString(36).slice(2, 8)
+    file = path.join(dir, sid + ".jsonl")
     usd = 0
     tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
     full = false
-    out({ type: "conversation_reset", new_conversation_id: sid, session_id: sid, trigger: "clear" })
+    out({ type: "conversation_reset", new_conversation_id: "otro-" + Math.random().toString(36).slice(2, 8), session_id: before, trigger: "clear" })
+    out({ type: "system", subtype: "init", cwd: process.cwd(), model: "claude-x", mcp_servers: [], tools: [] })
     out({ type: "result", subtype: "success", is_error: false, result: "", total_cost_usd: 0, usage: {}, modelUsage: {} })
     state("idle")
     continue
@@ -92,6 +114,16 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   // "PREGUNTA": pide contestar una pregunta (AskUserQuestion) y se queda esperando, sin cerrar el turno.
   if (text.includes("PREGUNTA")) {
     out({ type: "control_request", request_id: "q-" + Math.random().toString(36).slice(2), request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", tool_use_id: "toolu_q" + Math.random().toString(36).slice(2, 8), input: { questions: [{ question: "¿Sigo con el plan B?", header: "Plan", multiSelect: false, options: [{ label: "Sí", description: "" }, { label: "No", description: "" }] }] } } })
+    continue
+  }
+  // "SUBAGENTE": lanza un subagente en segundo plano y cierra el turno mientras sigue andando.
+  if (text.includes("SUBAGENTE")) {
+    const id = "toolu_sub" + Math.random().toString(36).slice(2, 8)
+    out({ type: "assistant", message: { id: "m" + Math.random(), role: "assistant", content: [{ type: "tool_use", id, name: "Agent", input: { description: "revisar", prompt: "revisá", run_in_background: true } }] }, parent_tool_use_id: null })
+    out({ type: "system", subtype: "task_started", task_id: "t" + id, tool_use_id: id, description: "revisar", subagent_type: "general-purpose", is_backgrounded: true, task_type: "local_agent", prompt: "revisá" })
+    out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "Async agent launched" }] }, parent_tool_use_id: null })
+    say("Lancé un subagente.")
+    result({})
     continue
   }
   // "LARGO" (en cualquier parte del mensaje): un turno que tarda FAKE_LONG_MS (30 s si no está).

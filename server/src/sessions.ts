@@ -85,6 +85,14 @@ interface Runtime {
   lastTotals: { usd: number; tokens: TokenUsage | null }
   /** Hubo un /clear: el próximo fin de turno (el del propio /clear) dice si los totales volvieron a cero. */
   resetPending: boolean
+  /**
+   * Hubo un /clear y todavía no se sabe el id nuevo de la conversación: el new_conversation_id del
+   * conversation_reset no es el del transcript (Claude Code 2.1.285 escribe bajo otro), el real llega en
+   * el session_id de los mensajes que siguen. Acá queda el id de antes.
+   */
+  resetFrom: string | null
+  /** Se relanzó de cero porque Claude Code no encontró la conversación: el id que no encontró. */
+  lostConversation: string | null
 }
 
 interface TurnInput {
@@ -347,9 +355,26 @@ export class SessionManager extends EventEmitter<{
       if (rt.status !== "idle" && rt.status !== "working" && rt.status !== "needs_input" && rt.status !== "starting") continue
       const rec = this.db.getSession(id)
       if (!rec || rec.archivedAt) continue
-      out.push({ id, name: rec.name, projectId: rec.projectId, projectName: this.db.getProject(rec.projectId)?.name ?? "", status: rt.status })
+      out.push({ id, name: rec.name, projectId: rec.projectId, projectName: this.db.getProject(rec.projectId)?.name ?? "", status: this.seenStatus(rt) })
     }
     return out
+  }
+
+  /**
+   * El estado como lo ves en el dashboard: con subagentes andando, o con un mensaje tuyo que todavía
+   * no empezó a procesar, está trabajando aunque el turno principal ya haya cerrado (o no haya abierto).
+   */
+  private seenStatus(rt: Runtime): LiveSession["status"] {
+    const status = rt.status as LiveSession["status"]
+    if (status !== "idle" && status !== "starting") return status
+    const subagents = [...rt.subagents.values()].some((s) => s.status === "running")
+    return subagents || rt.turnInputs.length > 0 ? "working" : status
+  }
+
+  /** Si al arrancar Claude Code no encontró su conversación y empezó una nueva: el id que no encontró. */
+  lostConversation(id: string): string | null {
+    const rt = this.runtimes.get(id)
+    return rt && !rt.proc.exited ? rt.lostConversation : null
   }
 
   isRunning(id: string) {
@@ -463,7 +488,7 @@ export class SessionManager extends EventEmitter<{
     return this.launch(rec, existing?.retried ?? false)
   }
 
-  private launch(rec: SessionRecord, retried: boolean): Promise<void> {
+  private launch(rec: SessionRecord, retried: boolean, lostConversation: string | null = null): Promise<void> {
     const built = this.launchFor(rec)
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
@@ -504,6 +529,8 @@ export class SessionManager extends EventEmitter<{
       resending: false,
       lastTotals: { usd: 0, tokens: null },
       resetPending: false,
+      resetFrom: null,
+      lostConversation,
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -587,6 +614,10 @@ export class SessionManager extends EventEmitter<{
 
   private onMessage(id: string, rt: Runtime, msg: CliMessage) {
     if (this.runtimes.get(id) !== rt) return
+    if (rt.resetFrom && typeof msg.session_id === "string" && msg.session_id && msg.session_id !== rt.resetFrom) {
+      rt.resetFrom = null
+      this.db.updateSession(id, { claudeSessionId: msg.session_id, startedOnce: true })
+    }
     if (msg.type === "control_cancel_request") {
       this.cancelControl(rt, String(msg.request_id ?? ""))
       this.setStatus(id, rt, this.deriveStatus(rt))
@@ -792,7 +823,8 @@ export class SessionManager extends EventEmitter<{
           rt.spentBefore = { usd: cur?.costUsd ?? 0, tokens: cur?.tokens ?? null }
           rt.restored = { ...rt.lastTotals, applies: null }
           rt.resetPending = true
-          this.db.updateSession(id, { claudeSessionId: action.newSessionId, startedOnce: true })
+          // El id nuevo es el session_id de lo que sigue (ver resetFrom), no el new_conversation_id.
+          rt.resetFrom = cur?.claudeSessionId ?? null
           break
         }
       }
@@ -876,7 +908,13 @@ export class SessionManager extends EventEmitter<{
     if (quick && !rt.retried && !info.expected) {
       if (/No conversation found/i.test(info.stderr)) {
         this.db.updateSession(id, { startedOnce: false })
-        void this.launch({ ...rec, startedOnce: false }, true).catch(() => {})
+        if (rec.startedOnce)
+          this.addEvent(id, {
+            kind: "notice",
+            level: "warn",
+            text: `Claude Code no encontró la conversación de esta sesión (${rec.claudeSessionId}): arrancó una nueva, sin el contexto de antes.`,
+          })
+        void this.launch({ ...rec, startedOnce: false }, true, rec.startedOnce ? rec.claudeSessionId : null).catch(() => {})
         return
       }
       if (/already in use/i.test(info.stderr)) {
