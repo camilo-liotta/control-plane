@@ -4,10 +4,12 @@ import { Link, useLocation } from "wouter"
 
 import { DraftCard } from "@/components/draft-card"
 import { ReportCard } from "@/components/report-card"
+import { PriorityBadge } from "@/components/user-tasks"
 import { SessionLamp } from "@/components/status"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { orderTasks } from "@shared/task-order"
 import type { Draft, Report, Session, UserTask } from "@shared/types"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
@@ -85,11 +87,11 @@ export function InboxSheet() {
   for (const s of Object.values(sessions)) {
     if (s.status === "needs_input") touch(bucket(s.projectId), s.lastActivityAt ?? s.createdAt).needs.push(s)
   }
-  for (const t of Object.values(tasks).sort(
-    (a, b) => Number(b.blocking) - Number(a.blocking) || (a.due ?? Infinity) - (b.due ?? Infinity) || a.createdAt - b.createdAt
-  )) {
+  for (const t of Object.values(tasks)) {
     if (t.status === "open") touch(bucket(t.projectId), t.updatedAt).todo.push(t)
   }
+  // El mismo orden que en el tablero del proyecto: las que frenan, por prioridad, por fecha.
+  for (const b of Object.values(byProject)) b.todo = orderTasks(b.todo)
   for (const d of Object.values(drafts).sort((a, b) => a.createdAt - b.createdAt)) {
     if (d.state === "ready") touch(bucket(d.projectId), d.updatedAt).ready.push(d)
     else if (d.state === "staged") touch(bucket(d.projectId), d.updatedAt).staged.push(d)
@@ -210,6 +212,7 @@ export function InboxSheet() {
                           }
                         >
                           <ClipboardList className="size-4 shrink-0 text-muted-foreground" />
+                          <PriorityBadge priority={t.priority} />
                           <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
                           {t.blocking && <span className="shrink-0 text-xs text-muted-foreground">te espera</span>}
                         </Link>

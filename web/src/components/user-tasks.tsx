@@ -1,13 +1,15 @@
-import { CalendarClock, Check, ChevronRight, ClipboardList, Hourglass, Plus, Undo2, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { CalendarClock, Check, ChevronRight, ClipboardList, Hourglass, Plus, TriangleAlert, Undo2, X } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
-import type { Project, UserTask } from "@shared/types"
+import { groupTag, orderTasks, tagGroups, type TagGroup } from "@shared/task-order"
+import type { CliJob, Project, UserTask } from "@shared/types"
 
 import { FileRefScope, RefText } from "@/components/file-ref"
 import { TonePill } from "@/components/status"
 import { TerminalTargetProvider, type TerminalTarget } from "@/components/take-to-terminal"
+import { CredentialState, JobPanel, LoginButton, TerminalLoginButton, useCliView } from "@/components/tools/cli-login"
 import { Markdown } from "@/components/timeline/markdown"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -22,11 +24,25 @@ import { cn } from "@/lib/utils"
 const when = (ms: number) =>
   new Date(ms).toLocaleString("es-AR", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })
 
-/** Las abiertas primero: las que frenan a alguien, después por fecha, después las más nuevas. */
-function order(a: UserTask, b: UserTask) {
-  if (a.blocking !== b.blocking) return a.blocking ? -1 : 1
-  if (a.due !== b.due) return (a.due ?? Infinity) - (b.due ?? Infinity)
-  return b.createdAt - a.createdAt
+/** Un color por etiqueta, para el borde que une las tareas que van juntas. */
+export function tagHue(tag: string) {
+  let h = 0
+  for (const c of tag) h = (h * 31 + c.charCodeAt(0)) % 360
+  return h
+}
+const tagColor = (tag: string) => `oklch(0.66 0.13 ${tagHue(tag)})`
+
+/** El número de prioridad, chico, al lado del título. */
+export function PriorityBadge({ priority, className }: { priority: number | null; className?: string }) {
+  if (priority === null) return null
+  return (
+    <span
+      className={cn("inline-grid h-4.5 min-w-4.5 shrink-0 place-items-center rounded border px-1 font-mono text-[0.65rem] leading-none text-muted-foreground tabular-nums", className)}
+      title={`Prioridad ${priority} (1 va primero)`}
+    >
+      {priority}
+    </span>
+  )
 }
 
 /** El tablero de tareas para vos del proyecto: lo que las sesiones necesitan que hagas. */
@@ -34,10 +50,19 @@ export function UserTasksCard({ project }: { project: Project }) {
   const all = useStore((s) => s.tasks)
   const [adding, setAdding] = useState(false)
   const [showClosed, setShowClosed] = useState(false)
+  const [tag, setTag] = useState<string | null>(null)
   const tasks = useMemo(() => Object.values(all).filter((t) => t.projectId === project.id), [all, project.id])
-  const open = tasks.filter((t) => t.status === "open").sort(order)
-  const closed = tasks.filter((t) => t.status !== "open").sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
-  const waiting = open.filter((t) => t.blocking).length
+  const groups = useMemo(() => tagGroups(tasks), [tasks])
+  const filter = tag && groups.has(tag) ? tag : null
+  const mine = (t: UserTask) => !filter || t.tags.includes(filter)
+  const allOpen = tasks.filter((t) => t.status === "open")
+  const open = orderTasks(allOpen).filter(mine)
+  const closed = tasks.filter((t) => t.status !== "open" && mine(t)).sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
+  const waiting = allOpen.filter((t) => t.blocking).length
+  // Si el grupo se deshizo (quedó una sola abierta), se saca el filtro.
+  useEffect(() => {
+    if (tag && !groups.has(tag)) setTag(null)
+  }, [tag, groups])
 
   return (
     <section id="tareas-para-vos" className="scroll-mt-4 rounded-2xl border bg-card p-4 shadow-xs sm:p-5">
@@ -57,10 +82,12 @@ export function UserTasksCard({ project }: { project: Project }) {
 
       {adding && <NewTask projectId={project.id} onDone={() => setAdding(false)} />}
 
+      {filter && <TagFilter group={groups.get(filter)!} onClear={() => setTag(null)} />}
+
       {open.length > 0 ? (
         <ul className="mt-3 divide-y rounded-xl border">
-          {open.map((t) => (
-            <TaskRow key={t.id} task={t} />
+          {open.map((t, i) => (
+            <TaskRow key={t.id} task={t} groups={groups} onTag={setTag} joined={joinedWith(open, i, groups)} />
           ))}
         </ul>
       ) : (
@@ -86,12 +113,64 @@ export function UserTasksCard({ project }: { project: Project }) {
   )
 }
 
+/** Si la tarea va con la de arriba o la de abajo (misma etiqueta): para dibujar el borde que las une. */
+function joinedWith(list: UserTask[], i: number, groups: Map<string, TagGroup>) {
+  const g = groupTag(list[i]!, groups)
+  if (!g) return null
+  return { tag: g, first: i === 0 || groupTag(list[i - 1]!, groups) !== g, last: i === list.length - 1 || groupTag(list[i + 1]!, groups) !== g }
+}
+
+/** Arriba de la lista, con una etiqueta elegida: cuántas son y cuántas están hechas. */
+function TagFilter({ group, onClear }: { group: TagGroup; onClear: () => void }) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: tagColor(group.tag) }}>
+      <TagChip tag={group.tag} />
+      <span className="text-muted-foreground">
+        {group.done} de {group.total} {group.total === 1 ? "hecha" : "hechas"} · {group.open} {group.open === 1 ? "abierta" : "abiertas"}
+      </span>
+      <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={onClear}>
+        <X />
+        Ver todas
+      </Button>
+    </div>
+  )
+}
+
+function TagChip({ tag, count, onClick }: { tag: string; count?: string; onClick?: () => void }) {
+  const style = { borderColor: tagColor(tag), color: tagColor(tag) }
+  const body = (
+    <>
+      <span className="font-mono">{tag}</span>
+      {count && <span className="text-muted-foreground">· {count}</span>}
+    </>
+  )
+  const cls = "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.68rem] leading-tight"
+  return onClick ? (
+    <button
+      type="button"
+      className={cn(cls, "hover:bg-muted")}
+      style={style}
+      title="Ver solo las tareas de este grupo"
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+    >
+      {body}
+    </button>
+  ) : (
+    <span className={cls} style={style}>
+      {body}
+    </span>
+  )
+}
+
 function Asker({ id }: { id: string | null }) {
   const s = useStore((st) => (id ? st.sessions[id] : undefined))
   if (!id) return <span>vos</span>
   if (!s) return <span>una sesión</span>
   return (
-    <Link href={`/p/${s.projectId}/s/${s.id}`} className="font-mono text-foreground hover:underline">
+    <Link href={`/p/${s.projectId}/s/${s.id}`} className="font-mono text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>
       {s.name}
     </Link>
   )
@@ -108,8 +187,18 @@ function useTaskTerminal(task: UserTask): TerminalTarget | null {
   return s ? { sessionId: s.id, projectId: s.projectId } : null
 }
 
-function TaskRow({ task }: { task: UserTask }) {
-  const [open, setOpen] = useState(task.blocking)
+function TaskRow({
+  task,
+  groups,
+  onTag,
+  joined,
+}: {
+  task: UserTask
+  groups: Map<string, TagGroup>
+  onTag: (tag: string) => void
+  joined: { tag: string; first: boolean; last: boolean } | null
+}) {
+  const [open, setOpen] = useState(task.blocking || task.cli !== null)
   const [note, setNote] = useState("")
   const [notify, setNotify] = useState(task.blocking)
   const [busy, setBusy] = useState<null | "done" | "dismissed">(null)
@@ -132,7 +221,17 @@ function TaskRow({ task }: { task: UserTask }) {
   }
 
   return (
-    <li className={cn("px-4 py-3", task.blocking && "bg-status-attention/5")}>
+    <li
+      className={cn("relative px-4 py-3", task.blocking && "bg-status-attention/5")}
+      data-task-tag={joined?.tag}
+    >
+      {joined && (
+        <span
+          aria-hidden
+          className={cn("absolute left-0 w-1", joined.first ? "top-2" : "top-0", joined.last ? "bottom-2" : "bottom-0", joined.first && "rounded-t", joined.last && "rounded-b")}
+          style={{ background: tagColor(joined.tag) }}
+        />
+      )}
       <div className="flex items-start gap-3">
         <button
           type="button"
@@ -144,9 +243,19 @@ function TaskRow({ task }: { task: UserTask }) {
         >
           {busy === "done" ? <Spinner className="size-3" /> : <Check className="size-3 opacity-0 hover:opacity-60" />}
         </button>
-        <button type="button" onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 text-left">
-          <span className="font-medium">{task.title}</span>
+        {/* El título despliega la tarea; la línea de abajo también, salvo sus links y etiquetas. */}
+        <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="flex items-baseline gap-2 text-left" aria-expanded={open}>
+            <PriorityBadge priority={task.priority} className="self-center" />
+            <span className="font-medium">{task.title}</span>
+          </button>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            {task.tags
+              .filter((x) => groups.has(x))
+              .map((x) => {
+                const g = groups.get(x)!
+                return <TagChip key={x} tag={x} count={`${g.done} de ${g.total}`} onClick={() => onTag(x)} />
+              })}
             {task.blocking && (
               <span className="inline-flex items-center gap-1 font-medium text-status-attention">
                 <Hourglass className="size-3" /> te está esperando
@@ -163,7 +272,7 @@ function TaskRow({ task }: { task: UserTask }) {
               {task.alsoBy.length > 0 && ` y ${task.alsoBy.length} más`} · {timeAgo(task.createdAt)}
             </span>
           </span>
-        </button>
+        </div>
         <ChevronRight className={cn("mt-1 size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
       </div>
       {open && (
@@ -174,6 +283,16 @@ function TaskRow({ task }: { task: UserTask }) {
                 <RefText text={task.why} />
               </p>
             )}
+            {task.cli && <TaskCliLogin task={task} />}
+            {task.note &&
+              (task.note.startsWith("No se pudo reautenticar") ? (
+                <p className="flex items-start gap-1.5 text-sm text-status-error">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                  {task.note}
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nota: {task.note}</p>
+              ))}
             <TerminalTargetProvider value={target}>
               <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
                 {task.steps.map((s, i) => (
@@ -184,6 +303,7 @@ function TaskRow({ task }: { task: UserTask }) {
               </ol>
             </TerminalTargetProvider>
             <div className="flex flex-wrap items-center gap-2">
+              <PriorityInput task={task} />
               <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota para la sesión (opcional)" className="h-8 min-w-48 flex-1 text-sm" />
               {askers > 0 && (
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -204,6 +324,110 @@ function TaskRow({ task }: { task: UserTask }) {
         </FileRefScope>
       )}
     </li>
+  )
+}
+
+/** La prioridad a mano: un número (1 va primero), o vacío para sacarla. */
+function PriorityInput({ task }: { task: UserTask }) {
+  const [value, setValue] = useState(task.priority === null ? "" : String(task.priority))
+  useEffect(() => setValue(task.priority === null ? "" : String(task.priority)), [task.priority])
+  const save = () => {
+    const n = value.trim() === "" ? null : Math.max(1, Math.round(Number(value)))
+    if (n !== null && !Number.isFinite(n)) return setValue(task.priority === null ? "" : String(task.priority))
+    if (n === task.priority) return
+    void api.updateTask(task.id, { priority: n }).catch((err: Error) => toast.error(err.message))
+  }
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title="En qué orden hacerla: 1 va primero. Vacío: sin prioridad.">
+      Prioridad
+      <Input
+        type="number"
+        min={1}
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+        placeholder="–"
+        aria-label={`Prioridad de ${task.title}`}
+        className="h-8 w-14 text-center font-mono text-sm"
+      />
+    </label>
+  )
+}
+
+/**
+ * El login del CLI que pide la tarea, ahí mismo: el estado de la credencial y el mismo botón y
+ * panel que Herramientas → CLIs. Si sale bien, el server cierra la tarea y le avisa a la sesión.
+ */
+function TaskCliLogin({ task }: { task: UserTask }) {
+  const view = useCliView()
+  const tick = useStore((s) => s.clisTick)
+  const [starting, setStarting] = useState(false)
+  const [job, setJob] = useState<CliJob | null>(null)
+  const cli = view?.clis.find((c) => c.id === task.cli!.id)
+  const credential = cli?.credentials[task.cli!.credential] ?? cli?.credentials[0]
+  // Un login que ya estaba corriendo para este CLI (lo arrancaste acá o en Herramientas).
+  const running = view?.jobs.filter((j) => j.cliId === task.cli!.id && j.kind === "login").at(-1)
+  const shown = job ?? (running?.status === "running" ? running : null)
+
+  useEffect(() => {
+    if (!job) return
+    let live = true
+    void api.cliJob(job.id).then((j) => live && setJob(j), () => {})
+    return () => {
+      live = false
+    }
+  }, [tick, job?.id])
+
+  const login = async () => {
+    setStarting(true)
+    try {
+      setJob(await api.taskCliLogin(task.id))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  const name = task.cli!.id
+  if (!view) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner className="size-3.5" /> Revisando {name}…
+      </p>
+    )
+  }
+  if (!cli || !cli.installed) {
+    return <p className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">{cli ? `${cli.name} no está instalado: instalalo en Herramientas → CLIs.` : `No conozco el CLI ${name}.`}</p>
+  }
+  const state = credential?.state ?? "unknown"
+  const verb = state === "logged_out" || state === "unknown" ? "Loguear" : "Reautenticar"
+  return (
+    <div className="rounded-lg border bg-muted/30 px-3 py-2" data-task-cli={name}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <span className="font-medium">{cli.name}</span>
+        {credential?.label && <span className="text-muted-foreground">{credential.label}</span>}
+        {credential && <CredentialState credential={credential} />}
+        <span className="text-xs text-muted-foreground">
+          {state === "ok" && credential?.account ? `logueado como ${credential.account}` : state === "ok" ? "logueado" : state === "expired" ? "sesión vencida" : state === "logged_out" ? "sin sesión" : ""}
+        </span>
+        {credential?.terminalLogin ? (
+          <TerminalLoginButton command={credential.terminalLogin} className="ml-auto" />
+        ) : (
+          <LoginButton
+            state={state}
+            disabled={starting || shown?.status === "running"}
+            starting={starting}
+            className="ml-auto"
+            label={`${verb} ${name}`}
+            onClick={() => void login()}
+          />
+        )}
+      </div>
+      {shown && <JobPanel key={shown.id} job={shown} />}
+    </div>
   )
 }
 

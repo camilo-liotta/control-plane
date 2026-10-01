@@ -132,15 +132,25 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ------------------------------------------------------------------ tareas para vos
 
-  app.post<{ Params: { id: string }; Body: { title?: string; steps?: string[]; why?: string; due?: number | null } }>("/api/projects/:id/tasks", (req, reply) =>
-    guard(reply, () => tasks.create(req.params.id, { title: String(req.body?.title ?? ""), steps: Array.isArray(req.body?.steps) ? req.body.steps.map(String) : [], why: req.body?.why ?? null, due: req.body?.due ?? null }, null).task)
-  )
-  app.patch<{ Params: { id: string }; Body: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] } }>("/api/tasks/:id", (req, reply) =>
+  const tagList = (v: unknown) => (Array.isArray(v) ? v.map(String) : undefined)
+  app.post<{ Params: { id: string }; Body: { title?: string; steps?: string[]; why?: string; due?: number | null; priority?: number | null; tags?: string[] } }>("/api/projects/:id/tasks", (req, reply) =>
     guard(reply, () => {
       const b = req.body ?? {}
-      return tasks.update(req.params.id, { status: b.status, note: b.note, title: b.title, steps: b.steps }, "user", { notify: b.notify })
+      const steps = Array.isArray(b.steps) ? b.steps.map(String) : []
+      return tasks.create(req.params.id, { title: String(b.title ?? ""), steps, why: b.why ?? null, due: b.due ?? null, priority: b.priority ?? null, tags: tagList(b.tags) }, null).task
     })
   )
+  app.patch<{
+    Params: { id: string }
+    Body: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[]; priority?: number | null; tags?: string[] }
+  }>("/api/tasks/:id", (req, reply) =>
+    guard(reply, () => {
+      const b = req.body ?? {}
+      return tasks.update(req.params.id, { status: b.status, note: b.note, title: b.title, steps: b.steps, priority: b.priority, tags: tagList(b.tags) }, "user", { notify: b.notify })
+    })
+  )
+  // El botón de la tarea: el mismo login que Herramientas → CLIs; si sale bien, la tarea se cierra sola.
+  app.post<{ Params: { id: string } }>("/api/tasks/:id/cli-login", (req, reply) => guard(reply, () => tasks.loginFromTask(req.params.id)))
 
   // ------------------------------------------------------------------ CLIs (de la máquina, para todos)
 

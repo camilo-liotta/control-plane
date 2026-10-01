@@ -204,8 +204,12 @@ export const api = {
   compactionDirect: (id: string) => request("POST", `/api/sessions/${id}/compaction/direct`),
   createTask: (projectId: string, task: { title: string; steps: string[]; why?: string; due?: number | null }) =>
     request<UserTask>("POST", `/api/projects/${projectId}/tasks`, task),
-  updateTask: (id: string, patch: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] }) =>
-    request<UserTask>("PATCH", `/api/tasks/${id}`, patch),
+  updateTask: (
+    id: string,
+    patch: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[]; priority?: number | null; tags?: string[] }
+  ) => request<UserTask>("PATCH", `/api/tasks/${id}`, patch),
+  /** El login del CLI de la tarea: si sale bien, la tarea se cierra sola. */
+  taskCliLogin: (id: string) => request<CliJob>("POST", `/api/tasks/${id}/cli-login`),
   createEnvironment: (projectId: string, env: EnvironmentFields) => request<Environment>("POST", `/api/projects/${projectId}/environments`, env),
   updateEnvironment: (id: string, patch: Partial<EnvironmentFields>) => request<Environment>("PATCH", `/api/environments/${id}`, patch),
   deleteEnvironment: (id: string) => request("DELETE", `/api/environments/${id}`),

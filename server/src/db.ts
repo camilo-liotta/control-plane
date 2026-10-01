@@ -22,6 +22,7 @@ import type {
   TokenUsage,
   TimelineEvent,
   UserTask,
+  UserTaskCli,
   UserTaskStatus,
 } from "./shared/types.ts"
 
@@ -238,6 +239,11 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL,
     UNIQUE (environment_id, name)
   );
+  `,
+  `
+  ALTER TABLE user_tasks ADD COLUMN cli TEXT;
+  ALTER TABLE user_tasks ADD COLUMN priority INTEGER;
+  ALTER TABLE user_tasks ADD COLUMN tags TEXT;
   `,
 ]
 
@@ -481,6 +487,19 @@ function toTask(r: Row): UserTask {
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
     closedAt: num(r.closed_at),
+    cli: taskCli(r.cli),
+    priority: num(r.priority),
+    tags: list(r.tags),
+  }
+}
+
+function taskCli(v: unknown): UserTaskCli | null {
+  if (v === null || v === undefined) return null
+  try {
+    const c = JSON.parse(String(v)) as Partial<UserTaskCli>
+    return typeof c.id === "string" ? { id: c.id, credential: Number(c.credential) || 0 } : null
+  } catch {
+    return null
   }
 }
 
@@ -907,16 +926,19 @@ export class Db {
   insertTask(t: UserTask) {
     this.db
       .prepare(
-        `INSERT INTO user_tasks (id, project_id, title, steps, why, blocking, due, created_by, also_by, status, note, closed_by, created_at, updated_at, closed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO user_tasks (id, project_id, title, steps, why, blocking, due, created_by, also_by, status, note, closed_by, created_at, updated_at, closed_at, cli, priority, tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(t.id, t.projectId, t.title, JSON.stringify(t.steps), t.why, t.blocking ? 1 : 0, t.due, t.createdBy, JSON.stringify(t.alsoBy), t.status, t.note, t.closedBy, t.createdAt, t.updatedAt, t.closedAt)
+      .run(
+        t.id, t.projectId, t.title, JSON.stringify(t.steps), t.why, t.blocking ? 1 : 0, t.due, t.createdBy, JSON.stringify(t.alsoBy), t.status, t.note, t.closedBy, t.createdAt, t.updatedAt, t.closedAt,
+        t.cli ? JSON.stringify(t.cli) : null, t.priority, JSON.stringify(t.tags)
+      )
   }
 
   updateTask(id: string, patch: Partial<UserTask>) {
     const cols: Partial<Record<keyof UserTask, string>> = {
       title: "title", steps: "steps", why: "why", blocking: "blocking", due: "due", alsoBy: "also_by", status: "status",
-      note: "note", closedBy: "closed_by", updatedAt: "updated_at", closedAt: "closed_at",
+      note: "note", closedBy: "closed_by", updatedAt: "updated_at", closedAt: "closed_at", cli: "cli", priority: "priority", tags: "tags",
     }
     const keys = (Object.keys(patch) as (keyof UserTask)[]).filter((k) => cols[k])
     if (!keys.length) return

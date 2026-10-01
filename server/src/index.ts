@@ -216,7 +216,7 @@ async function main() {
     },
   })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
-  const tasks = new UserTasks({ db, hub, sessions })
+  const tasks = new UserTasks({ db, hub, sessions, clis })
   const environments = new Environments({ db, hub, sessions })
   const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }) }
   hub.setSummary(() => desktopSummary(deps))
