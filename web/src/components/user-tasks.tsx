@@ -5,6 +5,7 @@ import { Link } from "wouter"
 
 import type { Project, UserTask } from "@shared/types"
 
+import { FileRefScope, RefText } from "@/components/file-ref"
 import { TonePill } from "@/components/status"
 import { TerminalTargetProvider, type TerminalTarget } from "@/components/take-to-terminal"
 import { Markdown } from "@/components/timeline/markdown"
@@ -166,35 +167,41 @@ function TaskRow({ task }: { task: UserTask }) {
         <ChevronRight className={cn("mt-1 size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
       </div>
       {open && (
-        <div className="mt-3 space-y-3 pl-8">
-          {task.why && <p className="text-sm text-muted-foreground">{task.why}</p>}
-          <TerminalTargetProvider value={target}>
-            <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
-              {task.steps.map((s, i) => (
-                <li key={i}>
-                  <Markdown text={s} className="[&_p]:my-0" inlineCommands />
-                </li>
-              ))}
-            </ol>
-          </TerminalTargetProvider>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota para la sesión (opcional)" className="h-8 min-w-48 flex-1 text-sm" />
-            {askers > 0 && (
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} />
-                Avisarle a la sesión
-              </label>
+        <FileRefScope projectId={task.projectId} sessionId={task.createdBy ?? undefined}>
+          <div className="mt-3 space-y-3 pl-8">
+            {task.why && (
+              <p className="text-sm text-muted-foreground">
+                <RefText text={task.why} />
+              </p>
             )}
-            <Button size="sm" onClick={() => void close("done")} disabled={busy !== null}>
-              {busy === "done" ? <Spinner /> : <Check />}
-              Hecha
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => void close("dismissed")} disabled={busy !== null}>
-              {busy === "dismissed" ? <Spinner /> : <X />}
-              No hace falta
-            </Button>
+            <TerminalTargetProvider value={target}>
+              <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
+                {task.steps.map((s, i) => (
+                  <li key={i}>
+                    <Markdown text={s} className="[&_p]:my-0" inlineCommands />
+                  </li>
+                ))}
+              </ol>
+            </TerminalTargetProvider>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota para la sesión (opcional)" className="h-8 min-w-48 flex-1 text-sm" />
+              {askers > 0 && (
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} />
+                  Avisarle a la sesión
+                </label>
+              )}
+              <Button size="sm" onClick={() => void close("done")} disabled={busy !== null}>
+                {busy === "done" ? <Spinner /> : <Check />}
+                Hecha
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => void close("dismissed")} disabled={busy !== null}>
+                {busy === "dismissed" ? <Spinner /> : <X />}
+                No hace falta
+              </Button>
+            </div>
           </div>
-        </div>
+        </FileRefScope>
       )}
     </li>
   )

@@ -6,6 +6,7 @@ import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
 import { AttachmentList } from "@/components/attachments"
 import { DraftCard } from "@/components/draft-card"
+import { RefText } from "@/components/file-ref"
 import { SubagentSpecList } from "@/components/subagent-specs"
 import { TonePill } from "@/components/status"
 import { PermissionCard, QuestionCard } from "@/components/timeline/interactive-cards"
@@ -212,7 +213,11 @@ function ReportCall({ call }: { call: ToolCall }) {
         <TonePill tone={status.tone}>{status.label}</TonePill>
         {call.result?.isError && <span className="text-xs text-status-error">no se registró</span>}
       </div>
-      {input.summary && <p className="mt-1.5 text-[0.87rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">{input.summary}</p>}
+      {input.summary && (
+        <p className="mt-1.5 text-[0.87rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">
+          <RefText text={input.summary} />
+        </p>
+      )}
       {input.details && (
         <>
           <button
