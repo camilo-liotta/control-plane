@@ -23,7 +23,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { restartHint, versionMismatch } from "@/lib/server-version"
 import { useCurrentAccount, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
-import { trayIconPlace } from "@/lib/notify"
+import { inDesktop, trayIconPlace } from "@/lib/notify"
 import { connect } from "@/lib/ws"
 import { Home } from "@/pages/home"
 import { ProjectBoard } from "@/pages/project-board"
@@ -119,7 +119,10 @@ function ConnectionBanner() {
   if (connected || !loaded) return null
   return (
     <div className="border-b border-status-error/30 bg-status-error/10 px-4 py-1.5 text-center text-xs text-status-error">
-      Se cortó la conexión con el server local. Reintentando… Si lo cerraste, volvé a levantarlo con npm start.
+      Se cortó la conexión con el server local. Reintentando…{" "}
+      {inDesktop()
+        ? "Si el server se cerró, la app lo vuelve a lanzar o te muestra cómo seguir."
+        : "Si lo cerraste, volvé a levantarlo con npm start."}
     </div>
   )
 }

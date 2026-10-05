@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { timeAgo, tokens } from "@/lib/format"
+import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
 
 /**
@@ -27,6 +28,7 @@ export function ArchivedSessions({ projectId, refreshKey }: { projectId: string;
   const [list, setList] = useState<Session[] | null>(null)
   const [open, setOpen] = useState(false)
   const [purging, setPurging] = useState<Session | null>(null)
+  const action = useAction()
 
   const load = () => api.archivedSessions(projectId).then(setList, () => setList([]))
 
@@ -83,7 +85,7 @@ export function ArchivedSessions({ projectId, refreshKey }: { projectId: string;
                   {s.tokens?.total ? ` · ${tokens(s.tokens.total)} tokens` : ""}
                 </p>
               </div>
-              <Button size="xs" variant="outline" onClick={() => void restore(s)}>
+              <Button size="xs" variant="outline" disabled={action.busy(s.id)} onClick={() => void action.run(s.id, () => restore(s))}>
                 <RotateCcw />
                 Restaurar
               </Button>

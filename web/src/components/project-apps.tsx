@@ -18,6 +18,7 @@ import { api } from "@/lib/api"
 import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
 import type { Tone } from "@/lib/status"
 import { useStore } from "@/lib/store"
+import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
 
 export const APP_STATUS: Record<AppStatus, { label: string; tone: Tone; pulse?: boolean }> = {
@@ -40,22 +41,26 @@ const isUp = (a: AppView) => a.state.status === "up" || a.state.status === "exte
 const isOurs = (a: AppView) => a.state.status === "starting" || a.state.status === "up" || a.state.status === "unresponsive"
 const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err))
 
-/** Pide las apps del proyecto mientras la sección está en pantalla: así el server mira su salud solo mientras alguien mira. */
-function useWatchApps(projectId: string) {
+/**
+ * Las apps del proyecto: se piden una vez al entrar y, solo con la sección abierta, cada 20 s con
+ * `watch` (así el server mira la salud de las que no corren solo mientras alguien las mira). Plegada,
+ * el resumen se mantiene con los avisos del server.
+ */
+function useWatchApps(projectId: string, open: boolean) {
   useEffect(() => {
     let alive = true
     const load = () =>
-      api.apps(projectId, true).then(
+      api.apps(projectId, open).then(
         (apps) => alive && useStore.setState((s) => ({ apps: { ...s.apps, [projectId]: apps } })),
         () => {}
       )
     void load()
-    const t = setInterval(load, 20_000)
+    const t = open ? setInterval(load, 20_000) : null
     return () => {
       alive = false
-      clearInterval(t)
+      if (t) clearInterval(t)
     }
-  }, [projectId])
+  }, [projectId, open])
 }
 
 function healthText(h: AppHealth | null) {
@@ -141,13 +146,24 @@ function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLo
 /** El log de una app: las últimas líneas, que se refrescan mientras está abierto. */
 function LogDialog({ app, onClose }: { app: AppView | null; onClose: () => void }) {
   const [lines, setLines] = useState<string[] | null>(null)
+  // Si no se puede leer, se dice adentro del log (se reintenta solo), sin un aviso por cada intento.
+  const [error, setError] = useState<string | null>(null)
   const box = useRef<HTMLPreElement>(null)
   const id = app?.id
   useEffect(() => {
     if (!id) return
     setLines(null)
+    setError(null)
     let alive = true
-    const load = () => api.appLog(id).then((r) => alive && setLines(r.lines), fail)
+    const load = () =>
+      api.appLog(id).then(
+        (r) => {
+          if (!alive) return
+          setLines(r.lines)
+          setError(null)
+        },
+        (err: unknown) => alive && setError(err instanceof Error ? err.message : String(err))
+      )
     void load()
     const t = setInterval(load, 2_000)
     return () => {
@@ -166,7 +182,8 @@ function LogDialog({ app, onClose }: { app: AppView | null; onClose: () => void 
           <DialogDescription>Las últimas líneas de lo que escribió la app. Se actualiza solo.</DialogDescription>
         </DialogHeader>
         <pre ref={box} className="h-[60svh] overflow-auto rounded-lg border bg-muted/50 p-3 font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">
-          {lines === null ? "Cargando…" : lines.length ? lines.join("\n") : "Todavía no escribió nada."}
+          {lines === null ? (error ? "" : "Cargando…") : lines.length ? lines.join("\n") : "Todavía no escribió nada."}
+          {error && <span className="block text-status-error">{`${lines?.length ? "\n" : ""}No se pudo leer el log: ${error}. Lo vuelvo a intentar…`}</span>}
         </pre>
       </DialogContent>
     </Dialog>
@@ -250,7 +267,8 @@ function AppDialog({
       setSaving(false)
     }
   }
-  const remove = async () => {
+  const action = useAction()
+  const remove = () => action.run("remove", async () => {
     if (!editing) return
     try {
       await api.removeApp(editing.id)
@@ -259,7 +277,7 @@ function AppDialog({
     } catch (err) {
       fail(err)
     }
-  }
+  })
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-lg">
@@ -331,7 +349,7 @@ function AppDialog({
           </FieldGroup>
           <DialogFooter className="mt-5">
             {editing && (
-              <Button type="button" variant="ghost" className="mr-auto text-status-error" onClick={() => void remove()}>
+              <Button type="button" variant="ghost" className="mr-auto text-status-error" disabled={action.busy("remove")} onClick={() => void remove()}>
                 <Trash2 />
                 Quitar
               </Button>
@@ -387,9 +405,9 @@ function Suggestions({ projectId, onPick }: { projectId: string; onPick: (s: App
 
 /** "Apps" en el resumen del proyecto: lo que se levanta localmente, su estado y los botones. */
 export function ProjectApps({ project }: { project: Project }) {
-  useWatchApps(project.id)
-  const apps = useStore((s) => s.apps[project.id]) ?? []
   const open = useSectionOpen("project-apps")
+  useWatchApps(project.id, open)
+  const apps = useStore((s) => s.apps[project.id]) ?? []
   const toggle = usePanelSections((s) => s.toggle)
   const [dialog, setDialog] = useState<{ editing: AppView | null; initial: AppInput | null } | null>(null)
   const [logOf, setLogOf] = useState<string | null>(null)

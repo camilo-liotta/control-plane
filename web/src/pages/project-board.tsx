@@ -26,6 +26,7 @@ import { shortPath, tokens, totals, usd } from "@/lib/format"
 import { openDrafts, projectReports, projectSessions, useStore } from "@/lib/store"
 import { reveal } from "@/lib/reveal"
 import { useUi } from "@/lib/ui"
+import { useAction } from "@/lib/use-action"
 
 function SectionTitle({ children, count, action }: { children: React.ReactNode; count?: number; action?: React.ReactNode }) {
   return (
@@ -98,10 +99,13 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     setSendingAll(false)
   }
 
-  const run = (fn: () => Promise<unknown>, ok: string) =>
-    fn().then(
-      () => toast.success(ok),
-      (err: Error) => toast.error(err.message)
+  const action = useAction()
+  const run = (key: string, fn: () => Promise<unknown>, ok: string) =>
+    action.run(key, () =>
+      fn().then(
+        () => toast.success(ok),
+        (err: Error) => toast.error(err.message)
+      )
     )
 
   return (
@@ -135,11 +139,11 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto min-w-56">
-                <DropdownMenuItem onClick={() => run(() => api.startAll(project.id), "Sesiones iniciadas")}>
+                <DropdownMenuItem disabled={action.busy("all")} onClick={() => run("all", () => api.startAll(project.id), "Sesiones iniciadas")}>
                   <Play />
                   Iniciar todas las sesiones
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => run(() => api.stopAll(project.id), "Sesiones detenidas")}>
+                <DropdownMenuItem disabled={action.busy("all")} onClick={() => run("all", () => api.stopAll(project.id), "Sesiones detenidas")}>
                   <Square />
                   Detener todas las sesiones
                 </DropdownMenuItem>

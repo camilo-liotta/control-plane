@@ -248,6 +248,8 @@ export function AccountsDialog() {
     setRefreshing(true)
     try {
       await api.accounts(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setRefreshing(false)
     }

@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit"
 import { Terminal } from "@xterm/xterm"
 import { ChevronDown, LockKeyhole, RotateCcw, SquareTerminal, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 
 import { pasteText } from "@shared/command-values"
 import type { Session } from "@shared/types"
@@ -271,7 +272,7 @@ export function TerminalPanel({ session }: { session: Session }) {
             size="icon-xs"
             variant="ghost"
             onClick={() => {
-              void api.closeTerminal(session.id)
+              api.closeTerminal(session.id).catch((err: unknown) => toast.error(`No se pudo cerrar la terminal: ${err instanceof Error ? err.message : String(err)}`))
               setOpen(session.id, false)
             }}
             aria-label="Cerrar la terminal"
