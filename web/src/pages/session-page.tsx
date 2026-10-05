@@ -367,7 +367,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             <Composer session={session} dropTarget={column} />
             <TerminalPanel session={session} />
           </div>
-          <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
+          <aside className="session-panel hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
           </div>
         </FileRefScope>
       </TerminalTargetProvider>

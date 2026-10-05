@@ -326,7 +326,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
         )}
         <div
           className={cn(
-            "relative rounded-2xl border bg-card shadow-xs transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20",
+            "composer relative rounded-2xl border bg-card shadow-xs transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20",
             dragging && "border-status-working ring-3 ring-status-working/25"
           )}
         >
