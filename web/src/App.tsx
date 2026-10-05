@@ -9,6 +9,8 @@ import { Lightbox } from "@/components/attachments"
 import { ClaudeSettingsDialog } from "@/components/claude-settings-dialog"
 import { DeleteProjectDialog } from "@/components/delete-project-dialog"
 import { CommandPalette } from "@/components/command-palette"
+import { SessionDialogs } from "@/components/session-dialogs"
+import { GlobalShortcuts } from "@/components/shortcuts"
 import { ImportSessionDialog } from "@/components/import-session-dialog"
 import { InboxSheet } from "@/components/inbox-sheet"
 import { NewProjectDialog } from "@/components/new-project-dialog"
@@ -24,7 +26,9 @@ import { restartHint, versionMismatch } from "@/lib/server-version"
 import { useCurrentAccount, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { inDesktop, trayIconPlace } from "@/lib/notify"
+import { lastRoute } from "@/lib/nav"
 import { connect } from "@/lib/ws"
+import { restorableRoute } from "@shared/navigation"
 import { Home } from "@/pages/home"
 import { ProjectBoard } from "@/pages/project-board"
 import { SessionPage } from "@/pages/session-page"
@@ -66,6 +70,8 @@ function Dialogs() {
       />
       <InboxSheet />
       <CommandPalette />
+      <SessionDialogs />
+      <GlobalShortcuts />
       <SubagentSheet />
       <CompactionSheet />
       <SessionToolsSheet />
@@ -110,6 +116,33 @@ function LeaveDeletedProject() {
     toast.success(`Borré el proyecto ${removed.name}`, { id: `deleted-${removed.id}` })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [removed])
+  return null
+}
+
+/**
+ * La última pantalla: se guarda en cada cambio de ruta (salvo el inicio). En la app de escritorio,
+ * al abrir se vuelve ahí sola; en la web, el inicio ofrece "Seguir donde estabas" (ver Home).
+ */
+function RememberRoute() {
+  const [location, navigate] = useLocation()
+  const loaded = useStore((s) => s.loaded)
+  const restored = useRef(false)
+  useEffect(() => {
+    if (!loaded || restored.current) return
+    restored.current = true
+    if (!inDesktop() || location !== "/") return
+    const { projects, sessions } = useStore.getState()
+    const alive = {
+      projects: new Set(Object.values(projects).filter((p) => !p.archivedAt).map((p) => p.id)),
+      sessions: new Set(Object.values(sessions).filter((x) => !x.archivedAt).map((x) => x.id)),
+    }
+    const to = restorableRoute(lastRoute.get(), alive)
+    if (to) navigate(to, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded])
+  useEffect(() => {
+    if (loaded && restored.current && location !== "/") lastRoute.set(location)
+  }, [location, loaded])
   return null
 }
 
@@ -192,6 +225,7 @@ export default function App() {
       <AppSidebar />
       <LeaveOtherAccount />
       <LeaveDeletedProject />
+      <RememberRoute />
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <ConnectionBanner />
         <VersionBanner />

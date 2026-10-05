@@ -1,6 +1,7 @@
 import { inDesktop } from "@/lib/notify"
 
-const isEditable = (el: EventTarget | null) =>
+/** Un campo donde se escribe (las teclas sueltas son del campo, no atajos). */
+export const isEditable = (el: EventTarget | null) =>
   el instanceof HTMLTextAreaElement ||
   (el instanceof HTMLInputElement && !["checkbox", "radio", "button", "submit", "file", "range", "color"].includes(el.type)) ||
   (el instanceof HTMLElement && el.isContentEditable)

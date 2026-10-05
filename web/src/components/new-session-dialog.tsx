@@ -103,6 +103,7 @@ export function NewSessionDialog({
   if (!project) return null
 
   const create = async () => {
+    if (!name.trim() || creating) return
     setCreating(true)
     try {
       const s = await api.createSession(project.id, {
@@ -133,6 +134,14 @@ export function NewSessionDialog({
             coordinarse y cómo reportarle a la orquestadora al terminar.
           </DialogDescription>
         </DialogHeader>
+        {/* Enter en un campo crea; en el prompt es un salto de línea, y Ctrl/⌘+Enter crea. */}
+        <form
+          id="new-session-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void create()
+          }}
+        >
         <FieldGroup>
           <div className="grid gap-4 sm:grid-cols-[1fr_1.4fr]">
             <Field>
@@ -162,6 +171,12 @@ export function NewSessionDialog({
               id="session-prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  e.currentTarget.form?.requestSubmit()
+                }
+              }}
               placeholder="Si lo dejás vacío, la sesión arranca y espera. La orquestadora le puede proponer la tarea después."
               className="min-h-28"
             />
@@ -186,11 +201,12 @@ export function NewSessionDialog({
             <Switch id="session-worktree" checked={worktree} onCheckedChange={setWorktree} />
           </Field>
         </FieldGroup>
+        </form>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={create} disabled={!name.trim() || creating}>
+          <Button type="submit" form="new-session-form" disabled={!name.trim() || creating}>
             {creating && <Spinner />}
             {prompt.trim() ? "Crear y enviar" : "Crear sesión"}
           </Button>

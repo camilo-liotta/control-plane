@@ -30,6 +30,11 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [nameTouched, setNameTouched] = useState(false)
   const [suggest, setSuggest] = useState<DirSuggestion | null>(null)
   const [creating, setCreating] = useState(false)
+  /** La sugerencia de carpeta marcada con ↑/↓ (-1: ninguna; Enter crea). */
+  const [highlight, setHighlight] = useState(-1)
+  const dirs = suggest?.dirs ?? []
+  useEffect(() => setHighlight(-1), [suggest])
+  const canCreate = Boolean(suggest?.exists) && !creating
   const accounts = useAccounts()
   const current = useCurrentAccount()
   const selectAccount = useUi((s) => s.selectAccount)
@@ -53,6 +58,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
   }, [suggest, nameTouched])
 
   const create = async () => {
+    if (!canCreate) return
     setCreating(true)
     try {
       const project = await api.createProject({ repoPath: path, name: name.trim() || undefined, accountId: account?.id })
@@ -76,6 +82,13 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             Elegí la carpeta del repo. Se crea la orquestadora del proyecto y después sumás las sesiones que necesites.
           </DialogDescription>
         </DialogHeader>
+        <form
+          id="new-project-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void create()
+          }}
+        >
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="repo-path">Carpeta del repo</FieldLabel>
@@ -83,9 +96,29 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               id="repo-path"
               value={path}
               onChange={(e) => setPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (!dirs.length) return
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault()
+                  const step = e.key === "ArrowDown" ? 1 : -1
+                  // De "ninguna" (-1) a la última, dando la vuelta.
+                  setHighlight((h) => {
+                    const next = h + step
+                    return next < -1 ? dirs.length - 1 : next >= dirs.length ? -1 : next
+                  })
+                  return
+                }
+                if (e.key === "Enter" && highlight >= 0 && dirs[highlight]) {
+                  // Enter con una sugerencia marcada entra a esa carpeta; sin ninguna, crea el proyecto.
+                  e.preventDefault()
+                  setPath(dirs[highlight].path + "/")
+                }
+              }}
               className="font-mono text-sm"
               spellCheck={false}
               autoFocus
+              aria-controls="repo-path-suggestions"
+              aria-activedescendant={highlight >= 0 ? `repo-dir-${highlight}` : undefined}
             />
             {suggest && (
               <FieldDescription className={cn(suggest.exists && !suggest.isGitRepo && "text-status-attention")}>
@@ -97,13 +130,20 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               </FieldDescription>
             )}
             {suggest && suggest.dirs.length > 0 && (
-              <div className="max-h-48 overflow-y-auto rounded-lg border p-1">
-                {suggest.dirs.map((d) => (
+              <div id="repo-path-suggestions" role="listbox" aria-label="Carpetas" className="max-h-48 overflow-y-auto rounded-lg border p-1">
+                {suggest.dirs.map((d, i) => (
                   <button
                     key={d.path}
+                    id={`repo-dir-${i}`}
                     type="button"
+                    role="option"
+                    aria-selected={i === highlight}
+                    tabIndex={-1}
+                    ref={(el) => {
+                      if (el && i === highlight) el.scrollIntoView({ block: "nearest" })
+                    }}
                     onClick={() => setPath(d.path + "/")}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                    className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted", i === highlight && "bg-muted")}
                   >
                     {d.isGitRepo ? (
                       <FolderGit2 className="size-4 text-status-done" />
@@ -147,11 +187,12 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             />
           </Field>
         </FieldGroup>
+        </form>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={create} disabled={!suggest?.exists || creating}>
+          <Button type="submit" form="new-project-form" disabled={!canCreate}>
             {creating && <Spinner />}
             Crear proyecto
           </Button>

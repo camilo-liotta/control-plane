@@ -1,5 +1,5 @@
 import { Archive, ChevronRight, RotateCcw, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { Session } from "@shared/types"
@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
+import { reveal } from "@/lib/reveal"
+import { useUi } from "@/lib/ui"
 import { timeAgo, tokens } from "@/lib/format"
 import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
@@ -35,6 +37,20 @@ export function ArchivedSessions({ projectId, refreshKey }: { projectId: string;
   useEffect(() => {
     void load()
   }, [projectId, refreshKey])
+
+  // "Sesiones archivadas" desde la paleta: se abre y baja hasta acá (o avisa que no hay).
+  const pendingReveal = useUi((s) => s.reveal)
+  const section = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (pendingReveal?.kind !== "archived" || pendingReveal.id !== projectId || list === null) return
+    useUi.getState().set({ reveal: null })
+    if (!list.length) {
+      toast.message("Este proyecto no tiene sesiones archivadas")
+      return
+    }
+    setOpen(true)
+    requestAnimationFrame(() => section.current && reveal(section.current))
+  }, [pendingReveal, projectId, list])
 
   if (!list?.length) return null
 
@@ -59,7 +75,7 @@ export function ArchivedSessions({ projectId, refreshKey }: { projectId: string;
   }
 
   return (
-    <section>
+    <section ref={section}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
