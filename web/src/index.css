@@ -6,6 +6,9 @@
 @import "@fontsource/ibm-plex-sans-condensed/600.css";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -427,4 +430,226 @@ a.file-ref:hover > code {
 }
 .md th {
   @apply bg-muted/60 font-semibold;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Dirección "Estudio": un lugar tranquilo para trabajar muchas horas. La barra lateral es la mesa;
+ * el trabajo es una hoja que flota encima, con su propio borde redondeado. Sin cajas dentro de
+ * cajas: las superficies se separan por altura. Etiquetas en minúscula, títulos en Bricolage.
+ * ---------------------------------------------------------------------------------------------- */
+:root {
+  --ff-ui: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --ff-display: "Bricolage Grotesque Variable", var(--ff-ui);
+  --ff-label: var(--ff-ui);
+  --ff-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --ff-name: var(--ff-ui);
+  --name-tracking: 0.005em;
+  --label-tracking: 0;
+  --label-case: none;
+  --radius: 0.75rem;
+
+  --background: oklch(0.995 0.002 280);
+  --foreground: oklch(0.2 0.02 280);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --primary: oklch(0.22 0.025 280);
+  --primary-foreground: oklch(0.99 0.002 280);
+  --secondary: oklch(0.955 0.008 280);
+  --muted: oklch(0.965 0.006 280);
+  --muted-foreground: oklch(0.5 0.018 280);
+  --accent: oklch(0.95 0.009 280);
+  --border: oklch(0.92 0.006 280);
+  --input: oklch(0.89 0.008 280);
+  --ring: oklch(0.55 0.15 275);
+  --sidebar: oklch(0.955 0.007 280);
+  --sidebar-accent: oklch(0.92 0.01 280);
+  --sidebar-border: transparent;
+  --elev-1: 0 1px 2px oklch(0.25 0.03 280 / 5%), 0 6px 16px -8px oklch(0.25 0.03 280 / 10%);
+  --elev-2: 0 28px 64px -20px oklch(0.25 0.04 280 / 32%), 0 4px 12px oklch(0.25 0.03 280 / 8%);
+  --sheet: 0 0 0 1px oklch(0.25 0.03 280 / 5%), 0 2px 6px oklch(0.25 0.03 280 / 5%), 0 18px 40px -24px oklch(0.25 0.03 280 / 18%);
+
+  --status-working: oklch(0.5 0.18 265);
+  --status-attention: oklch(0.52 0.13 58);
+  --status-done: oklch(0.5 0.12 155);
+  --status-error: oklch(0.53 0.2 22);
+  --lamp-working: oklch(0.6 0.18 265);
+  --lamp-attention: oklch(0.75 0.15 66);
+  --lamp-done: oklch(0.66 0.14 155);
+  --lamp-error: oklch(0.62 0.2 22);
+  --lamp-idle: oklch(0.74 0.01 280);
+}
+.dark {
+  --background: oklch(0.2 0.01 280);
+  --foreground: oklch(0.94 0.006 280);
+  --card: oklch(0.235 0.012 280);
+  --popover: oklch(0.245 0.013 280);
+  --primary: oklch(0.94 0.006 280);
+  --primary-foreground: oklch(0.2 0.015 280);
+  --secondary: oklch(0.27 0.014 280);
+  --muted: oklch(0.255 0.012 280);
+  --muted-foreground: oklch(0.7 0.015 280);
+  --accent: oklch(0.28 0.014 280);
+  --border: oklch(1 0 0 / 7%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.7 0.13 275);
+  --sidebar: oklch(0.155 0.008 280);
+  --sidebar-accent: oklch(0.225 0.011 280);
+  --sidebar-border: transparent;
+  --elev-1: 0 1px 0 oklch(1 0 0 / 4%) inset, 0 8px 20px -10px oklch(0 0 0 / 50%);
+  --elev-2: 0 1px 0 oklch(1 0 0 / 6%) inset, 0 32px 72px -20px oklch(0 0 0 / 75%);
+  --sheet: 0 0 0 1px oklch(1 0 0 / 5%), 0 24px 48px -24px oklch(0 0 0 / 70%);
+  --status-working: oklch(0.74 0.14 265);
+  --status-attention: oklch(0.83 0.13 72);
+  --status-done: oklch(0.77 0.13 155);
+  --status-error: oklch(0.73 0.16 22);
+  --lamp-working: oklch(0.7 0.16 265);
+  --lamp-attention: oklch(0.8 0.14 70);
+  --lamp-done: oklch(0.72 0.13 155);
+  --lamp-error: oklch(0.68 0.18 22);
+  --lamp-idle: oklch(0.52 0.01 280);
+}
+
+@layer components {
+  .eyebrow {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .name {
+    font-weight: 550;
+  }
+  .brand-word {
+    font-family: var(--ff-display);
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    text-transform: none;
+  }
+  .page-title,
+  [data-slot="dialog-title"],
+  [data-slot="alert-dialog-title"],
+  [data-slot="sheet-title"],
+  .md h1,
+  .md h2 {
+    font-family: var(--ff-display);
+    font-weight: 650;
+    letter-spacing: -0.015em;
+  }
+  .page-title {
+    font-size: 1.05rem;
+  }
+  /* La firma: la hoja de trabajo flota sobre la mesa (la barra lateral). */
+  [data-slot="sidebar-wrapper"] {
+    background: var(--sidebar);
+  }
+  [data-slot="sidebar-inset"] {
+    margin: 0.5rem 0.5rem 0.5rem 0;
+    height: calc(100svh - 1rem);
+    border-radius: 1.125rem;
+    background: var(--background);
+    box-shadow: var(--sheet);
+    overflow: hidden;
+  }
+  [data-slot="sidebar-inset"] > header,
+  [data-slot="sidebar-inset"] header.border-b {
+    background: transparent;
+  }
+  /* Sin cajas dentro de cajas: las tarjetas se separan por altura, no por borde. */
+  .surface-card {
+    border-color: transparent;
+    border-radius: 1rem;
+    box-shadow: var(--elev-1), 0 0 0 1px var(--border);
+  }
+  .session-panel {
+    background: color-mix(in oklch, var(--sidebar) 45%, var(--background));
+    border-left-color: var(--border);
+  }
+  .bubble-user {
+    border-radius: 1.125rem 1.125rem 0.375rem 1.125rem;
+    background: color-mix(in oklch, var(--primary) 7%, var(--background));
+  }
+  .notice-line {
+    margin-inline: 0;
+    max-width: none;
+    padding: 0.25rem 0.625rem;
+    border-radius: 999px;
+    background: var(--muted);
+    width: fit-content;
+    font-size: var(--text-xs);
+  }
+  .turn-rule {
+    font-family: var(--ff-ui);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .composer {
+    border-color: transparent;
+    border-radius: 1.25rem;
+    box-shadow: var(--elev-1), 0 0 0 1px var(--border);
+  }
+  .composer:focus-within {
+    --tw-ring-shadow: 0 0 #0000;
+    border-color: transparent;
+    box-shadow: var(--elev-1), 0 0 0 1.5px color-mix(in oklch, var(--ring) 60%, transparent);
+  }
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-content"] {
+    border-radius: 1.25rem;
+    --tw-ring-color: transparent;
+    box-shadow: var(--elev-2), 0 0 0 1px var(--border);
+  }
+  [data-slot="dialog-overlay"],
+  [data-slot="alert-dialog-overlay"] {
+    background: oklch(0.2 0.03 280 / 22%);
+    backdrop-filter: none;
+  }
+  [data-slot="button"] {
+    border-radius: 0.625rem;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .surface-card,
+  [data-slot="button"] {
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+    transition-duration: 180ms;
+  }
+}
+
+/* Modales: separadores como etiqueta a la izquierda (no un texto centrado sobre una línea, con un
+   fondo que no coincide con el del diálogo), foco más fino y el botón de borrar sólido. */
+[data-slot="field-separator-content"] {
+  margin-left: 0;
+  padding-left: 0;
+  background: var(--popover);
+  font-family: var(--font-condensed);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: var(--label-case);
+}
+[data-slot="button"]:focus-visible {
+  --tw-ring-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 55%, transparent);
+}
+[data-slot="button"][data-variant="destructive"] {
+  background: var(--status-error);
+  color: oklch(0.99 0 0);
+}
+[data-slot="button"][data-variant="destructive"]:disabled {
+  background: color-mix(in oklch, var(--status-error) 14%, transparent);
+  color: var(--status-error);
+  opacity: 1;
+}
+/* Estudio: el diálogo es otra hoja, sin bandeja gris abajo. */
+[data-slot="dialog-footer"],
+[data-slot="alert-dialog-footer"] {
+  background: transparent;
+  border-top-color: transparent;
+}
+[data-slot="dialog-title"],
+[data-slot="alert-dialog-title"] {
+  font-size: 1.125rem;
+}
+[data-slot="field-separator"] [data-slot="separator"] {
+  opacity: 0;
 }
