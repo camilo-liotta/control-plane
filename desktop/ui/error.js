@@ -9,6 +9,8 @@ const LABELS = {
   launch: "Lanzarlo",
   "pick-node": "Elegir node…",
   "get-node": "Descargar Node",
+  "pick-claude": "Elegir Claude Code…",
+  "get-claude": "Cómo instalarlo",
   "open-anyway": "Abrir igual",
   cancel: "Cancelar",
   "set-port": "Usar este puerto",
@@ -18,7 +20,7 @@ const LABELS = {
   stop: "Detener",
 }
 // Los que no son la acción principal van con un estilo más liviano.
-const SECONDARY = new Set(["log", "cancel", "get-node", "wait", "stop"])
+const SECONDARY = new Set(["log", "cancel", "get-node", "get-claude", "wait", "stop"])
 
 function ask(action, extra = {}) {
   const q = new URLSearchParams({ t: token, ...extra })

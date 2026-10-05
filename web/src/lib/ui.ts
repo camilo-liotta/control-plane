@@ -39,7 +39,7 @@ interface UiState {
   /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde el menú de su ícono). */
   desktopUpdate: { version: string; notesUrl: string } | null
   /** La actualización de la app falló: el motivo y lo último de su log (para "Ver log"). */
-  updateFailure: { version: string; error: string; logPath: string; log: string } | null
+  updateFailure: UpdateFailure | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
   selectAccount: (id: string) => void
 }
@@ -52,6 +52,16 @@ function storedAccount(): string | null {
   } catch {
     return null
   }
+}
+
+/** Una actualización que falló, como la cuenta la app de escritorio. */
+export interface UpdateFailure {
+  version: string
+  error: string
+  logPath: string
+  log: string
+  /** La URL de acción de la app para reintentar (con el token de esta falla), si vino. */
+  retryUrl: string | null
 }
 
 export const useUi = create<UiState>((set) => ({

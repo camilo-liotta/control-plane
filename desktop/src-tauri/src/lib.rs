@@ -5,6 +5,7 @@ mod app_menu;
 pub mod bundle_copy;
 pub mod desktop_ws;
 mod drop;
+mod exit_dialog;
 pub mod health;
 pub mod launch_env;
 pub mod launcher;
@@ -214,11 +215,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|win, event| {
-            // Cerrar la ventana la esconde: el server y las sesiones siguen.
+            // Cerrar la ventana la esconde (el server y las sesiones siguen) o, sin ícono en la
+            // barra, sale.
             match event {
                 WindowEvent::CloseRequested { api, .. } if win.label() == window::MAIN => {
                     api.prevent_close();
-                    let _ = win.hide();
+                    window::close_main(win.app_handle());
                 }
                 // Con la ventana al frente, los avisos que quedaron en la lista ya se vieron.
                 WindowEvent::Focused(true) if win.label() == window::MAIN => {

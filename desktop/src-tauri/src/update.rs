@@ -15,7 +15,12 @@
 //!   vuelve a abrir: la app nueva lanza el server nuevo, que retoma las sesiones. App y server se
 //!   actualizan siempre juntos.
 //! - Si hay sesiones trabajando, antes se pregunta: esperar a que terminen, actualizar ya o no.
-//! - Nada de esto se puede disparar desde el dashboard: la web solo recibe un cartel informativo.
+//! - "Buscar ahora" (en el menú del ícono) consulta en el momento, aunque "Buscar actualizaciones"
+//!   esté apagado, y siempre dice qué encontró (también si ya estás en la última).
+//! - El dashboard no puede disparar nada de esto: la web solo recibe un cartel informativo. La
+//!   única excepción es "Reintentar" en "No se pudo actualizar". Ese botón navega a una URL de acción
+//!   con un token de un solo uso, que la app genera con cada falla y le pasa solo a su ventana.
+//!   Sirve para volver a intentar la misma versión, y nada más.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -218,6 +223,86 @@ pub fn last_line(log: &str) -> Option<String> {
         })
 }
 
+/// Lo que encontró una consulta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Checked {
+    Newer(Version),
+    /// Ya está en la última publicada (o en una más nueva).
+    UpToDate(Version),
+    Failed(String),
+    /// No se consulta (la app de desarrollo sin `CONTROL_PLANE_UPDATE_URL`).
+    Off,
+}
+
+/// Qué es lo último publicado, comparado con lo instalado.
+pub fn checked(current: Version, latest: Result<Option<Version>, String>) -> Checked {
+    match latest {
+        Err(why) => Checked::Failed(why),
+        Ok(None) => {
+            Checked::Failed("La respuesta de GitHub no trae una versión que entienda.".into())
+        }
+        Ok(latest) => match newer(current, latest) {
+            Some(v) => Checked::Newer(v),
+            None => Checked::UpToDate(current),
+        },
+    }
+}
+
+/// El diálogo de "Buscar ahora": título y texto. Para una versión nueva, además se ofrece
+/// actualizar (eso lo arma quien lo muestra).
+pub fn manual_text(c: &Checked) -> (String, String) {
+    match c {
+        Checked::Newer(v) => (
+            format!("Hay una versión nueva: v{v}"),
+            "Actualizar reinicia la app y el server; las sesiones se retoman solas. También podés hacerlo más tarde desde el menú del ícono.".into(),
+        ),
+        Checked::UpToDate(v) => (
+            "Estás en la última versión".into(),
+            format!("Tenés control-plane v{v}, la última publicada."),
+        ),
+        Checked::Failed(why) => (
+            "No se pudieron buscar actualizaciones".into(),
+            format!("{why} Probá de nuevo en un rato."),
+        ),
+        Checked::Off => (
+            "La app de desarrollo no busca actualizaciones".into(),
+            "Para probarlo, definí CONTROL_PLANE_UPDATE_URL.".into(),
+        ),
+    }
+}
+
+/// Por qué falló `curl`, en criollo (los códigos de `man curl`).
+pub fn curl_failure(code: Option<i32>) -> String {
+    match code {
+        Some(6) | Some(7) => "No hay conexión con GitHub.".into(),
+        Some(28) => "GitHub tardó demasiado en responder.".into(),
+        Some(22) => "GitHub respondió con un error (puede ser el límite de consultas).".into(),
+        Some(c) => format!("La consulta a GitHub falló (curl terminó con código {c})."),
+        None => "La consulta a GitHub se cortó.".into(),
+    }
+}
+
+/// Dónde navega "Reintentar" en la web: una URL de acción de la app con el token de esta falla.
+pub const RETRY_PATH: &str = "/__action/update-retry";
+
+pub fn retry_url(token: &str) -> String {
+    let mut url = crate::screen::local_base()
+        .join(RETRY_PATH.trim_start_matches('/'))
+        .expect("URL válida");
+    url.query_pairs_mut().append_pair("t", token);
+    url.to_string()
+}
+
+/// El token de un pedido de "Reintentar" (sin validar todavía), o `None` si no es uno.
+pub fn retry_token(url: &tauri::Url) -> Option<String> {
+    if !crate::screen::is_action_url(url) || url.path() != RETRY_PATH {
+        return None;
+    }
+    url.query_pairs()
+        .find(|(k, _)| k == "t")
+        .map(|(_, v)| v.into_owned())
+}
+
 // ---- Estado y bucle ----
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +316,8 @@ pub enum Status {
 
 enum Cmd {
     CheckNow,
+    /// "Buscar ahora": aunque esté apagado, y avisando qué encontró.
+    CheckManual,
     Update,
 }
 
@@ -240,6 +327,8 @@ pub struct Updater {
     status: Arc<Mutex<Status>>,
     /// Tocar "Actualizando cuando terminen…" cancela la espera.
     cancel_wait: Arc<AtomicBool>,
+    /// El token de "Reintentar" de la última falla (uno por falla, se gasta al usarlo).
+    retry: Arc<Mutex<Option<String>>>,
 }
 
 impl Updater {
@@ -250,7 +339,27 @@ impl Updater {
     pub fn check_now(&self) {
         let _ = self.tx.lock().unwrap().send(Cmd::CheckNow);
     }
-    /// Actualizar a la versión encontrada (desde la bandeja o el aviso; nunca desde la web).
+    /// "Buscar ahora".
+    pub fn check_manual(&self) {
+        let _ = self.tx.lock().unwrap().send(Cmd::CheckManual);
+    }
+    /// "Reintentar" en "No se pudo actualizar" de la web: solo con el token de la última falla.
+    pub fn retry(&self, token: &str) {
+        let ok = {
+            let mut slot = self.retry.lock().unwrap();
+            let ok = !token.is_empty() && slot.as_deref() == Some(token);
+            if ok {
+                *slot = None;
+            }
+            ok
+        };
+        if ok {
+            self.update();
+        } else {
+            eprintln!("Ignoro un \"Reintentar\" sin el token de la última falla.");
+        }
+    }
+    /// Actualizar a la versión encontrada (desde la bandeja, el aviso o "Reintentar").
     pub fn update(&self) {
         if matches!(self.status(), Status::Waiting(_)) {
             self.cancel_wait.store(true, Ordering::SeqCst);
@@ -264,10 +373,12 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
     let (tx, rx) = mpsc::channel();
     let status = Arc::new(Mutex::new(Status::Idle));
     let cancel_wait = Arc::new(AtomicBool::new(false));
+    let retry = Arc::new(Mutex::new(None));
     app.manage(Updater {
         tx: Mutex::new(tx),
         status: status.clone(),
         cancel_wait: cancel_wait.clone(),
+        retry: retry.clone(),
     });
     let app = app.clone();
     let _ = std::thread::Builder::new()
@@ -277,7 +388,11 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
             loop {
                 match rx.recv_timeout(wait) {
                     Ok(Cmd::Update) => {
-                        run_update(&app, &status, &cancel_wait);
+                        run_update(&app, &status, &cancel_wait, &retry);
+                        continue;
+                    }
+                    Ok(Cmd::CheckManual) => {
+                        check_manual(&app, &status);
                         continue;
                     }
                     Ok(Cmd::CheckNow) | Err(RecvTimeoutError::Timeout) => {}
@@ -294,36 +409,55 @@ fn current_version<R: Runtime>(app: &AppHandle<R>) -> Version {
     Version(v.major, v.minor, v.patch)
 }
 
-/// Una consulta. Sin red, con rate limit o con error: nada, y se reintenta en el próximo ciclo.
-fn check<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
-    let enabled = app.state::<AppState>().settings().check_updates;
-    let env_url = std::env::var("CONTROL_PLANE_UPDATE_URL").ok();
-    let Some(url) = request_url(enabled, cfg!(debug_assertions), env_url.as_deref()) else {
-        return;
-    };
-    let current = current_version(app);
+/// Lo último publicado según GitHub (o el server de prueba).
+fn fetch_latest(url: &str, current: Version) -> Result<Option<Version>, String> {
     let out = Command::new(CURL)
-        .args(curl_args(&url, &current.to_string()))
+        .args(curl_args(url, &current.to_string()))
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output();
-    let Ok(out) = out else { return };
-    if !out.status.success() || out.stdout.len() > MAX_RESPONSE {
-        return;
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar curl: {e}."))?;
+    if !out.status.success() {
+        return Err(curl_failure(out.status.code()));
     }
-    let latest = parse_latest(&String::from_utf8_lossy(&out.stdout));
-    let Some(v) = newer(current, latest) else {
+    if out.stdout.len() > MAX_RESPONSE {
+        return Err("La respuesta de GitHub es demasiado grande.".into());
+    }
+    Ok(parse_latest(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Consulta y, si hay una versión nueva, la ofrece en el menú y en el cartel de la web.
+fn lookup<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>, enabled: bool) -> Checked {
+    let env_url = std::env::var("CONTROL_PLANE_UPDATE_URL").ok();
+    let Some(url) = request_url(enabled, cfg!(debug_assertions), env_url.as_deref()) else {
+        return Checked::Off;
+    };
+    let current = current_version(app);
+    let found = checked(current, fetch_latest(&url, current));
+    if let Checked::Newer(v) = found {
+        {
+            let mut st = status.lock().unwrap();
+            if matches!(*st, Status::Updating(_) | Status::Waiting(_)) {
+                return found;
+            }
+            *st = Status::Available(v);
+        }
+        eprintln!("Hay una versión nueva: v{v} (esta es v{current}).");
+        show(app, Status::Available(v));
+    }
+    found
+}
+
+/// La consulta de cada día. Sin red, con rate limit o con error: nada, y se reintenta en el
+/// próximo ciclo.
+fn check<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
+    let enabled = app.state::<AppState>().settings().check_updates;
+    let Checked::Newer(v) = lookup(app, status, enabled) else {
         return;
     };
-    {
-        let mut st = status.lock().unwrap();
-        if matches!(*st, Status::Updating(_)) {
-            return;
-        }
-        *st = Status::Available(v);
+    if !matches!(*status.lock().unwrap(), Status::Available(_)) {
+        return;
     }
-    eprintln!("Hay una versión nueva: v{v} (esta es v{current}).");
-    show(app, Status::Available(v));
     // Un solo aviso nativo por versión.
     let state = app.state::<AppState>();
     if should_announce(state.settings().update_notified.as_deref(), v) {
@@ -338,6 +472,54 @@ fn check<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
                 ..Toast::default()
             },
         );
+    }
+}
+
+/// "Buscar ahora": consulta aunque esté apagado y lo dice en un diálogo, haya o no versión nueva.
+/// Con una nueva, el diálogo ofrece actualizar en el momento.
+fn check_manual<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    if let Status::Updating(v) | Status::Waiting(v) = *status.lock().unwrap() {
+        app.dialog()
+            .message(format!("Ya se está actualizando a v{v}."))
+            .title("Buscar actualizaciones")
+            .kind(MessageDialogKind::Info)
+            .blocking_show();
+        return;
+    }
+    let found = lookup(app, status, true);
+    let (title, message) = manual_text(&found);
+    let dialog = app.dialog().message(message).title(title);
+    match found {
+        Checked::Newer(v) => {
+            // Ya se vio: el aviso nativo de esta versión no hace falta.
+            app.state::<AppState>()
+                .update_settings(|s| s.update_notified = Some(v.to_string()));
+            let update = dialog
+                .kind(MessageDialogKind::Info)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "Actualizar ahora".into(),
+                    "Más tarde".into(),
+                ))
+                .blocking_show();
+            if update {
+                run_update_now(app);
+            }
+        }
+        Checked::Failed(_) => {
+            dialog.kind(MessageDialogKind::Warning).blocking_show();
+        }
+        Checked::UpToDate(_) | Checked::Off => {
+            dialog.kind(MessageDialogKind::Info).blocking_show();
+        }
+    }
+}
+
+/// "Actualizar ahora" desde el hilo de las actualizaciones (el diálogo corre ahí): se encola como
+/// cualquier otro pedido.
+fn run_update_now<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(u) = app.try_state::<Updater>() {
+        u.update();
     }
 }
 
@@ -369,12 +551,13 @@ fn log_tail(text: &str) -> String {
 
 /// El JS que le cuenta a la página que la actualización falló (el motivo, dónde está el log y lo
 /// último que dice). Va como JSON: el texto del log nunca se interpreta como código.
-pub fn failure_script(v: Version, why: &str, log: &Path, tail: &str) -> String {
+pub fn failure_script(v: Version, why: &str, log: &Path, tail: &str, retry: &str) -> String {
     let info = serde_json::json!({
         "version": v.to_string(),
         "error": why,
         "logPath": log.to_string_lossy(),
         "log": tail,
+        "retryUrl": retry_url(retry),
     });
     let json = info
         .to_string()
@@ -383,10 +566,20 @@ pub fn failure_script(v: Version, why: &str, log: &Path, tail: &str) -> String {
     format!("window.__cpDesktop?.updateFailed?.({json})")
 }
 
-/// Además del aviso del sistema, la página lo muestra como toast (con "Ver log").
-fn push_failure<R: Runtime>(app: &AppHandle<R>, v: Version, why: &str, log: &Path, tail: &str) {
+/// Además del aviso del sistema, la página lo muestra como toast (con "Ver log", y ahí
+/// "Reintentar" y "Copiar log").
+fn push_failure<R: Runtime>(
+    app: &AppHandle<R>,
+    v: Version,
+    why: &str,
+    log: &Path,
+    tail: &str,
+    retry: &Mutex<Option<String>>,
+) {
+    let token = crate::screen::random_hex();
+    *retry.lock().unwrap() = Some(token.clone());
     if let Some(w) = app.get_webview_window(crate::window::MAIN) {
-        let _ = w.eval(failure_script(v, why, log, tail));
+        let _ = w.eval(failure_script(v, why, log, tail, &token));
     }
 }
 
@@ -435,7 +628,12 @@ fn log_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
 
 /// Lanza el instalador desacoplado (su propia sesión: sobrevive a que la app salga) y espera.
 /// Si termina mal con la app todavía abierta, avisa con el motivo; la app vieja sigue igual.
-fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>, cancel: &AtomicBool) {
+fn run_update<R: Runtime>(
+    app: &AppHandle<R>,
+    status: &Mutex<Status>,
+    cancel: &AtomicBool,
+    retry: &Mutex<Option<String>>,
+) {
     let Status::Available(v) = *status.lock().unwrap() else {
         return;
     };
@@ -476,12 +674,12 @@ fn run_update<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>, cancel: &A
     if let Err(why) = result {
         eprintln!("No pude actualizar a v{v}: {why}");
         let text = std::fs::read_to_string(&log).unwrap_or_default();
-        push_failure(app, v, &why, &log, &log_tail(&text));
+        push_failure(app, v, &why, &log, &log_tail(&text), retry);
         crate::notify::handle(
             app,
             Toast {
                 level: "error".into(),
-                title: "No pude actualizar control-plane".into(),
+                title: "No se pudo actualizar control-plane".into(),
                 body: Some(format!("{why} Tocá para ver el log.")),
                 local: Some(Local::OpenLog(log)),
                 ..Toast::default()
@@ -712,6 +910,7 @@ mod tests {
             "No encuentro Node.",
             Path::new("/home/u/.local/share/x/logs/update.log"),
             "línea 1\n✗ No encuentro Node. \")</script>\u{2028}",
+            "abc123",
         );
         let json = js
             .strip_prefix("window.__cpDesktop?.updateFailed?.(")
@@ -723,6 +922,48 @@ mod tests {
         assert_eq!(v["error"], "No encuentro Node.");
         assert_eq!(v["logPath"], "/home/u/.local/share/x/logs/update.log");
         assert!(v["log"].as_str().unwrap().ends_with("</script>\u{2028}"));
+        let retry = tauri::Url::parse(v["retryUrl"].as_str().unwrap()).unwrap();
+        assert_eq!(retry_token(&retry).as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn retry_only_from_the_app_url() {
+        let ok = tauri::Url::parse(&retry_url("t0k")).unwrap();
+        assert_eq!(retry_token(&ok).as_deref(), Some("t0k"));
+        for bad in [
+            "http://127.0.0.1:4700/__action/update-retry?t=t0k",
+            "tauri://localhost/__action/retry?t=t0k",
+            "tauri://localhost/__action/update-retry/x?t=t0k",
+        ] {
+            assert_eq!(retry_token(&tauri::Url::parse(bad).unwrap()), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn manual_check_always_says_something() {
+        let cur = Version(0, 5, 0);
+        assert_eq!(
+            checked(cur, Ok(Some(Version(0, 6, 0)))),
+            Checked::Newer(Version(0, 6, 0))
+        );
+        assert_eq!(checked(cur, Ok(Some(cur))), Checked::UpToDate(cur));
+        assert_eq!(
+            checked(cur, Ok(Some(Version(0, 4, 9)))),
+            Checked::UpToDate(cur)
+        );
+        assert!(matches!(checked(cur, Ok(None)), Checked::Failed(_)));
+        assert_eq!(checked(cur, Err("x".into())), Checked::Failed("x".into()));
+        assert_eq!(
+            manual_text(&Checked::UpToDate(cur)).0,
+            "Estás en la última versión"
+        );
+        assert!(manual_text(&Checked::UpToDate(cur)).1.contains("v0.5.0"));
+        assert_eq!(
+            manual_text(&Checked::Newer(Version(0, 6, 0))).0,
+            "Hay una versión nueva: v0.6.0"
+        );
+        assert_eq!(curl_failure(Some(6)), "No hay conexión con GitHub.");
+        assert!(curl_failure(Some(35)).contains("código 35"));
     }
 
     #[test]

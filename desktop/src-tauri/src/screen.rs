@@ -49,6 +49,9 @@ pub enum Action {
     PickNode,
     /// Abrir nodejs.org en el navegador.
     GetNode,
+    PickClaude,
+    /// Abrir cómo instalar Claude Code en el navegador.
+    GetClaude,
     /// Usar un server viejo sin health igual.
     OpenAnyway,
     Cancel,
@@ -70,6 +73,8 @@ impl Action {
             Self::Launch => "launch",
             Self::PickNode => "pick-node",
             Self::GetNode => "get-node",
+            Self::PickClaude => "pick-claude",
+            Self::GetClaude => "get-claude",
             Self::OpenAnyway => "open-anyway",
             Self::Cancel => "cancel",
             Self::SetPort => "set-port",
@@ -86,6 +91,8 @@ impl Action {
             Self::Launch,
             Self::PickNode,
             Self::GetNode,
+            Self::PickClaude,
+            Self::GetClaude,
             Self::OpenAnyway,
             Self::Cancel,
             Self::SetPort,
@@ -159,6 +166,9 @@ impl Tone {
         }
     }
 }
+
+/// Qué hacer si falta Claude Code (la pantalla de antes de arrancar y la del server que no lo encontró).
+const CLAUDE_HELP: &str = "Sin Claude Code el server no arranca. Si ya lo tenés, elegí su ejecutable; si no, instalalo (en una terminal: curl -fsSL https://claude.ai/install.sh | bash) y tocá Reintentar.";
 
 /// Lo que muestra la pantalla local.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,13 +319,9 @@ impl Screen {
     }
 
     pub fn no_claude(err: &str) -> Self {
-        Self::new(
-            Tone::Error,
-            "No encontré Claude Code",
-            "Sin el binario de Claude Code el server no arranca.",
-        )
-        .detail(err)
-        .actions(&[Action::Retry])
+        Self::new(Tone::Error, "No encontré Claude Code", CLAUDE_HELP)
+            .detail(err)
+            .actions(&[Action::PickClaude, Action::Retry, Action::GetClaude])
     }
 
     pub fn other_program(port: u16, what: &str) -> Self {
@@ -363,10 +369,15 @@ impl Screen {
         Self::new(
             Tone::Error,
             "El server no encontró Claude Code",
-            "Instalalo o definí CLAUDE_BIN en tu shell y reintentá.",
+            CLAUDE_HELP,
         )
         .log(log)
-        .actions(&[Action::Retry, Action::ShowLog])
+        .actions(&[
+            Action::PickClaude,
+            Action::Retry,
+            Action::GetClaude,
+            Action::ShowLog,
+        ])
     }
 
     pub fn locked(port: u16, pid: u32, log: Vec<String>) -> Self {
@@ -510,6 +521,8 @@ mod tests {
             "launch",
             "pick-node",
             "get-node",
+            "pick-claude",
+            "get-claude",
             "open-anyway",
             "cancel",
             "set-port",

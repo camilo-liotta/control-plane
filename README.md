@@ -131,7 +131,9 @@ Si el server se cae:
 - **El que lanzó la app**: avisa siempre. Lo relanza solo si había andado más de un minuto, y como mucho 3 veces cada 5 minutos.
 - **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzarlo** y **Reintentar**. La app no lo relanza sola.
 
-**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde el menú del ícono.
+**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde el menú del ícono. La primera vez, un aviso dice dónde quedó la app y cómo volver a abrirla.
+
+- **Si no se ve el ícono** (GNOME sin la extensión AppIndicator): no habría cómo volver a la ventana ni cómo salir, así que cerrar la ventana es **Salir**, con lo que diga **Al salir**. Si pregunta, el diálogo lo explica. La app se da cuenta por D-Bus: no hay `StatusNotifierWatcher`, o no hay quien muestre los íconos.
 
 ### Salir
 
@@ -139,7 +141,7 @@ Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--qu
 
 - Si el server no lo lanzó la app, sale sin tocarlo.
 - Si lo lanzó ella, hace lo que diga **Al salir ▸** en el menú del ícono:
-  - **Preguntar** (el default): "Hay N sesiones abiertas: detener el server las cierra (se reanudan después)", con **Detener y salir**, **Dejarlo corriendo** y **Cancelar**.
+  - **Preguntar** (el default): separa las sesiones que están trabajando, que cortan su turno a la mitad, de las quietas. Por ejemplo: "Hay 2 sesiones trabajando y 1 quieta". Los botones: **Detener y salir**, **Dejarlo corriendo** y **Cancelar**. Si tildás **Recordar mi elección**, tu respuesta queda en **Al salir** (el mismo ajuste del menú) y no vuelve a preguntar. Para que pregunte de nuevo, elegí **Al salir ▸ Preguntar**.
   - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en el menú del ícono.
   - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
 - `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia).
@@ -151,8 +153,8 @@ Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--qu
 
 El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú (Mac). Acá le decimos **el menú del ícono**, para no confundirlo con la **Bandeja** de la web.
 
-- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va cuántas cosas te necesitan. Cuando algo te necesita, el ícono lleva un punto.
-- El menú: **Abrir**, **Abrir la Bandeja** (la de la web), **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
+- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". "Te necesitan" es el mismo número que el de la **Bandeja** de la web: las sesiones que te necesitan, las propuestas listas y las tareas que frenan a una sesión. Los dos salen de la misma función (`server/src/shared/inbox-count.ts`). Tocar la línea abre la Bandeja. En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va el mismo número. Cuando algo te necesita, el ícono lleva un punto.
+- El menú: la línea de estado, **Abrir**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Buscar ahora**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
 - En GNOME hace falta la extensión AppIndicator, que Ubuntu trae activada.
 
 ### Avisos y sonidos
@@ -165,7 +167,8 @@ El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú 
 ### Actualizaciones
 
 - **Cómo busca**: al abrir y después una vez por día, la app le pregunta a GitHub cuál es el último release publicado de este repo (no mira borradores ni prereleases) y lo compara con su versión. Usa el `curl` del sistema, no manda ningún dato tuyo (solo un User-Agent con la versión) y, si no hay red o GitHub no contesta, no dice nada y prueba al día siguiente.
-- **Se apaga** en el menú del ícono → **Buscar actualizaciones**. Apagado, no consulta nada.
+- **Se apaga** en el menú del ícono → **Buscar actualizaciones**. Apagado, no consulta nada por su cuenta.
+- **Buscar ahora** (en el mismo menú) consulta en el momento, aunque esté apagado, y siempre responde con un diálogo: "Estás en la última versión", "Hay una versión nueva: vX.Y.Z" (con **Actualizar ahora** y **Más tarde**) o "No se pudieron buscar actualizaciones", con el motivo.
 - **Cuando hay una versión nueva**:
   - En el menú del ícono aparece **Actualizar a vX.Y.Z**.
   - Llega un solo aviso del sistema por versión, y tocarlo actualiza.
@@ -179,7 +182,7 @@ El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú 
   - Un AppImage se reemplaza en su lugar, sin contraseña.
   - En la Mac se reemplaza la `.app` que tenés abierta.
   - El instalador corre con el mismo entorno que el server: el PATH de tu shell de login y el `node` que encontró la app (en `CONTROL_PLANE_NODE`). Así encuentra el Node de nvm, Volta o Homebrew aunque hayas abierto la app desde el lanzador. Sin eso, busca en las mismas rutas de respaldo que la app.
-- Si algo falla, llega un aviso del sistema con el motivo, aunque tengas la ventana al frente (tocalo para ver el log, `update.log` en la carpeta de logs). En el dashboard aparece además un toast con **Ver log**, que muestra lo último del log. La app vieja sigue andando. Mientras actualiza, el menú del ícono dice **Actualizando…**.
+- Si algo falla, llega un aviso del sistema con el motivo, aunque tengas la ventana al frente (tocalo para ver el log, `update.log` en la carpeta de logs). En el dashboard aparece además un toast con **Ver log**, que muestra lo último del log, con **Copiar log** y **Reintentar**. La app vieja sigue andando. **Reintentar** es lo único de las actualizaciones que se dispara desde la página. Navega a una URL de acción de la app con un token de un solo uso, que la app genera con cada falla y le pasa solo a su propia ventana: vuelve a intentar esa versión y nada más. Mientras actualiza, el menú del ícono dice **Actualizando…**.
 
 #### Un server más viejo que la app
 
@@ -195,11 +198,11 @@ Si la app adopta un server de una versión anterior (el de una app vieja que se 
 Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
 
 - **Falta Node 24**: no hay `node` en el PATH de tu shell de login, o es viejo. El detalle dice qué versión encontró y dónde buscó. **Elegir node…** (queda guardado en los ajustes), **Reintentar** o **Descargar Node** (nodejs.org).
-- **No encontré Claude Code**: instalalo o definí `CLAUDE_BIN` en tu shell, y **Reintentar**.
+- **No encontré Claude Code**: **Elegir Claude Code…** (queda guardado en los ajustes, y el server y las sesiones usan ese), **Reintentar** o **Cómo instalarlo** (la guía de instalación). El texto trae el comando para instalarlo desde una terminal.
 - **El puerto X lo usa otro programa**: lo que escucha ahí no es un control-plane. La app no lo toca: elegí otro puerto en la misma pantalla (**Usar este puerto**, queda guardado) o cerrá ese programa y **Reintentar**.
 - **Hay un control-plane viejo en este puerto**: un server de antes de la app, sin `/api/health`. Reinicialo o actualizalo; si no, **Abrir igual**.
 - **Ya hay un server usando esta carpeta de datos**: otro control-plane usa la misma `CONTROL_PLANE_HOME` en otro puerto. **Usar ese**, o detenelo y **Reintentar**.
-- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**.
+- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**. Si fue por Claude Code, además, **Elegir Claude Code…** y **Cómo instalarlo**.
 - **El server tarda más de lo normal**: a los 30 s todavía no responde. **Esperar**, **Ver log** o **Detener**.
 - **El server se sigue cayendo**: ya lo relanzó 3 veces en 5 minutos. Mirá el log antes de reintentar.
 - **El server no responde**: está vivo pero no contesta, y la app no puede verificar que sea el suyo, así que no lo toca. Si no se recupera, detenelo a mano y **Reintentar**.
@@ -217,6 +220,8 @@ Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
   - `notifications`: los avisos del sistema (lo mismo que **Avisos**).
   - `checkUpdates`: buscar versiones nuevas (lo mismo que **Buscar actualizaciones**). `updateNotified`: la última de la que ya avisó.
   - `nodePath`: el `node` a usar. Lo guarda **Elegir node…**.
+  - `claudePath`: el `claude` a usar (le gana a `CLAUDE_BIN`). Lo guarda **Elegir Claude Code…**.
+  - `closeHintShown`: ya mostró el aviso de la primera vez que cerrás la ventana.
   - `importEnv`: variables extra que se traen de tu shell (ver abajo).
 
 ### El entorno de tu shell

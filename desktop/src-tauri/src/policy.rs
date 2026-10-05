@@ -21,7 +21,7 @@ pub enum Busy {
 /// no puede lanzar un segundo server ni soltar el que está corriendo.
 pub fn action_allowed(busy: Busy, action: Action) -> bool {
     match action {
-        Action::ShowLog | Action::GetNode => true,
+        Action::ShowLog | Action::GetNode | Action::GetClaude => true,
         Action::Wait | Action::Stop => busy == Busy::Starting,
         _ => busy == Busy::Idle,
     }
@@ -204,15 +204,93 @@ pub fn server_age(app: &str, server: &str, kind: ServerKind, working: u32) -> Se
     }
 }
 
-/// El texto del diálogo de salida, con las sesiones que corta detener el server.
-pub fn exit_question(running: Option<u32>) -> String {
-    match running {
-        Some(0) => "No hay sesiones abiertas. ¿Detenés el server o lo dejás corriendo?".into(),
-        Some(1) => "Hay 1 sesión abierta: detener el server la cierra. Queda detenida, con su conversación, y vuelve a arrancar cuando le escribas.".into(),
-        Some(n) => format!(
-            "Hay {n} sesiones abiertas: detener el server las cierra. Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas."
+/// El texto del diálogo de salida: cuántas sesiones corta detener el server, separando las que
+/// están trabajando (cortan su turno) de las quietas. `running` son las que tienen el proceso
+/// vivo; `working`, las que están trabajando o arrancando (son parte de `running`).
+pub fn exit_question(running: Option<u32>, working: Option<u32>) -> String {
+    const AFTER_ONE: &str =
+        "Queda detenida, con su conversación, y vuelve a arrancar cuando le escribas.";
+    const AFTER_MANY: &str =
+        "Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas.";
+    let Some(running) = running else {
+        return format!("Detener el server cierra las sesiones abiertas. {AFTER_MANY}");
+    };
+    let working = working.unwrap_or(0).min(running);
+    let quiet = running - working;
+    let sessions = |n: u32| {
+        if n == 1 {
+            "1 sesión".to_string()
+        } else {
+            format!("{n} sesiones")
+        }
+    };
+    let after = if running == 1 { AFTER_ONE } else { AFTER_MANY };
+    match (working, quiet) {
+        (0, 0) => "No hay sesiones abiertas. ¿Detenés el server o lo dejás corriendo?".into(),
+        (0, q) => format!(
+            "Hay {} abierta{}, ninguna trabajando: detener el server {}. {after}",
+            sessions(q),
+            if q == 1 { "" } else { "s" },
+            if q == 1 { "la cierra" } else { "las cierra" },
         ),
-        None => "Detener el server cierra las sesiones abiertas. Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas.".into(),
+        (w, q) => {
+            let quiet = match q {
+                0 => String::new(),
+                1 => " y 1 quieta".into(),
+                q => format!(" y {q} quietas"),
+            };
+            let cut = if w == 1 {
+                "la que trabaja corta su turno a la mitad"
+            } else {
+                "las que trabajan cortan su turno a la mitad"
+            };
+            format!(
+                "Hay {} trabajando{quiet}. Detener el server {}: {cut}. {after} Si lo dejás corriendo, {} trabajando aunque cierres la app.",
+                sessions(w),
+                if running == 1 { "la cierra" } else { "las cierra" },
+                if w == 1 { "sigue" } else { "siguen" },
+            )
+        }
+    }
+}
+
+/// "Recordar mi elección": la respuesta pasa a ser el ajuste "Al salir" (el mismo del menú del
+/// ícono). Cancelar no se recuerda.
+pub fn remembered(answer: Answer) -> Option<OnExit> {
+    match answer {
+        Answer::Stop => Some(OnExit::Stop),
+        Answer::Leave => Some(OnExit::Leave),
+        Answer::Cancel => None,
+    }
+}
+
+/// Qué hace cerrar la ventana.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Close {
+    /// Esconderla: la app sigue en el ícono de la barra.
+    Hide,
+    /// No hay ícono visible (GNOME sin extensión de bandeja): sin él no habría cómo volver a la
+    /// ventana ni cómo salir, así que cerrar la ventana es salir (con la decisión de "Al salir").
+    Quit,
+}
+
+pub fn close_action(tray_visible: bool) -> Close {
+    if tray_visible {
+        Close::Hide
+    } else {
+        Close::Quit
+    }
+}
+
+/// Va antes de la pregunta de salida cuando se cerró la ventana sin un ícono visible.
+pub const NO_TRAY_NOTE: &str = "No se ve el ícono de control-plane en la barra de arriba (en GNOME hace falta una extensión, como AppIndicator): cerrar la ventana cierra la app.";
+
+/// El aviso de la primera vez que se esconde la ventana: dónde quedó la app y cómo volver.
+pub fn close_hint(mac: bool) -> &'static str {
+    if mac {
+        "La ventana se cerró, pero el server y las sesiones siguen. Para volver, tocá el ícono de control-plane en la barra de menú → Abrir, o el ícono del Dock. Para salir del todo: el mismo ícono → Salir."
+    } else {
+        "La ventana se cerró, pero el server y las sesiones siguen. Para volver, tocá el ícono de control-plane en la barra de arriba → Abrir, o abrila de nuevo desde las aplicaciones. Para salir del todo: el mismo ícono → Salir."
     }
 }
 
@@ -370,7 +448,7 @@ mod tests {
     fn only_idle_accepts_actions_that_launch() {
         use Action::*;
         for a in [
-            Retry, Launch, PickNode, OpenAnyway, Cancel, SetPort, UseThat,
+            Retry, Launch, PickNode, PickClaude, OpenAnyway, Cancel, SetPort, UseThat,
         ] {
             assert!(action_allowed(Busy::Idle, a), "{a:?}");
             assert!(!action_allowed(Busy::Starting, a), "{a:?}");
@@ -382,14 +460,50 @@ mod tests {
         }
         for busy in [Busy::Idle, Busy::Starting, Busy::Running] {
             assert!(action_allowed(busy, ShowLog) && action_allowed(busy, GetNode));
+            assert!(action_allowed(busy, GetClaude));
         }
     }
 
     #[test]
-    fn exit_question_counts_sessions() {
-        assert!(exit_question(Some(3)).starts_with("Hay 3 sesiones abiertas"));
-        assert!(exit_question(Some(1)).starts_with("Hay 1 sesión abierta"));
-        assert!(exit_question(Some(0)).starts_with("No hay sesiones"));
-        assert!(exit_question(None).starts_with("Detener el server"));
+    fn exit_question_separates_working_from_quiet() {
+        assert_eq!(
+            exit_question(Some(0), Some(0)),
+            "No hay sesiones abiertas. ¿Detenés el server o lo dejás corriendo?"
+        );
+        assert_eq!(
+            exit_question(Some(3), Some(0)),
+            "Hay 3 sesiones abiertas, ninguna trabajando: detener el server las cierra. Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas."
+        );
+        assert_eq!(
+            exit_question(Some(1), None),
+            "Hay 1 sesión abierta, ninguna trabajando: detener el server la cierra. Queda detenida, con su conversación, y vuelve a arrancar cuando le escribas."
+        );
+        assert_eq!(
+            exit_question(Some(3), Some(2)),
+            "Hay 2 sesiones trabajando y 1 quieta. Detener el server las cierra: las que trabajan cortan su turno a la mitad. Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas. Si lo dejás corriendo, siguen trabajando aunque cierres la app."
+        );
+        assert_eq!(
+            exit_question(Some(1), Some(1)),
+            "Hay 1 sesión trabajando. Detener el server la cierra: la que trabaja corta su turno a la mitad. Queda detenida, con su conversación, y vuelve a arrancar cuando le escribas. Si lo dejás corriendo, sigue trabajando aunque cierres la app."
+        );
+        assert!(exit_question(Some(5), Some(1)).starts_with("Hay 1 sesión trabajando y 4 quietas."));
+        // Un resumen desparejo (más trabajando que abiertas) no da números negativos.
+        assert!(exit_question(Some(1), Some(3)).starts_with("Hay 1 sesión trabajando."));
+        assert!(exit_question(None, Some(2)).starts_with("Detener el server cierra"));
+    }
+
+    #[test]
+    fn remember_sets_on_exit_and_cancel_is_not_remembered() {
+        assert_eq!(remembered(Answer::Stop), Some(OnExit::Stop));
+        assert_eq!(remembered(Answer::Leave), Some(OnExit::Leave));
+        assert_eq!(remembered(Answer::Cancel), None);
+    }
+
+    #[test]
+    fn closing_without_a_visible_icon_quits() {
+        assert_eq!(close_action(true), Close::Hide);
+        assert_eq!(close_action(false), Close::Quit);
+        assert!(close_hint(true).contains("barra de menú"));
+        assert!(close_hint(false).contains("barra de arriba"));
     }
 }
