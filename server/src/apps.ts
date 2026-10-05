@@ -402,7 +402,7 @@ export class Apps {
     let spawnError: string | null = null
     child.once("error", (err) => {
       const code = (err as NodeJS.ErrnoException).code
-      spawnError = code === "ENOENT" ? `No encontré \`${args[0]}\` en el PATH` : errorMessage(err)
+      spawnError = code === "ENOENT" ? `\`${args[0]}\` no está en el PATH` : errorMessage(err)
       log.write(`--- ${spawnError} ---\n`)
       if (child.pid === undefined) finish(null, null)
     })

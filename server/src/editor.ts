@@ -22,7 +22,7 @@ export const launchDetached: Launch = (bin, args, cwd) =>
     const child = spawn(bin, args, { cwd, env: childEnv(), detached: true, stdio: "ignore" })
     child.once("error", (err) => {
       const code = (err as NodeJS.ErrnoException).code
-      reject(new Error(code === "ENOENT" || code === "EACCES" ? `No encontré \`${bin}\`. Elegí tu editor en Ajustes` : err.message))
+      reject(new Error(code === "ENOENT" || code === "EACCES" ? `No se encontró \`${bin}\`. Elegí tu editor en Ajustes` : err.message))
     })
     child.once("spawn", () => {
       child.unref()

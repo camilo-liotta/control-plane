@@ -45,7 +45,7 @@ export async function deleteProject(
     const stuck = await sessions.stopAll(ids, opts.stopTimeoutMs ?? STOP_TIMEOUT_MS)
     if (stuck.length) {
       const names = list.filter((s) => stuck.includes(s.id)).map((s) => s.name)
-      throw new Error(`No pude detener ${names.join(", ")}: no borré nada. Detenelas y probá de nuevo.`)
+      throw new Error(`No se pudieron detener ${names.join(", ")} y no se borró nada. Detenelas y probá de nuevo.`)
     }
     for (const sid of ids) deps.compaction.forget(sid)
     await deps.apps?.removeProject(id)

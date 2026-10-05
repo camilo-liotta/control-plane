@@ -90,7 +90,7 @@ describe("tareas para vos", () => {
     tasks.update(task.id, { status: "dismissed", note: "ya tengo acceso con dwh_reader" }, beta)
     assert.equal(sent.length, 0)
     assert.equal(db.getTask(task.id)!.closedBy, beta.id)
-    assert.ok(events.some((e) => e.id === beta.id && e.event.kind === "notice" && e.event.text.includes("Descartó")))
+    assert.ok(events.some((e) => e.id === beta.id && e.event.kind === "notice" && e.event.text.includes("porque no hace falta")))
     assert.throws(() => tasks.update(task.id, { status: "done" }, { ...beta, projectId: "otro" }), /otro proyecto/)
   })
 

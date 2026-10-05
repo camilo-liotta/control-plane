@@ -67,7 +67,7 @@ describe("un mensaje que no entra porque el contexto está lleno", () => {
       await until(() => texts().some((t) => t.startsWith("respuesta a: ## TAREA 1")), "la respuesta al reenvío")
       assert.ok(notices().some((t) => t.startsWith("El contexto se llenó")), "avisa qué pasó")
       assert.ok(events().some((e) => e.kind === "compact"), "compactó")
-      assert.ok(notices().includes("Reenvié el mensaje que no había entrado."))
+      assert.ok(notices().includes("Mensaje reenviado: antes no había entrado."))
       // En el chat el mensaje aparece una vez: el reenvío se ve como aviso.
       assert.equal(events().filter((e) => e.kind === "user").length, 1)
       const ends = events().filter((e) => e.kind === "turn_end")

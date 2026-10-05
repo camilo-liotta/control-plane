@@ -116,7 +116,7 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
 
     // La que trabajaba recibe el pedido de seguir (en el chat se ve de dónde vino).
     await until(() => texts(working.id).some((e) => e.kind === "text" && e.text.includes("control-plane se reinició")), "le llegó el mensaje")
-    assert.ok(texts(working.id).some((e) => e.kind === "notice" && e.text.includes("le pedí que revise lo que quedó a medias")))
+    assert.ok(texts(working.id).some((e) => e.kind === "notice" && e.text.includes("se le pidió que revise lo que quedó a medias")))
     assert.ok(CONTINUE_PROMPT.includes("seguí con lo que estabas haciendo"))
     // La que esperaba vuelve sin mensaje.
     assert.equal(texts(idle.id).filter((e) => e.kind === "user").length, 1, "solo el 'hola' de antes")
@@ -139,7 +139,7 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
     return { saved, result }
   }
   /** Cuántas veces le pidió que siga (en el chat se ve el aviso en lugar del mensaje). */
-  const continued = (id: string) => texts(id).filter((e) => e.kind === "notice" && e.text.includes("le pedí que revise lo que quedó a medias")).length
+  const continued = (id: string) => texts(id).filter((e) => e.kind === "notice" && e.text.includes("se le pidió que revise lo que quedó a medias")).length
 
   it("retoma varias a la vez: las que trabajaban (con la orquestadora) siguen y las que esperaban vuelven", async () => {
     const orch = create("ORQ", "orchestrator")
@@ -290,9 +290,9 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
     assert.ok(sessions.isRunning(fine.id))
     // Se ve cuál y por qué: en el log, en el toast y en su chat.
     assert.match(resumeSummary(result)!, /^Retomé 1 sesión; 1 no arrancó: ROTA \(.*ENOENT.*\)\.$/)
-    const toast = hub.sent.find((m) => m.type === "toast" && m.title === "No pude retomar ROTA después de reiniciar")
+    const toast = hub.sent.find((m) => m.type === "toast" && m.title === "No se pudo retomar ROTA después de reiniciar")
     assert.ok(toast && toast.type === "toast" && /ENOENT/.test(toast.body ?? ""))
-    assert.ok(texts(broken.id).some((e) => e.kind === "notice" && e.level === "error" && e.text.includes("no pude retomar esta sesión")))
+    assert.ok(texts(broken.id).some((e) => e.kind === "notice" && e.level === "error" && e.text.includes("no se pudo retomar esta sesión")))
   })
 
   it("la cola de la orquestadora sigue igual y no recibe dos veces el mismo lote", async () => {

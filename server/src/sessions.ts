@@ -104,7 +104,7 @@ interface TurnInput {
 }
 
 /** Aviso que reemplaza al mensaje reenviado en el chat (el original ya se ve más arriba). */
-const RESENT_NOTICE = "Reenvié el mensaje que no había entrado."
+const RESENT_NOTICE = "Mensaje reenviado: antes no había entrado."
 
 interface TurnCounter {
   startedAt: number
@@ -489,7 +489,7 @@ export class SessionManager extends EventEmitter<{
         this.addEvent(rec.id, {
           kind: "notice",
           level: "info",
-          text: `Recuperé la conversación después de un /clear: seguía apuntando a ${rec.claudeSessionId}, que no existe, y ahora usa ${found}.`,
+          text: `Conversación recuperada después de un /clear: la sesión apuntaba a ${rec.claudeSessionId}, que no existe, y ahora usa ${found}.`,
         })
         out.push({ id: rec.id, name: rec.name, from: rec.claudeSessionId, to: found })
       } catch {
@@ -1226,7 +1226,7 @@ export class SessionManager extends EventEmitter<{
   /** Reenvía lo que no entró en el último turno (después de compactar). */
   async resendUnsent(id: string): Promise<number> {
     const inputs = this.unsent(id)
-    if (!inputs.length) throw new Error("No encontré un mensaje que no haya salido")
+    if (!inputs.length) throw new Error("No hay ningún mensaje sin enviar")
     await this.start(id)
     const rt = this.runtimes.get(id)
     if (!rt) throw new Error("La sesión no está corriendo")

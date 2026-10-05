@@ -114,7 +114,7 @@ describe("apps levantables", () => {
     const a = await apps.create("p1", { name: "nada", command: "no-existe-este-binario --x" }, null)
     await apps.start(a.id).catch(() => {})
     await until(() => status(a.id) === "crashed")
-    assert.match(apps.list("p1")[0]!.state.error ?? "", /No encontré `no-existe-este-binario`/)
+    assert.match(apps.list("p1")[0]!.state.error ?? "", /`no-existe-este-binario` no está en el PATH/)
   })
 
   it("levantada afuera: se muestra así, no se lanza de nuevo ni se baja", async () => {
@@ -186,7 +186,7 @@ describe("apps levantables", () => {
     const fakeApps = { runningIds: () => [], resume: async () => [{ name: "backend", error: "No existe la carpeta web" }] }
     const out = await new Restart({ home: dir, version: "2", sessions, hub, apps: fakeApps, clientWaitMs: 0 }).resumePending()
     assert.deepEqual(out.apps?.failed, [{ name: "backend", error: "No existe la carpeta web" }])
-    assert.ok(messages.some((m) => m.type === "toast" && m.title.includes("No pude volver a levantar backend")))
+    assert.ok(messages.some((m) => m.type === "toast" && m.title.includes("No se pudo volver a levantar backend")))
   })
 
   it("la carpeta: adentro del proyecto o de sus worktrees, nada de .. ni symlinks que salgan", async () => {
