@@ -10,10 +10,34 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-heading: var(--font-sans);
-  --font-condensed: "IBM Plex Sans Condensed", "IBM Plex Sans Variable", ui-sans-serif, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* Roles tipográficos: cada dirección cambia las familias en :root, no los componentes. */
+  --font-sans: var(--ff-ui);
+  --font-heading: var(--ff-display);
+  --font-condensed: var(--ff-label);
+  --font-mono: var(--ff-mono);
+  --font-name: var(--ff-name);
+
+  /* Escala de tamaños (px): 11 · 12 · 13 · 14 · 16 · 20 · 24. Reemplaza los text-[0.xxrem] sueltos. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.05rem;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.2rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.3rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+
+  --shadow-raised: var(--elev-1);
+  --shadow-overlay: var(--elev-2);
+
+  --color-status-working-lamp: var(--lamp-working);
+  --color-status-attention-lamp: var(--lamp-attention);
+  --color-status-done-lamp: var(--lamp-done);
+  --color-status-error-lamp: var(--lamp-error);
+  --color-status-idle-lamp: var(--lamp-idle);
 
   --color-status-working: var(--status-working);
   --color-status-attention: var(--status-attention);
@@ -66,6 +90,16 @@
 
 /* Grafito frío: neutros con un toque azul. El color queda reservado para los estados. */
 :root {
+  --ff-ui: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --ff-display: var(--ff-ui);
+  --ff-label: "IBM Plex Sans Condensed", "IBM Plex Sans Variable", ui-sans-serif, sans-serif;
+  --ff-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --ff-name: var(--ff-mono);
+  --name-tracking: 0;
+  --label-tracking: 0.08em;
+  --label-case: uppercase;
+  --elev-1: 0 1px 2px oklch(0.2 0.02 262 / 6%);
+  --elev-2: 0 12px 32px -8px oklch(0.2 0.02 262 / 22%), 0 2px 6px oklch(0.2 0.02 262 / 8%);
   --background: oklch(0.985 0.003 260);
   --foreground: oklch(0.21 0.014 262);
   --card: oklch(1 0 0);
@@ -107,6 +141,12 @@
   --diff-add: oklch(0.58 0.14 152);
   --diff-del: oklch(0.577 0.215 25);
   --claude: oklch(0.62 0.15 42);
+  /* Las luces (lamparitas, puntos) pueden ser más vivas que el texto de estado. */
+  --lamp-working: var(--status-working);
+  --lamp-attention: var(--status-attention);
+  --lamp-done: var(--status-done);
+  --lamp-error: var(--status-error);
+  --lamp-idle: var(--status-idle);
 }
 
 .dark {
@@ -171,7 +211,33 @@
 @layer components {
   /* Etiquetas cortas (estados, contadores, encabezados de sección). */
   .eyebrow {
-    @apply font-condensed text-[0.7rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase;
+    @apply font-condensed text-2xs font-semibold text-muted-foreground;
+    letter-spacing: var(--label-tracking);
+    text-transform: var(--label-case);
+  }
+  /* Nombres de sesión (barra lateral, encabezado, tarjetas). */
+  .name {
+    font-family: var(--font-name);
+    letter-spacing: var(--name-tracking);
+  }
+  .page-title {
+    @apply font-heading;
+  }
+  /* Superficies: una tarjeta del contenido y lo que flota (diálogos, menús). */
+  .surface-card {
+    @apply rounded-xl border bg-card shadow-raised;
+  }
+  .bubble-user {
+    @apply rounded-2xl rounded-br-md bg-secondary;
+  }
+  .notice-line {
+    @apply mx-auto flex max-w-[90%] items-start gap-2 rounded-lg px-3 py-1.5 text-xs;
+  }
+  .turn-rule {
+    @apply font-mono;
+  }
+  .brand-word {
+    @apply font-condensed text-[0.82rem] font-semibold tracking-[0.14em] uppercase;
   }
 
   /* Luz de estado: late mientras la sesión trabaja. */

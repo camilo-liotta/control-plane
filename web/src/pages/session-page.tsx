@@ -247,7 +247,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
         leading={isOrch ? <Compass className="size-4.5 shrink-0" /> : <SessionLamp session={session} className="size-2.5" />}
         title={
           <span className="flex items-center gap-2">
-            <span className="font-mono">{isOrch ? "Orquestadora" : session.name}</span>
+            <span className="name">{isOrch ? "Orquestadora" : session.name}</span>
             <StatusPill session={session} />
           </span>
         }

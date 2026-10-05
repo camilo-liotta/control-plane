@@ -42,12 +42,13 @@ export const toneText: Record<Tone, string> = {
   idle: "text-status-idle",
 }
 
+/** Las luces: pueden ser más vivas que el texto (ver --lamp-* en index.css). */
 export const toneBg: Record<Tone, string> = {
-  working: "bg-status-working",
-  attention: "bg-status-attention",
-  done: "bg-status-done",
-  error: "bg-status-error",
-  idle: "bg-status-idle",
+  working: "bg-status-working-lamp",
+  attention: "bg-status-attention-lamp",
+  done: "bg-status-done-lamp",
+  error: "bg-status-error-lamp",
+  idle: "bg-status-idle-lamp",
 }
 
 export const toneSoft: Record<Tone, string> = {

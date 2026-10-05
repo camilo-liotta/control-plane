@@ -76,7 +76,7 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
       {event.text && (
         <div
           className={cn(
-            "max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap wrap-anywhere",
+            "bubble-user max-w-[85%] px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap wrap-anywhere",
             event.origin === "draft" && "border border-status-working/25 bg-status-working/8"
           )}
         >
@@ -88,7 +88,7 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
           <SubagentSpecList specs={event.subagents} />
         </div>
       )}
-      <span className="font-mono text-[0.65rem] text-muted-foreground/70">{clock(ev.ts)}</span>
+      <span className="font-mono text-2xs text-muted-foreground/70 tabular-nums">{clock(ev.ts)}</span>
     </div>
   )
 }
@@ -135,7 +135,7 @@ function Notice({ ev }: { ev: Ev<"notice"> }) {
   return (
     <div
       className={cn(
-        "mx-auto flex max-w-[90%] items-start gap-2 rounded-lg px-3 py-1.5 text-xs",
+        "notice-line",
         level === "error" && "bg-status-error/10 text-status-error",
         level === "warn" && "text-status-attention",
         level === "info" && "text-muted-foreground"
@@ -153,7 +153,7 @@ function TurnEnd({ ev }: { ev: Ev<"turn_end"> }) {
   return (
     <div className="flex items-center gap-3 py-1 text-[0.7rem] text-muted-foreground/80">
       <div className="h-px flex-1 bg-border" />
-      <span className="font-mono">
+      <span className="turn-rule">
         {aborted ? "interrumpido" : ok ? "turno terminado" : "error"} · {duration(durationMs)}
         {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
         {costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
