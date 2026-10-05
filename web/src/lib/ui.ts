@@ -22,12 +22,20 @@ interface UiState {
   compactFor: string | null
   /** Sesión cuyo panel de herramientas (MCP, skills, plugins) está abierto. */
   toolsFor: string | null
+  /** Sesión que se está renombrando (el diálogo es uno solo, para el menú y la paleta). */
+  renameFor: string | null
+  /** Sesión que se está por archivar (se pide confirmar). */
+  archiveFor: string | null
+  /** La ayuda de los atajos de teclado. */
+  shortcuts: boolean
+  /** Cada vez que cambia, el chat abierto baja hasta lo último (el atajo y la paleta). */
+  jumpToEnd: number
   /**
    * Lo que la página de destino tiene que mostrar al llegar desde un aviso: las propuestas listas
    * en el chat de la orquestadora (`id`: la sesión) o las tareas del tablero (`id`: el proyecto).
    * La página lo limpia cuando lo muestra.
    */
-  reveal: { kind: "proposals" | "tasks" | "environments"; id: string; at: number } | null
+  reveal: { kind: "proposals" | "tasks" | "environments" | "archived"; id: string; at: number } | null
   /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde el menú de su ícono). */
   desktopUpdate: { version: string; notesUrl: string } | null
   /** La actualización de la app falló: el motivo y lo último de su log (para "Ver log"). */
@@ -61,6 +69,10 @@ export const useUi = create<UiState>((set) => ({
   settingsForAccount: null,
   compactFor: null,
   toolsFor: null,
+  renameFor: null,
+  archiveFor: null,
+  shortcuts: false,
+  jumpToEnd: 0,
   reveal: null,
   desktopUpdate: null,
   updateFailure: null,

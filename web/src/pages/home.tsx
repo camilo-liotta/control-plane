@@ -1,4 +1,4 @@
-import { FolderGit2, Plus } from "lucide-react"
+import { ArrowRight, FolderGit2, History, Plus } from "lucide-react"
 import { Link } from "wouter"
 
 import { Mark } from "@/components/app-sidebar"
@@ -10,6 +10,47 @@ import { Kbd } from "@/components/ui/kbd"
 import { shortPath, tokens, totals, usd } from "@/lib/format"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
+import { isMac, lastRoute } from "@/lib/nav"
+import { restorableRoute } from "@shared/navigation"
+
+/**
+ * En la web, el inicio no te lleva solo a la última pantalla (podés querer la grilla): te la ofrece.
+ * En la app de escritorio ya volviste ahí al abrir (ver RememberRoute).
+ */
+function ContinueWhereYouWere() {
+  const sessions = useStore((s) => s.sessions)
+  const projects = useStore((s) => s.projects)
+  const alive = {
+    projects: new Set(Object.values(projects).filter((p) => !p.archivedAt).map((p) => p.id)),
+    sessions: new Set(Object.values(sessions).filter((x) => !x.archivedAt).map((x) => x.id)),
+  }
+  const route = restorableRoute(lastRoute.get(), alive)
+  if (!route) return null
+  const m = /^\/p\/([^/]+)(?:\/s\/([^/]+)|\/(tools))?/.exec(route)
+  const project = m ? projects[m[1]!] : undefined
+  const session = m?.[2] ? sessions[m[2]] : undefined
+  const what = session
+    ? `${session.kind === "orchestrator" ? "la orquestadora" : session.name} en ${project?.name}`
+    : m?.[3]
+      ? `las herramientas de ${project?.name}`
+      : project
+        ? `el tablero de ${project.name}`
+        : "Herramientas"
+  return (
+    <div className="mx-auto max-w-6xl px-6 pt-6">
+      <Link
+        href={route}
+        className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 text-sm shadow-xs transition-colors hover:border-foreground/20"
+      >
+        <History className="size-4 text-muted-foreground" />
+        <span>
+          Seguir donde estabas: <span className="font-medium">{what}</span>
+        </span>
+        <ArrowRight className="ml-auto size-4 text-muted-foreground" />
+      </Link>
+    </div>
+  )
+}
 
 export function Home() {
   const projects = useProjects()
@@ -49,7 +90,7 @@ export function Home() {
         title="Proyectos"
         subtitle={
           <>
-            <Kbd>Ctrl</Kbd> <Kbd>K</Kbd> para saltar a cualquier sesión
+            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd> <Kbd>K</Kbd> para saltar a cualquier sesión · <Kbd>?</Kbd> para ver los atajos
           </>
         }
         actions={
@@ -60,6 +101,7 @@ export function Home() {
         }
       />
       <div className="flex-1 overflow-y-auto">
+        <ContinueWhereYouWere />
         <div className="mx-auto grid max-w-6xl gap-3 px-6 py-6 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((p) => {
             const { orchestrator, workers } = projectSessions(sessions, p.id)

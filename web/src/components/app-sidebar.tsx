@@ -1,5 +1,5 @@
-import { Bell, BellOff, BellRing, Blocks, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Sun } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Bell, BellOff, BellRing, Blocks, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Search, Sun } from "lucide-react"
+import { useEffect } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
@@ -37,7 +37,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { UsageMeter } from "@/components/usage-meter"
 import { inDesktop, requestNotifications, setOsNotificationsEnabled, systemNotification, trayIconPlace, useNotifications } from "@/lib/notify"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
+import { isMac, useNav } from "@/lib/nav"
 import { useUi } from "@/lib/ui"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
 
 /** Marca: la orquestadora (un punto adentro de un aro) y sus 6 sesiones, en la versión simplificada del ícono (se lee a 18–24 px). */
@@ -98,7 +100,9 @@ function ProjectMenu({ project }: { project: Project }) {
   const sessions = useStore((s) => s.sessions)
   const drafts = useStore((s) => s.drafts)
   const setUi = useUi((s) => s.set)
-  const [open, setOpen] = useState(true)
+  // Plegado o no, se recuerda entre recargas.
+  const open = !useNav((s) => s.folded[project.id])
+  const setOpen = (v: boolean) => useNav.getState().setFolded(project.id, !v)
   const { orchestrator, workers } = projectSessions(sessions, project.id)
   const ready = openDrafts(drafts, project.id).filter((d) => d.state === "ready").length
   const base = `/p/${project.id}`
@@ -349,6 +353,18 @@ export function AppSidebar() {
           </Tooltip>
         </div>
         <AccountSwitcher />
+        <button
+          type="button"
+          onClick={() => setUi({ palette: true })}
+          className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Search className="size-4" />
+          Buscar…
+          <KbdGroup className="ml-auto">
+            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+            <Kbd>K</Kbd>
+          </KbdGroup>
+        </button>
         <button
           type="button"
           onClick={() => setUi({ inbox: true })}

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
+import { interruptSession } from "@/lib/session-actions"
 import { freshFiles, registerDropTarget } from "@/lib/desktop-drop"
 import { clipboardImages, formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
 import { inDesktop } from "@/lib/notify"
@@ -230,9 +231,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   const interrupt = async () => {
     setStopping(true)
     try {
-      await api.interrupt(session.id)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      await interruptSession(session.id)
     } finally {
       setStopping(false)
     }

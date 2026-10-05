@@ -1,7 +1,7 @@
 import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, Square, SquareTerminal } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Link, useLocation } from "wouter"
+import { Link } from "wouter"
 
 import { Composer } from "@/components/composer"
 import { ContextMeter } from "@/components/context-meter"
@@ -13,18 +13,7 @@ import { FileRefScope } from "@/components/file-ref"
 import { TerminalTargetProvider } from "@/components/take-to-terminal"
 import { TerminalPanel } from "@/components/terminal-panel"
 import { Timeline } from "@/components/timeline/timeline"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,66 +22,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { api } from "@/lib/api"
 import { tokens, usd } from "@/lib/format"
 import { usePanelSections } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
+import { scrollSpot } from "@shared/navigation"
+import { scrollMemory, useNav } from "@/lib/nav"
+import { archiveSession, openCompaction, openSessionTools, renameSession, startSession, stopSession } from "@/lib/session-actions"
 import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
 
-function RenameDialog({ sessionId, name, open, onOpenChange }: { sessionId: string; name: string; open: boolean; onOpenChange: (v: boolean) => void }) {
-  const [value, setValue] = useState(name)
-  const [saving, setSaving] = useState(false)
-  useEffect(() => {
-    if (open) setValue(name)
-  }, [open, name])
-  const save = async () => {
-    setSaving(true)
-    try {
-      await api.updateSession(sessionId, { name: value })
-      onOpenChange(false)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Renombrar sesión</DialogTitle>
-        </DialogHeader>
-        <Input
-          value={value}
-          onChange={(e) => setValue(e.target.value.toUpperCase())}
-          className="font-mono"
-          autoFocus
-          onKeyDown={(e) => e.key === "Enter" && void save()}
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button onClick={save} disabled={!value.trim() || saving}>
-            {saving && <Spinner />}
-            Renombrar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export function SessionPage({ projectId, sessionId }: { projectId: string; sessionId: string }) {
-  const [, navigate] = useLocation()
   const session = useStore((s) => s.sessions[sessionId])
   const project = useStore((s) => s.projects[projectId])
   const events = useStore((s) => s.events[sessionId])
@@ -104,11 +49,14 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const scroller = useRef<HTMLDivElement>(null)
   const column = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
-  const stick = useRef(true)
+  // Al volver a una sesión, aparecés donde la dejaste: pegado al final o en la misma posición.
+  const remembered = useRef(scrollMemory.get(sessionId))
+  const stick = useRef(remembered.current?.atEnd ?? true)
   const [showJump, setShowJump] = useState(false)
-  const [renaming, setRenaming] = useState(false)
-  const [archiving, setArchiving] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
+  // Arriba de los return tempranos: la cantidad de hooks no puede cambiar entre renders.
+  const action = useAction()
+  const jumpSignal = useUi((s) => s.jumpToEnd)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const setUi = useUi((s) => s.set)
   const pendingReveal = useUi((s) => s.reveal)
@@ -130,16 +78,25 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   }, [sessionId, toggleTerminal])
 
   useEffect(() => {
-    stick.current = true
     focus(sessionId)
+    useNav.getState().visit(sessionId)
     void loadEvents(sessionId).catch((err: Error) => toast.error(err.message))
     return () => focus(null)
   }, [sessionId, focus, loadEvents])
 
-  // Pegado al final mientras llegan mensajes, salvo que hayas scrolleado hacia arriba.
+  // Pegado al final mientras llegan mensajes, salvo que hayas scrolleado hacia arriba. La primera
+  // vez que hay mensajes, si la dejaste leyendo más arriba, vuelve a esa posición.
   useLayoutEffect(() => {
     const el = scroller.current
-    if (!el) return
+    if (!el || !events) return
+    const spot = remembered.current
+    if (spot && !spot.atEnd) {
+      remembered.current = undefined
+      el.scrollTop = spot.top
+      setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight > 140)
+      return
+    }
+    remembered.current = undefined
     if (stick.current) el.scrollTop = el.scrollHeight
     else setShowJump(true)
   }, [events, partial?.text])
@@ -188,18 +145,27 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 140
-    stick.current = near
-    if (near) setShowJump(false)
+    const spot = scrollSpot(el)
+    stick.current = spot.atEnd
+    scrollMemory.set(sessionId, spot)
+    if (spot.atEnd) setShowJump(false)
   }
 
   const jump = () => {
     const el = scroller.current
     if (!el) return
     stick.current = true
+    scrollMemory.set(sessionId, { atEnd: true })
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     setShowJump(false)
   }
+
+  // "Ir a lo último" desde el atajo o la paleta.
+  const firstJump = useRef(jumpSignal)
+  useEffect(() => {
+    if (jumpSignal !== firstJump.current) jump()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpSignal])
 
   const older = async () => {
     const el = scroller.current
@@ -216,8 +182,6 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     }
   }
 
-  // Antes de los return tempranos: la cantidad de hooks no puede cambiar entre renders.
-  const action = useAction()
   if (!session || !project) {
     return (
       <Empty className="h-full">
@@ -231,13 +195,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
 
   const isOrch = session.kind === "orchestrator"
   const running = session.status !== "stopped" && session.status !== "error"
-  const act = (key: string, fn: () => Promise<unknown>, ok?: string) =>
-    action.run(key, () =>
-      fn().then(
-        () => ok && toast.success(ok),
-        (err: Error) => toast.error(err.message)
-      )
-    )
+  const act = (key: string, fn: () => Promise<unknown>) => action.run(key, fn)
 
   const panel = <SessionPanel session={session} project={project} />
   const terminalTarget = { sessionId: session.id, projectId: project.id }
@@ -268,12 +226,12 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             <ContextMeter session={session} />
             <ModelPicker session={session} />
             {running ? (
-              <Button size="sm" variant="ghost" disabled={action.busy("run")} onClick={() => act("run", () => api.stop(session.id), "Sesión detenida")}>
+              <Button size="sm" variant="ghost" disabled={action.busy("run")} onClick={() => act("run", () => stopSession(session.id))}>
                 <Square />
                 <span className="hidden sm:inline">Detener</span>
               </Button>
             ) : (
-              <Button size="sm" variant="outline" disabled={action.busy("run")} onClick={() => act("run", () => api.start(session.id), "Sesión reanudada")}>
+              <Button size="sm" variant="outline" disabled={action.busy("run")} onClick={() => act("run", () => startSession(session.id))}>
                 <Play />
                 Reanudar
               </Button>
@@ -291,22 +249,22 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto min-w-56">
-                <DropdownMenuItem onClick={() => setRenaming(true)}>
+                <DropdownMenuItem onClick={() => renameSession(session.id)}>
                   <Pencil />
                   Renombrar
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setUi({ compactFor: session.id })}>
+                <DropdownMenuItem onClick={() => openCompaction(session.id)}>
                   <Layers />
                   Compactar eligiendo qué queda…
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setUi({ toolsFor: session.id })}>
+                <DropdownMenuItem onClick={() => openSessionTools(session.id)}>
                   <Blocks />
                   Herramientas de la sesión
                 </DropdownMenuItem>
                 {!isOrch && (
                   <>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => setArchiving(true)}>
+                    <DropdownMenuItem variant="destructive" onClick={() => archiveSession(session.id)}>
                       <Archive />
                       Archivar sesión
                     </DropdownMenuItem>
@@ -382,31 +340,6 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
         </SheetContent>
       </Sheet>
 
-      <RenameDialog sessionId={session.id} name={session.name} open={renaming} onOpenChange={setRenaming} />
-      <AlertDialog open={archiving} onOpenChange={setArchiving}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Archivar {session.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Se detiene la sesión y sale del tablero. La conversación queda guardada en Claude Code y la podés retomar
-              desde una terminal con claude --resume.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() =>
-                act("archive", async () => {
-                  await api.archiveSession(session.id)
-                  navigate(`/p/${project.id}`)
-                }, "Sesión archivada")
-              }
-            >
-              Archivar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }

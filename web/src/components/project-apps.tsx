@@ -41,6 +41,12 @@ const isUp = (a: AppView) => a.state.status === "up" || a.state.status === "exte
 const isOurs = (a: AppView) => a.state.status === "starting" || a.state.status === "up" || a.state.status === "unresponsive"
 const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err))
 
+/** Levantar, bajar o reiniciar una app: lo usan su fila y la paleta de comandos. */
+export function appAction(id: string, what: "start" | "stop" | "restart") {
+  return (what === "start" ? api.startApp(id) : what === "stop" ? api.stopApp(id) : api.restartApp(id)).then(() => {}, fail)
+}
+export { isOurs as appIsRunning }
+
 /**
  * Las apps del proyecto: se piden una vez al entrar y, solo con la sección abierta, cada 20 s con
  * `watch` (así el server mira la salud de las que no corren solo mientras alguien las mira). Plegada,
@@ -74,9 +80,7 @@ function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLo
   const run = (what: "start" | "stop" | "restart") => async () => {
     setBusy(what)
     try {
-      await (what === "start" ? api.startApp(app.id) : what === "stop" ? api.stopApp(app.id) : api.restartApp(app.id))
-    } catch (err) {
-      fail(err)
+      await appAction(app.id, what)
     } finally {
       setBusy(null)
     }
