@@ -1,8 +1,9 @@
 import * as React from "react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 
 function AlertDialog({
   ...props
@@ -34,7 +35,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 z-50 bg-[oklch(0.2_0.03_280/0.22)] duration-150 dark:bg-[oklch(0_0_0/0.45)] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -42,13 +43,20 @@ function AlertDialogOverlay({
   )
 }
 
+/** Mientras la acción espera, el diálogo no se cierra (ni con Esc ni con Cancelar). */
+const PendingContext = React.createContext<{ pending: boolean; setPending: (v: boolean) => void }>({ pending: false, setPending: () => {} })
+
 function AlertDialogContent({
   className,
   size = "default",
+  onEscapeKeyDown,
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
 }) {
+  const [pending, setPending] = React.useState(false)
+  const value = React.useMemo(() => ({ pending, setPending }), [pending])
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
@@ -56,11 +64,17 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-3xl bg-popover p-5 text-popover-foreground shadow-overlay duration-150 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
+        onEscapeKeyDown={(e) => {
+          if (pending) e.preventDefault()
+          onEscapeKeyDown?.(e)
+        }}
         {...props}
-      />
+      >
+        <PendingContext.Provider value={value}>{children}</PendingContext.Provider>
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   )
 }
@@ -89,7 +103,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        "flex flex-col-reverse gap-2 pt-1 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
         className
       )}
       {...props}
@@ -105,7 +119,7 @@ function AlertDialogMedia({
     <div
       data-slot="alert-dialog-media"
       className={cn(
-        "mb-2 inline-flex size-10 items-center justify-center rounded-md bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
+        "mb-2 inline-flex size-10 items-center justify-center rounded-xl bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
         className
       )}
       {...props}
@@ -121,7 +135,7 @@ function AlertDialogTitle({
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
       className={cn(
-        "font-heading text-base font-medium sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
+        "page-title text-base leading-tight sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
         className
       )}
       {...props}
@@ -145,20 +159,56 @@ function AlertDialogDescription({
   )
 }
 
+/**
+ * El botón que confirma. Con `onAction` asíncrono, el diálogo muestra un spinner, no se cierra hasta
+ * que termina y, si falla, queda abierto (el error lo muestra quien llama, con un toast).
+ */
 function AlertDialogAction({
   className,
   variant = "default",
   size = "default",
+  onAction,
+  onClick,
+  disabled,
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Action> &
-  Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+  Pick<React.ComponentProps<typeof Button>, "variant" | "size"> & {
+    onAction?: () => unknown
+  }) {
+  const { pending, setPending } = React.useContext(PendingContext)
+  const ref = React.useRef<HTMLButtonElement>(null)
+  const done = React.useRef(false)
   return (
     <Button variant={variant} size={size} asChild>
       <AlertDialogPrimitive.Action
+        ref={ref}
         data-slot="alert-dialog-action"
         className={cn(className)}
+        disabled={disabled || pending}
+        aria-busy={pending || undefined}
+        onClick={(e) => {
+          onClick?.(e)
+          if (!onAction || done.current || e.defaultPrevented) return
+          e.preventDefault()
+          setPending(true)
+          Promise.resolve()
+            .then(onAction)
+            .then(
+              () => {
+                done.current = true
+                setPending(false)
+                ref.current?.click()
+                done.current = false
+              },
+              () => setPending(false)
+            )
+        }}
         {...props}
-      />
+      >
+        {pending && <Spinner />}
+        {children}
+      </AlertDialogPrimitive.Action>
     </Button>
   )
 }
@@ -167,14 +217,17 @@ function AlertDialogCancel({
   className,
   variant = "outline",
   size = "default",
+  disabled,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Cancel> &
   Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+  const { pending } = React.useContext(PendingContext)
   return (
     <Button variant={variant} size={size} asChild>
       <AlertDialogPrimitive.Cancel
         data-slot="alert-dialog-cancel"
         className={cn(className)}
+        disabled={disabled || pending}
         {...props}
       />
     </Button>

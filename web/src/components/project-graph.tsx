@@ -43,6 +43,7 @@ interface GLink extends SimulationLinkDatum<GNode> {
 const TONE_FILL: Record<Tone, string> = {
   working: "fill-status-working",
   attention: "fill-status-attention",
+  pending: "fill-status-pending",
   done: "fill-status-done",
   error: "fill-status-error",
   idle: "fill-status-idle",
@@ -50,6 +51,7 @@ const TONE_FILL: Record<Tone, string> = {
 const TONE_STROKE: Record<Tone, string> = {
   working: "stroke-status-working",
   attention: "stroke-status-attention",
+  pending: "stroke-status-pending",
   done: "stroke-status-done",
   error: "stroke-status-error",
   idle: "stroke-status-idle",

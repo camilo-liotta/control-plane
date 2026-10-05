@@ -100,7 +100,7 @@ export function OrchestratorCard({
   }
 
   return (
-    <section className="rounded-2xl border bg-card p-5 shadow-xs">
+    <section className="surface-card p-5">
       <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
@@ -141,6 +141,7 @@ function FieldDescription({ className, ...props }: React.ComponentProps<"p">) {
   )
 }
 
+/** Separa grupos de un formulario: una etiqueta a la izquierda y una línea que sigue. */
 function FieldSeparator({
   children,
   className,
@@ -152,21 +153,15 @@ function FieldSeparator({
     <div
       data-slot="field-separator"
       data-content={!!children}
-      className={cn(
-        "relative -my-2 h-5 text-sm group-data-[variant=outline]/field-group:-mb-2",
-        className
-      )}
+      className={cn("flex items-center gap-3 pt-2 group-data-[variant=outline]/field-group:-mb-2", className)}
       {...props}
     >
-      <Separator className="absolute inset-0 top-1/2" />
       {children && (
-        <span
-          className="relative mx-auto block w-fit bg-background px-2 text-muted-foreground"
-          data-slot="field-separator-content"
-        >
+        <span className="eyebrow shrink-0" data-slot="field-separator-content">
           {children}
         </span>
       )}
+      <Separator className="flex-1" />
     </div>
   )
 }

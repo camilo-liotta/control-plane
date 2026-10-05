@@ -77,18 +77,11 @@ function SessionLink({ session, active }: { session: Session; active: boolean })
           ) : (
             <SessionLamp session={session} className="ml-0.5" />
           )}
-          <span className={cn("truncate font-mono text-[0.78rem]", unread > 0 && "font-semibold")}>
+          <span className={cn("name truncate text-ui", unread > 0 && "font-semibold")}>
             {session.kind === "orchestrator" ? "Orquestadora" : session.name}
           </span>
           {session.kind === "orchestrator" && <SessionLamp session={session} className="ml-auto" />}
-          {session.kind === "worker" && (attention || unread > 0) && (
-            <span
-              className={cn(
-                "ml-auto size-1.5 rounded-full",
-                attention ? "bg-status-attention" : "bg-foreground/60"
-              )}
-            />
-          )}
+          {session.kind === "worker" && !attention && unread > 0 && <span className="ml-auto size-1.5 rounded-full bg-foreground/60" />}
         </Link>
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
@@ -335,12 +328,12 @@ export function AppSidebar() {
   }, [location, isMobile, setOpenMobile])
 
   return (
-    <Sidebar>
+    <Sidebar variant="inset">
       <SidebarHeader className="gap-3">
         <div className="flex items-center gap-2 px-2 pt-1.5">
           <Link href="/" className="flex items-center gap-2">
             <Mark className="size-4.5" />
-            <span className="font-condensed text-[0.82rem] font-semibold tracking-[0.14em] uppercase">control-plane</span>
+            <span className="brand-word">control-plane</span>
           </Link>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -368,12 +361,12 @@ export function AppSidebar() {
         <button
           type="button"
           onClick={() => setUi({ inbox: true })}
-          className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-2 text-sm font-medium shadow-xs transition-colors hover:bg-muted"
+          className="inbox-button flex items-center gap-2 rounded-lg border bg-background px-2.5 py-2 text-sm font-medium shadow-raised transition-colors hover:bg-muted"
         >
           <Inbox className="size-4" />
           Bandeja
           {inbox > 0 && (
-            <span className="ml-auto rounded-full bg-status-attention px-1.5 font-mono text-[0.7rem] text-background">{inbox}</span>
+            <span className="ml-auto rounded-full bg-status-attention-lamp px-1.5 font-mono text-2xs font-semibold text-background tabular-nums">{inbox}</span>
           )}
         </button>
         <Link
@@ -435,7 +428,7 @@ export function AppSidebar() {
         {(version || claudeVersion) && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <p className="-mt-2 truncate px-2 font-mono text-[0.68rem] text-muted-foreground">
+              <p className="-mt-2 truncate px-2 font-mono text-2xs text-muted-foreground">
                 {version && <span className="text-foreground/80">control-plane v{version}</span>}
                 {version && claudeVersion && " · "}
                 {claudeVersion && <span>claude {claudeVersion}</span>}

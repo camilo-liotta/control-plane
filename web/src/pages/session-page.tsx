@@ -203,10 +203,10 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        leading={isOrch ? <Compass className="size-4.5 shrink-0" /> : <SessionLamp session={session} className="size-2.5" />}
+        leading={isOrch ? <Compass className="size-4.5 shrink-0" /> : <SessionLamp session={session} quiet className="size-2.5" />}
         title={
           <span className="flex items-center gap-2">
-            <span className="font-mono">{isOrch ? "Orquestadora" : session.name}</span>
+            <span className="name">{isOrch ? "Orquestadora" : session.name}</span>
             <StatusPill session={session} />
           </span>
         }
@@ -326,7 +326,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             <Composer session={session} dropTarget={column} />
             <TerminalPanel session={session} />
           </div>
-          <aside className="hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
+          <aside className="session-panel hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
           </div>
         </FileRefScope>
       </TerminalTargetProvider>

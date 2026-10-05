@@ -290,7 +290,7 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
   const projectSessionsList = useMemo(() => Object.values(sessions).filter((s) => s.projectId === project.id && !s.archivedAt), [sessions, project.id])
   const t = data?.tokens
   return (
-    <section className="rounded-xl border bg-card">
+    <section className="surface-card">
       <Repos data={data} projectId={project.id} />
       <ProjectScheduled sessions={projectSessionsList} />
       {/* Apps (TRAY) */}
