@@ -324,7 +324,7 @@ export function AppSidebar() {
   }, [location, isMobile, setOpenMobile])
 
   return (
-    <Sidebar>
+    <Sidebar variant="inset">
       <SidebarHeader className="gap-3">
         <div className="flex items-center gap-2 px-2 pt-1.5">
           <Link href="/" className="flex items-center gap-2">

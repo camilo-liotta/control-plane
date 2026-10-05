@@ -34,6 +34,7 @@ const TEXT: Record<Tone, string> = {
   working: "text-status-working",
   done: "text-status-done",
   attention: "text-status-attention",
+  pending: "text-status-pending",
   error: "text-status-error",
 }
 
