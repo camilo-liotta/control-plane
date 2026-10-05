@@ -109,6 +109,10 @@ Todo transiciona en **180 ms** con `--ease-standard`. Es el valor por defecto de
 - **`FieldSeparator`**: separa grupos de un formulario, con la etiqueta a la izquierda.
 - **`Sheet`, `DropdownMenu`, `Popover`, `HoverCard`, `Tooltip`, toasts (sonner)**: ya traen `shadow-overlay` y sus radios.
 
+## Acciones que pegan al server
+
+Para un botón que pega al server, usá `useAction` (`lib/use-action.ts`, de TRAY): deshabilita el botón mientras espera y evita el doble pedido. Combinalo con `ConfirmAction` o con `undoable()` según si la acción se puede deshacer.
+
 ## `cn`
 
 Importalo de `@/lib/utils`, no de `"cn"`: el de utils conoce los tokens propios (`text-2xs`, `text-ui` y `shadow-raised/overlay/sheet`). Con el otro, `text-ui` se toma por un color y se come el color del texto.
