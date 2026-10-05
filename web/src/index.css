@@ -274,12 +274,14 @@
   .turn-rule {
     @apply font-sans text-2xs;
   }
+  /* El composer casi siempre tiene el foco: no lleva el anillo azul (ese queda para el foco de
+     teclado en botones y controles). Con foco, un borde neutro de 1 px. */
   .composer {
-    @apply rounded-[1.25rem] border-transparent shadow-raised;
+    @apply rounded-3xl border-transparent shadow-raised;
   }
   .composer:focus-within {
     --tw-ring-shadow: 0 0 #0000;
-    box-shadow: var(--elev-1), 0 0 0 1.5px color-mix(in oklch, var(--ring) 60%, transparent);
+    box-shadow: var(--elev-1), 0 0 0 1px var(--input);
   }
   .session-panel {
     background: color-mix(in oklch, var(--sidebar) 45%, var(--background));
