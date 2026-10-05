@@ -20,6 +20,7 @@ import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
+import { useAction } from "@/lib/use-action"
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err))
@@ -78,6 +79,7 @@ function IconButton({ label, onClick, children, disabled }: { label: string; onC
 /** Borrar con confirmación en el mismo botón: el primer clic pregunta, el segundo borra. */
 function DeleteButton({ label, onConfirm }: { label: string; onConfirm: () => Promise<unknown> }) {
   const [asking, setAsking] = useState(false)
+  const action = useAction()
   useEffect(() => {
     if (!asking) return
     const t = setTimeout(() => setAsking(false), 4000)
@@ -85,7 +87,7 @@ function DeleteButton({ label, onConfirm }: { label: string; onConfirm: () => Pr
   }, [asking])
   if (asking)
     return (
-      <Button size="xs" variant="destructive" onClick={() => void onConfirm().catch(fail)}>
+      <Button size="xs" variant="destructive" disabled={action.busy()} onClick={() => void action.run("delete", () => onConfirm().catch(fail))}>
         ¿Borrar?
       </Button>
     )

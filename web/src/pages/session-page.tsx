@@ -44,6 +44,7 @@ import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
 import { useUi } from "@/lib/ui"
+import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
 
 function RenameDialog({ sessionId, name, open, onOpenChange }: { sessionId: string; name: string; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -228,10 +229,13 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
 
   const isOrch = session.kind === "orchestrator"
   const running = session.status !== "stopped" && session.status !== "error"
-  const act = (fn: () => Promise<unknown>, ok?: string) =>
-    fn().then(
-      () => ok && toast.success(ok),
-      (err: Error) => toast.error(err.message)
+  const action = useAction()
+  const act = (key: string, fn: () => Promise<unknown>, ok?: string) =>
+    action.run(key, () =>
+      fn().then(
+        () => ok && toast.success(ok),
+        (err: Error) => toast.error(err.message)
+      )
     )
 
   const panel = <SessionPanel session={session} project={project} />
@@ -263,12 +267,12 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             <ContextMeter session={session} />
             <ModelPicker session={session} />
             {running ? (
-              <Button size="sm" variant="ghost" onClick={() => act(() => api.stop(session.id), "Sesión detenida")}>
+              <Button size="sm" variant="ghost" disabled={action.busy("run")} onClick={() => act("run", () => api.stop(session.id), "Sesión detenida")}>
                 <Square />
                 <span className="hidden sm:inline">Detener</span>
               </Button>
             ) : (
-              <Button size="sm" variant="outline" onClick={() => act(() => api.start(session.id), "Sesión reanudada")}>
+              <Button size="sm" variant="outline" disabled={action.busy("run")} onClick={() => act("run", () => api.start(session.id), "Sesión reanudada")}>
                 <Play />
                 Reanudar
               </Button>
@@ -391,7 +395,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
-                act(async () => {
+                act("archive", async () => {
                   await api.archiveSession(session.id)
                   navigate(`/p/${project.id}`)
                 }, "Sesión archivada")

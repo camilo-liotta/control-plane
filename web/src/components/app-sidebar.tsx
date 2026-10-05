@@ -1,5 +1,5 @@
 import { Bell, BellOff, BellRing, Blocks, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Sun } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
@@ -30,6 +30,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -323,6 +324,11 @@ export function AppSidebar() {
   const setUi = useUi((s) => s.set)
   const inbox = useInboxCount()
   const [location] = useLocation()
+  // En móvil la barra es un panel encima de la página: se cierra al ir a otro lado.
+  const { isMobile, setOpenMobile } = useSidebar()
+  useEffect(() => {
+    if (isMobile) setOpenMobile(false)
+  }, [location, isMobile, setOpenMobile])
 
   return (
     <Sidebar>

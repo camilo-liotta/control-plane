@@ -163,7 +163,7 @@ pub fn update_question(working: u32) -> String {
     } else {
         format!("{working} sesiones están trabajando")
     };
-    format!("{n}. Actualizar reinicia el server: las sesiones se retoman solas cuando vuelve, pero lo que estén haciendo se corta y siguen desde ahí.")
+    format!("{n}. Actualizar reinicia el server: al volver, las sesiones se retoman solas y las que estaban trabajando siguen desde donde se cortó su turno.")
 }
 
 /// Cuánto se espera, con "Esperar a que terminen", antes de actualizar igual.
@@ -208,11 +208,11 @@ pub fn server_age(app: &str, server: &str, kind: ServerKind, working: u32) -> Se
 pub fn exit_question(running: Option<u32>) -> String {
     match running {
         Some(0) => "No hay sesiones abiertas. ¿Detenés el server o lo dejás corriendo?".into(),
-        Some(1) => "Hay 1 sesión abierta: detener el server la cierra (se reanuda después).".into(),
+        Some(1) => "Hay 1 sesión abierta: detener el server la cierra. Queda detenida, con su conversación, y vuelve a arrancar cuando le escribas.".into(),
         Some(n) => format!(
-            "Hay {n} sesiones abiertas: detener el server las cierra (se reanudan después)."
+            "Hay {n} sesiones abiertas: detener el server las cierra. Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas."
         ),
-        None => "Detener el server cierra las sesiones abiertas (se reanudan después).".into(),
+        None => "Detener el server cierra las sesiones abiertas. Quedan detenidas, con su conversación, y vuelven a arrancar cuando les escribas.".into(),
     }
 }
 

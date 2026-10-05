@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { useStore } from "@/lib/store"
+import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
 
 const when = (ms: number) =>
@@ -307,7 +308,7 @@ function TaskRow({
               <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota para la sesión (opcional)" className="h-8 min-w-48 flex-1 text-sm" />
               {askers > 0 && (
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} />
+                  <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} aria-label="Avisarle a la sesión" />
                   Avisarle a la sesión
                 </label>
               )}
@@ -432,7 +433,8 @@ function TaskCliLogin({ task }: { task: UserTask }) {
 }
 
 function ClosedRow({ task }: { task: UserTask }) {
-  const reopen = () => api.updateTask(task.id, { status: "open" }).catch((err: Error) => toast.error(err.message))
+  const action = useAction()
+  const reopen = () => action.run("reopen", () => api.updateTask(task.id, { status: "open" }).catch((err: Error) => toast.error(err.message)))
   return (
     <li className="flex items-start gap-3 px-4 py-2 text-sm">
       {task.status === "done" ? <Check className="mt-0.5 size-4 shrink-0 text-status-done" /> : <X className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
@@ -444,7 +446,7 @@ function ClosedRow({ task }: { task: UserTask }) {
           {task.note ? ` · ${task.note}` : ""}
         </span>
       </span>
-      <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => void reopen()}>
+      <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={action.busy()} onClick={() => void reopen()}>
         <Undo2 />
         Reabrir
       </Button>
@@ -476,8 +478,8 @@ function NewTask({ projectId, onDone }: { projectId: string; onDone: () => void 
         void save()
       }}
     >
-      <Input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Qué hay que hacer" autoFocus />
-      <Textarea id="task-steps" value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={"Un paso por línea"} className="min-h-20 text-sm" />
+      <Input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Qué hay que hacer" aria-label="Título de la tarea" autoFocus />
+      <Textarea id="task-steps" value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={"Un paso por línea"} aria-label="Pasos de la tarea, uno por línea" className="min-h-20 text-sm" />
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={onDone}>
           Cancelar

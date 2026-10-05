@@ -32,8 +32,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title = "Paleta de comandos",
+  description = "Buscá un comando",
   children,
   className,
   showCloseButton = false,
@@ -57,7 +57,7 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
-        {children}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   )

@@ -395,7 +395,7 @@ impl Screen {
         Self::new(
             Tone::Loading,
             "El server se cerró: lo vuelvo a lanzar…",
-            "Las sesiones que estaban trabajando se reanudan cuando les escribas.",
+            "Las sesiones quedaron detenidas, con su conversación: vuelven a arrancar cuando les escribas.",
         )
         .actions(&[Action::ShowLog])
     }
@@ -440,7 +440,7 @@ impl Screen {
 /// Aviso que no bloquea cuando la shell de login no respondió bien.
 pub fn login_notice(shell: &str, err: &str) -> String {
     format!(
-        "No pude leer el entorno de tu shell ({shell}: {err}). Uso las rutas de siempre; si falta algo, definilo en los ajustes."
+        "No pude leer el entorno de tu shell ({shell}: {err}). Uso las rutas de siempre; si falta algo (Node, Claude Code), agregalo al PATH en la configuración de tu shell y volvé a abrir la app."
     )
 }
 
