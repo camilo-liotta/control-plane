@@ -22,7 +22,8 @@ import { Input } from "@/components/ui/input"
  *   (por ejemplo desde un ítem de menú).
  * - `onConfirm` puede ser asíncrono: hay spinner, no se cierra hasta que termina y, si falla, queda
  *   abierto con el error en un toast.
- * - `confirmText`: hay que escribirlo para habilitar el botón (solo para lo grave, como borrar un proyecto).
+ * - `confirmText`: hay que escribirlo para habilitar el botón (solo para lo grave, como borrar un
+ *   proyecto). Con el texto ya escrito, Enter confirma.
  */
 export function ConfirmAction({
   children,
@@ -69,7 +70,19 @@ export function ConfirmAction({
             <label htmlFor={id} className="text-ui font-medium">
               Para confirmar, escribí <code className="rounded-sm bg-muted px-1">{confirmText}</code>
             </label>
-            <Input id={id} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} />
+            <Input
+              id={id}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter confirma cuando lo escrito ya coincide (como el botón).
+                if (e.key !== "Enter" || !ready) return
+                e.preventDefault()
+                e.currentTarget.closest("[data-slot=alert-dialog-content]")?.querySelector<HTMLButtonElement>("[data-slot=alert-dialog-action]")?.click()
+              }}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </div>
         )}
         <AlertDialogFooter>
