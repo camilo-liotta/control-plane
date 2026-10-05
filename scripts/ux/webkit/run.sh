@@ -5,6 +5,10 @@
 set -e
 BASE="${CP_UX_HOME:-$HOME/.cache/cp-ux}/webkit"
 export XDG_RUNTIME_DIR="$BASE/xdg"
+# HOME y XDG_* propios ANTES de dbus-run-session: los servicios que levanta ese bus (dconf, gvfs…)
+# heredan su entorno, y con el HOME real escribirían en tu ~/.config/dconf.
+export HOME="$BASE/home" XDG_CONFIG_HOME="$BASE/home/.config" XDG_DATA_HOME="$BASE/home/.local/share" XDG_CACHE_HOME="$BASE/home/.cache"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
 if [ "$1" = "stop" ]; then
   # Por pid: los procesos de esta sesión aislada (gnome-shell, su D-Bus y lo que levantó) son los que
   # tienen este XDG_RUNTIME_DIR en su entorno.
@@ -15,11 +19,12 @@ if [ "$1" = "stop" ]; then
     fi
   done
   fusermount3 -u "$XDG_RUNTIME_DIR/gvfs" 2>/dev/null || true
-  rm -f "$BASE/shell.pid"
+  rm -f "$BASE/shell.pid" "$XDG_RUNTIME_DIR/cp-ux" "$XDG_RUNTIME_DIR/cp-ux.lock"
   exit 0
 fi
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
-if [ ! -S "$XDG_RUNTIME_DIR/cp-ux" ]; then
+if ! { [ -f "$BASE/shell.pid" ] && kill -0 "$(cat "$BASE/shell.pid")" 2>/dev/null; }; then
+  rm -f "$XDG_RUNTIME_DIR/cp-ux" "$XDG_RUNTIME_DIR/cp-ux.lock"
   env -u DISPLAY -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS dbus-run-session -- \
     gnome-shell --headless --no-x11 --wayland-display=cp-ux --virtual-monitor 1440x900 > "$BASE/shell.log" 2>&1 &
   echo $! > "$BASE/shell.pid"
