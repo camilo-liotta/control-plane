@@ -109,6 +109,57 @@ Todo transiciona en **180 ms** con `--ease-standard`. Es el valor por defecto de
 - **`FieldSeparator`**: separa grupos de un formulario, con la etiqueta a la izquierda.
 - **`Sheet`, `DropdownMenu`, `Popover`, `HoverCard`, `Tooltip`, toasts (sonner)**: ya traen `shadow-overlay` y sus radios.
 
+## Voz y vocabulario
+
+Todos los textos que ve el usuario siguen esto: la web, los avisos que arma el server y los de la app de escritorio.
+
+### Voz
+- **Al usuario se le habla de vos**, en castellano rioplatense: "Elegí la carpeta", "Escribí el nombre", "Te espera".
+- **Toasts y avisos del sistema, impersonales.** Para lo que salió bien, la cosa y su participio: "App guardada", "Usuario copiado", "Conversación recuperada después de un /clear". Para lo que falló, "No se pudo" y el verbo: "No se pudo levantar web", con el motivo en la descripción.
+  - Nunca en primera persona: no "Guardé", "Recuperé", "No pude actualizar", "Le pedí".
+  - Lo que hizo una sesión va en tercera persona, con la sesión como sujeto: "API creó una tarea para vos", "API dejó una credencial".
+- **Botones en infinitivo**, con el objeto cuando no es obvio: "Guardar", "Borrar proyecto", "Levantar web".
+- **El mismo verbo de punta a punta.** El botón "Archivar" termina en el toast "Sesión archivada", no en "Sesión guardada".
+- **Errores**: qué no se pudo hacer y, si se sabe, cómo seguir. Sin "Ups", sin disculpas y sin "algo salió mal".
+- **Vacíos**: qué va ahí y cómo se llena ("Las sesiones que levantan un entorno lo dejan acá."), no "No hay datos".
+
+### Un verbo por acción
+| Verbo | Cuándo | Toast | Ejemplos |
+|---|---|---|---|
+| **Quitar** | Sacar algo de una lista; sigue existiendo afuera. | "… quitado" | quitar de la cola, un adjunto, una cuenta (su carpeta queda), un MCP del proyecto, una app (el repo no se toca) |
+| **Borrar** | Se pierde. Siempre con `ConfirmAction`. | "… borrado" | borrar un proyecto, un entorno, una credencial, una sesión archivada |
+| **Descartar** | Propuestas y borradores, que se pueden deshacer con `undoable()`. | "Propuesta descartada" | descartar una propuesta, el borrador de compactación |
+| **Archivar** y **Restaurar** | Sale de la vista y vuelve tal cual. | "Sesión archivada", "Proyecto restaurado" | sesiones y proyectos |
+| **Interrumpir** | El turno en curso; la sesión sigue viva. | "Turno interrumpido" | Esc, el botón del composer |
+| **Detener** y **Reanudar** | El proceso de la sesión. Reanudar retoma la misma conversación. | "Sesión detenida", "Sesión reanudada" | detener una sesión, detener todas |
+| **Levantar**, **Bajar** y **Reiniciar** | Las apps del proyecto. | "web levantada", "No se pudo levantar api" | Apps |
+| **Hecha** y **No hace falta** | Cerrar una tarea para vos. | "Tarea hecha", "Tarea cerrada: no hace falta" | Tareas para vos |
+
+No se usan: **Eliminar** (es Borrar), **Iniciar** para sesiones (es Reanudar) ni **Cancelar** como acción. Cancelar es solo el botón que cierra un diálogo sin hacer nada; lo programado se cancela con "Cancelar lo programado".
+
+### Términos
+- **Sesión**: cada Claude Code que corre en el dashboard. En la UI siempre se dice "sesión". **Worker** se usa solo para distinguirla de la orquestadora, por ejemplo "Para todos los workers" en los ajustes.
+- **Orquestadora**: la sesión que coordina el proyecto. Va en femenino y nunca "orquestador".
+- **Propuesta**: un prompt que arma la orquestadora y aprobás vos. Puede estar **en preparación** o **lista para enviar**, y se **envía** o se **descarta**.
+- **Cola de resultados**: lo que reportaron las sesiones y espera que la orquestadora lo revise.
+- **Bandeja**: todo lo que espera una decisión tuya, de todos los proyectos.
+- **Tareas para vos**: lo que las sesiones necesitan que hagas vos (un login, algo en otro sistema).
+- **El ícono de control-plane en la barra de arriba**. En la Mac: "en la barra de menú".
+- **Herramientas, Entornos, Apps, Programado**: con mayúscula, porque son nombres de secciones.
+
+### Formato
+- **Mayúsculas**: solo la primera palabra y los nombres propios ("Nueva sesión", "Tareas para vos"). Nada en versalitas ni todo en mayúsculas, salvo los nombres de sesión que el usuario escribió así.
+- **Tiempo**:
+  - relativo, con `timeAgo()`: "hace 5 min", "hace 2 h", "ayer";
+  - hora: "09:46";
+  - fecha corta: "lun 6/10";
+  - la fecha completa va en el `title`.
+- **Números**: con `toLocaleString("es-AR")`, punto para los miles y coma para los decimales: "1.250", "US$ 1,85". Para tokens, "425 k" y "3,4 M".
+- **Plurales**: siempre resueltos ("1 sesión", "3 sesiones"), nunca "sesión(es)".
+- **Puntos suspensivos**: el carácter "…" (no tres puntos). Van en lo que todavía pasa ("Cargando…", "Compactando…") y en los botones que abren algo antes de hacer la acción ("Borrar proyecto…").
+- **Comillas**: las rectas, "así", para citar lo que escribió alguien o el nombre de una tarea.
+- **Código**: los comandos, rutas y nombres de archivo van entre `backticks` en markdown, o en `font-mono` en la UI.
+
 ## Acciones que pegan al server
 
 Para un botón que pega al server, usá `useAction` (`lib/use-action.ts`, de TRAY): deshabilita el botón mientras espera y evita el doble pedido. Combinalo con `ConfirmAction` o con `undoable()` según si la acción se puede deshacer.
