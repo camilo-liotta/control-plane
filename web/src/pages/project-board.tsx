@@ -69,6 +69,8 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     return map
   }, [reports])
 
+  // Antes de los return tempranos: la cantidad de hooks no puede cambiar entre renders.
+  const action = useAction()
   if (!project) {
     return (
       <Empty className="h-full">
@@ -99,7 +101,6 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     setSendingAll(false)
   }
 
-  const action = useAction()
   const run = (key: string, fn: () => Promise<unknown>, ok: string) =>
     action.run(key, () =>
       fn().then(
