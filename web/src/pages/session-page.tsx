@@ -216,6 +216,8 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     }
   }
 
+  // Antes de los return tempranos: la cantidad de hooks no puede cambiar entre renders.
+  const action = useAction()
   if (!session || !project) {
     return (
       <Empty className="h-full">
@@ -229,7 +231,6 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
 
   const isOrch = session.kind === "orchestrator"
   const running = session.status !== "stopped" && session.status !== "error"
-  const action = useAction()
   const act = (key: string, fn: () => Promise<unknown>, ok?: string) =>
     action.run(key, () =>
       fn().then(
