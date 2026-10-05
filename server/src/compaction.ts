@@ -194,7 +194,7 @@ export class Compaction {
         e.resend = false
         this.deps.sessions.setHold(rec.id, null)
         this.broadcast(rec.id)
-        void this.deps.sessions.resendUnsent(rec.id).catch((err: unknown) => this.notice(rec.id, "warn", `No pude reenviar el mensaje: ${errorMessage(err)}`))
+        void this.deps.sessions.resendUnsent(rec.id).catch((err: unknown) => this.notice(rec.id, "warn", `No se pudo reenviar el mensaje: ${errorMessage(err)}`))
       } else if (e?.compactingForResend && info.local) {
         // El /compact terminó sin compactar (por ejemplo, "No messages to compact"): el mensaje sigue sin salir.
         e.compactingForResend = false
@@ -549,7 +549,7 @@ export class Compaction {
     }
     e.resend = true
     if (project?.settings.compactMode === "ask") {
-      this.notice(rec.id, "warn", `El contexto está lleno${pct} y el mensaje no salió. Elegí qué conservar al compactar (o compactá directo) y lo reenvío solo.`)
+      this.notice(rec.id, "warn", `El contexto está lleno${pct} y el mensaje no salió. Elegí qué conservar al compactar (o compactá directo) y se reenvía solo.`)
       this.deps.sessions.setHold(rec.id, "Contexto lleno: compactá para seguir")
       this.deps.hub.broadcast({
         type: "toast",
@@ -564,8 +564,8 @@ export class Compaction {
       this.broadcast(rec.id)
       return
     }
-    this.notice(rec.id, "info", `El contexto se llenó${pct} y Claude Code no compactó solo: compacto la conversación y reenvío el mensaje.`)
-    void this.compactAndResend(rec.id).catch((err: unknown) => this.notice(rec.id, "warn", `No pude compactar: ${errorMessage(err)}`))
+    this.notice(rec.id, "info", `El contexto se llenó${pct} y Claude Code no compactó solo: se compacta la conversación y se reenvía el mensaje.`)
+    void this.compactAndResend(rec.id).catch((err: unknown) => this.notice(rec.id, "warn", `No se pudo compactar: ${errorMessage(err)}`))
   }
 
   /** Compacta como /compact y, cuando termina, reenvía lo que no había entrado. */

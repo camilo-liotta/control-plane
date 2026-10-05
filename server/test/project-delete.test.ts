@@ -196,7 +196,7 @@ describe("borrar un proyecto", () => {
         stopAll: async () => [stubborn.id],
       },
     }
-    await assert.rejects(deleteProject(stuck, "p1", "Borrame"), new RegExp(`No pude detener ${stubborn.name}: no borré nada`))
+    await assert.rejects(deleteProject(stuck, "p1", "Borrame"), new RegExp(`No se pudieron detener ${stubborn.name} y no se borró nada`))
     unchanged(before)
     assert.equal(hub.messages.some((m) => m.type === "project_removed"), false)
     // Se puede volver a usar: sus sesiones arrancan de nuevo.

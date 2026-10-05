@@ -184,7 +184,7 @@ describe("abrir un cambio en el editor", () => {
   it("si el comando no existe, lo dice", async () => {
     const real = new Editor({ home })
     real.save({ kind: "custom", command: "no-existe-este-editor-cp {file}" })
-    await assert.rejects(real.open(repo, "src/app.ts", "uncommitted"), /No encontré `no-existe-este-editor-cp`. Elegí tu editor en Ajustes/)
+    await assert.rejects(real.open(repo, "src/app.ts", "uncommitted"), /No se encontró `no-existe-este-editor-cp`. Elegí tu editor en Ajustes/)
   })
 
   it("el editor de verdad se lanza desacoplado y le llegan los argumentos", async () => {

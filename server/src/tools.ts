@@ -590,7 +590,7 @@ export class Tools {
       if (hit?.path) return hit.path
     }
     if (needEditable) throw new Error("Esa skill no se puede editar desde acá")
-    throw new Error("No encontré el archivo de esa skill")
+    throw new Error("No se encontró el archivo de esa skill")
   }
 
   readSkill(accountId: string, projectId: string | null, name: string): { path: string; content: string } {

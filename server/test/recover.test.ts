@@ -65,7 +65,7 @@ describe("reparar las sesiones que un /clear viejo dejó sin conversación", () 
     const fixed = sessions.repairConversations()
     assert.deepEqual(fixed, [{ id: s.id, name: "ORQ-X", from: "no-existe", to: "real-1" }])
     assert.equal(idOf(s.id), "real-1")
-    assert.ok(db.listEvents(s.id).some((e) => e.event.kind === "notice" && e.event.text.startsWith("Recuperé la conversación después de un /clear")))
+    assert.ok(db.listEvents(s.id).some((e) => e.event.kind === "notice" && e.event.text.startsWith("Conversación recuperada después de un /clear")))
     assert.deepEqual(sessions.repairConversations(), [], "una sola vez")
     // Con el id reparado, --resume la encuentra (el falso estricto falla si no existe).
     await sessions.start(s.id)

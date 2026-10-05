@@ -109,7 +109,7 @@ export class PathResolver {
 
   async one(input: string, base: { projectRoot: string; sessionCwd?: string }): Promise<Found> {
     const [f] = await this.resolve([input], base)
-    if (!f) throw new Error("No encontré ese archivo en el proyecto")
+    if (!f) throw new Error("Ese archivo no está en el proyecto")
     return f
   }
 }

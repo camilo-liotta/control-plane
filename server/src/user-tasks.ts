@@ -260,7 +260,7 @@ export class UserTasks {
       this.deps.sessions.addEvent(by.id, {
         kind: "notice",
         level: "info",
-        text: `${patch.status === "done" ? "Dio por hecha" : "Descartó"} la tarea para vos: "${t.title}"${task.note ? ` (${task.note})` : ""}.`,
+        text: `${patch.status === "done" ? "Dio por hecha la tarea para vos" : "Cerró la tarea para vos porque no hace falta"}: "${t.title}"${task.note ? ` (${task.note})` : ""}.`,
       })
     }
     // La marcaste vos: a las sesiones que la pidieron les llega el aviso (si esperaban, siguen).
@@ -273,10 +273,10 @@ export class UserTasks {
     for (const id of new Set(ids)) {
       const s = this.deps.db.getSession(id)
       if (!s || s.archivedAt) continue
-      const what = task.status === "done" ? "ya hizo" : "descartó (no hace falta)"
+      const what = task.status === "done" ? "ya hizo" : "cerró porque no hace falta"
       const text = `[control-plane] El usuario ${what} la tarea "${task.title}" (${task.id})${task.note ? `. Nota: ${task.note}` : ""}. Si estabas esperando esto, seguí.`
       await this.deps.sessions
-        .send(s.id, text, { origin: "control", event: { kind: "notice", level: "info", text: `Le avisé que ${task.status === "done" ? "hiciste" : "descartaste"} la tarea "${task.title}".` } })
+        .send(s.id, text, { origin: "control", event: { kind: "notice", level: "info", text: `Se le avisó que la tarea "${task.title}" ${task.status === "done" ? "está hecha" : "no hace falta"}.` } })
         .catch(() => {})
     }
   }

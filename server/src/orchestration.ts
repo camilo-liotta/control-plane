@@ -286,7 +286,7 @@ export class Orchestration {
         type: "toast",
         level: "error",
         event: "error",
-        title: "No pude entregarle la cola a la orquestadora",
+        title: "No se pudo entregar la cola a la orquestadora",
         body: errorMessage(err),
         projectId,
         // En su chat se ve por qué (detenida, con error) y se reanuda; la cola está en su panel.

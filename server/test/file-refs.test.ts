@@ -159,7 +159,7 @@ describe("resolución de rutas", () => {
     // Con la sesión en el worktree, la ruta se busca primero ahí.
     const inWt = await r.resolve(["package.json"], { projectRoot: project, sessionCwd: wt })
     assert.equal(inWt[0]!.root, wt)
-    await assert.rejects(r.one("../afuera/secreto.txt", { projectRoot: project }), /No encontré/)
+    await assert.rejects(r.one("../afuera/secreto.txt", { projectRoot: project }), /no está en el proyecto/)
   })
 })
 

@@ -171,7 +171,7 @@ export class Restart {
       const failed = await this.apps.resume(pending.apps).catch((err: unknown) => [{ name: "las apps", error: errorMessage(err) }])
       out.apps = { resumed: pending.apps.length - failed.length, failed }
       for (const f of failed)
-        toasts.push({ type: "toast", level: "error", title: `No pude volver a levantar ${f.name}`, body: `Después de reiniciar para actualizar: ${f.error}` })
+        toasts.push({ type: "toast", level: "error", title: `No se pudo volver a levantar ${f.name}`, body: `Después de reiniciar para actualizar: ${f.error}` })
     }
     if (!pending.sessions.length) {
       await this.sendToasts(toasts)
@@ -246,7 +246,7 @@ export class Restart {
           event: {
             kind: "notice",
             level: "info",
-            text: "control-plane se reinició para actualizarse y cortó el turno: le pedí que revise lo que quedó a medias y siga.",
+            text: "control-plane se reinició para actualizarse y cortó el turno: se le pidió que revise lo que quedó a medias y siga.",
           },
         })
       } else {
@@ -285,13 +285,13 @@ export class Restart {
     this.sessions.addEvent(id, {
       kind: "notice",
       level: "error",
-      text: `control-plane se reinició para actualizarse y no pude retomar esta sesión: ${error}. Si estaba trabajando en algo, pedile que siga desde acá.`,
+      text: `control-plane se reinició para actualizarse y no se pudo retomar esta sesión: ${error}. Si estaba trabajando en algo, pedile que siga desde acá.`,
     })
     toasts.push({
       type: "toast",
       level: "error",
       event: "error",
-      title: `No pude retomar ${name} después de reiniciar`,
+      title: `No se pudo retomar ${name} después de reiniciar`,
       body: error,
       projectId: rec.projectId,
       sessionId: id,

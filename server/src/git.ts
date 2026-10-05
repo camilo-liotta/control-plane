@@ -26,7 +26,7 @@ export function gitStrict(dir: string, args: string[]): Promise<Buffer> {
     execFile("git", ["--no-optional-locks", "-C", dir, ...args], { ...OPTS, env: env(), encoding: "buffer" }, (err, stdout, stderr) => {
       if (!err) return resolve(stdout)
       const code = (err as NodeJS.ErrnoException).code
-      if (code === "ENOENT") return reject(new GitError("No encontré git en esta máquina", true))
+      if (code === "ENOENT") return reject(new GitError("git no está instalado en esta máquina", true))
       if (err.killed) return reject(new GitError(`git ${args[0]} tardó demasiado`))
       const msg = stderr.toString("utf8").trim().split("\n").filter(Boolean).pop()
       reject(new GitError(msg ? msg.replace(/^(fatal|error): /, "") : `git ${args[0]} falló`))
