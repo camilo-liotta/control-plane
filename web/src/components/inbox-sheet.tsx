@@ -9,6 +9,7 @@ import { SessionLamp } from "@/components/status"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { taskWaits } from "@shared/inbox-count"
 import { orderTasks } from "@shared/task-order"
 import type { Draft, Report, Session, UserTask } from "@shared/types"
 import { useStore } from "@/lib/store"
@@ -101,7 +102,7 @@ export function InboxSheet() {
   }
 
   const groups = Object.values(byProject)
-  for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some((t) => t.blocking)
+  for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some(taskWaits)
   groups.sort(
     (a, b) =>
       Number(b.projectId === here) - Number(a.projectId === here) ||

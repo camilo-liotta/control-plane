@@ -1,7 +1,8 @@
 //! Ícono en la bandeja (Linux) o en la barra de menú (macOS), con el estado del server y un menú.
 //!
 //! En Linux (appindicator) el ícono no recibe clics ni muestra tooltip: todo pasa por el menú, y la
-//! primera línea del menú dice cómo están las cosas. En macOS el ícono es template y lleva al lado
+//! primera línea del menú dice cómo están las cosas (con el mismo número que la Bandeja de la web)
+//! y, al tocarla, abre la Bandeja. En macOS el ícono es template y lleva al lado
 //! cuántas cosas te necesitan.
 
 use std::sync::Mutex;
@@ -19,11 +20,14 @@ use crate::AppState;
 
 const OPEN: &str = "open";
 const INBOX: &str = "inbox";
+/// La línea de estado: abre la Bandeja.
+const STATUS: &str = "status";
 const NOTIFICATIONS: &str = "notifications";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
 const LOG: &str = "log";
 const CHECK_UPDATES: &str = "check-updates";
+const CHECK_NOW: &str = "check-now";
 const UPDATE: &str = "update";
 const RESTART_SERVER: &str = "restart-server";
 const PROJECT_PREFIX: &str = "project:";
@@ -132,6 +136,7 @@ pub enum Action {
     OnExit(OnExit),
     ShowLog,
     ToggleCheckUpdates,
+    CheckNow,
     Update,
     RestartServer,
     Quit,
@@ -161,11 +166,12 @@ pub fn action(id: &str) -> Action {
     }
     match id {
         OPEN => Action::Open,
-        INBOX => Action::Inbox,
+        INBOX | STATUS => Action::Inbox,
         NOTIFICATIONS => Action::ToggleNotifications,
         AUTOSTART => Action::ToggleAutostart,
         LOG => Action::ShowLog,
         CHECK_UPDATES => Action::ToggleCheckUpdates,
+        CHECK_NOW => Action::CheckNow,
         UPDATE => Action::Update,
         RESTART_SERVER => Action::RestartServer,
         QUIT => Action::Quit,
@@ -213,7 +219,13 @@ pub struct Tray<R: Runtime> {
 
 pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let settings = app.state::<AppState>().settings();
-    let status = MenuItem::new(app, status_text(&Snapshot::default()), false, None::<&str>)?;
+    let status = MenuItem::with_id(
+        app,
+        STATUS,
+        status_text(&Snapshot::default()),
+        true,
+        None::<&str>,
+    )?;
     let projects = Submenu::new(app, "Proyectos", true)?;
     let notifications = CheckMenuItem::with_id(
         app,
@@ -261,12 +273,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&status)
         .separator()
         .text(OPEN, "Abrir")
-        .text(INBOX, "Abrir la Bandeja")
         .item(&projects)
         .separator()
         .item(&notifications)
         .item(&autostart)
         .item(&check_updates)
+        .text(CHECK_NOW, "Buscar ahora")
         .item(&exit_menu)
         .text(LOG, "Ver log del server")
         .separator()
@@ -431,7 +443,8 @@ impl<R: Runtime> Tray<R> {
         }
     }
 
-    fn sync_toggles(&self, app: &AppHandle<R>) {
+    /// Los tildes como dicen los ajustes (también cuando "Recordar mi elección" cambia "Al salir").
+    pub fn sync_toggles(&self, app: &AppHandle<R>) {
         let settings = app.state::<AppState>().settings();
         let _ = self.notifications.set_checked(settings.notifications);
         let _ = self.check_updates.set_checked(settings.check_updates);
@@ -476,6 +489,11 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
                 if let Some(u) = app.try_state::<crate::update::Updater>() {
                     u.check_now();
                 }
+            }
+        }
+        Action::CheckNow => {
+            if let Some(u) = app.try_state::<crate::update::Updater>() {
+                u.check_manual();
             }
         }
         Action::Update => {
@@ -589,6 +607,9 @@ mod tests {
     fn menu_ids_map_to_actions() {
         assert_eq!(action("open"), Action::Open);
         assert_eq!(action("inbox"), Action::Inbox);
+        // La línea de estado lleva a la Bandeja.
+        assert_eq!(action("status"), Action::Inbox);
+        assert_eq!(action("check-now"), Action::CheckNow);
         assert_eq!(action("project:x:y"), Action::Project("x:y".into()));
         assert_eq!(action("exit:stop"), Action::OnExit(OnExit::Stop));
         assert_eq!(action("exit:leave"), Action::OnExit(OnExit::Leave));

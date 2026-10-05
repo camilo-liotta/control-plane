@@ -1,8 +1,9 @@
 import { Bell, BellOff, BellRing, Blocks, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Search, Sun } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
+import { inboxCounts } from "@shared/inbox-count"
 import type { Project, Session } from "@shared/types"
 
 import { AccountSwitcher } from "@/components/accounts"
@@ -301,15 +302,15 @@ function BrowserNotificationsMenu() {
   )
 }
 
+/** El número de la Bandeja: el mismo que el del ícono de la app de escritorio. */
 export function useInboxCount() {
   const drafts = useStore((s) => s.drafts)
   const sessions = useStore((s) => s.sessions)
   const tasks = useStore((s) => s.tasks)
-  const ready = Object.values(drafts).filter((d) => d.state === "ready").length
-  const needs = Object.values(sessions).filter((s) => s.status === "needs_input").length
-  // Las tareas que frenan a una sesión también esperan algo de vos.
-  const waiting = Object.values(tasks).filter((t) => t.status === "open" && t.blocking).length
-  return ready + needs + waiting
+  return useMemo(
+    () => inboxCounts({ sessions: Object.values(sessions), drafts: Object.values(drafts), tasks: Object.values(tasks) }).total,
+    [drafts, sessions, tasks]
+  )
 }
 
 export function AppSidebar() {

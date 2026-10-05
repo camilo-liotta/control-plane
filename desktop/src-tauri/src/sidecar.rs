@@ -23,9 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::{
-    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
-};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::health::{self, Health, Probe};
 use crate::launch_env::LaunchEnv;
@@ -51,6 +49,8 @@ const SLOW_AFTER: Duration = Duration::from_secs(30);
 const FOREIGN_GRACE: Duration = Duration::from_secs(10);
 const STOP_GRACE: Duration = Duration::from_secs(15);
 const NODEJS_URL: &str = "https://nodejs.org/";
+/// Cómo instalar Claude Code.
+const CLAUDE_SETUP_URL: &str = "https://code.claude.com/docs/en/setup";
 
 /// Lo que la app le pide al sidecar desde afuera de su hilo.
 enum Cmd {
@@ -92,6 +92,8 @@ pub struct Sidecar {
     /// Cómo es la próxima salida (`--quit --keep-server`, `--quit --restart-for-update`). Se
     /// consume al salir.
     quit_mode: AtomicU8,
+    /// La salida la pidió cerrar la ventana sin un ícono visible: el diálogo lo explica.
+    closed_without_tray: AtomicBool,
     log: Mutex<Option<PathBuf>>,
 }
 
@@ -139,6 +141,11 @@ impl Sidecar {
         }
     }
 
+    /// Cerrar la ventana sin un ícono visible: salir como con "Salir" (pasa por "Al salir").
+    pub fn quit_from_close(&self) {
+        self.closed_without_tray.store(true, Ordering::SeqCst);
+    }
+
     /// "Reiniciar el server" del menú del ícono.
     pub fn restart_server(&self) {
         let _ = self.tx.lock().expect("sidecar").send(Cmd::RestartServer);
@@ -163,6 +170,7 @@ pub fn create(app: &AppHandle) -> Inbox {
         exit_ok: AtomicBool::new(false),
         system_ending: Arc::new(AtomicBool::new(false)),
         quit_mode: AtomicU8::new(QuitMode::Normal as u8),
+        closed_without_tray: AtomicBool::new(false),
         log: Mutex::new(None),
     });
     Inbox(rx)
@@ -597,10 +605,15 @@ impl Worker {
             Ok(n) => n.path.clone(),
             Err(e) => return self.show(Screen::no_node(&e.to_string())),
         };
-        if let Err(e) = &launch.claude {
-            return self.show(Screen::no_claude(&e.to_string()));
-        }
+        let claude = match &launch.claude {
+            Ok(p) => p.clone(),
+            Err(e) => return self.show(Screen::no_claude(&e.to_string())),
+        };
         let mut env: BTreeMap<String, String> = launch.server_env.clone();
+        // El que elegiste a mano: el server (y las sesiones) usan ese.
+        if self.settings().claude_path.as_deref() == Some(claude.as_path()) {
+            env.insert("CLAUDE_BIN".into(), claude.to_string_lossy().into_owned());
+        }
         let user_home = env.get("HOME").map(PathBuf::from);
         let allow_real = env
             .get("CONTROL_PLANE_ALLOW_REAL_HOME")
@@ -957,6 +970,8 @@ impl Worker {
             },
             Action::PickNode => self.pick_node(),
             Action::GetNode => window::open_in_browser(NODEJS_URL),
+            Action::PickClaude => self.pick_claude(),
+            Action::GetClaude => window::open_in_browser(CLAUDE_SETUP_URL),
             Action::OpenAnyway => {
                 if let Some(p) = port {
                     // Un server viejo sin health: no hay cómo supervisarlo, solo se lo muestra.
@@ -1033,6 +1048,19 @@ impl Worker {
         }
     }
 
+    fn pick_claude(&mut self) {
+        let picked = self
+            .app
+            .dialog()
+            .file()
+            .set_title("Elegí el ejecutable de Claude Code")
+            .blocking_pick_file();
+        if let Some(path) = picked.and_then(|p| p.into_path().ok()) {
+            self.save_settings(|s| s.claude_path = Some(path));
+            self.boot();
+        }
+    }
+
     // ------------------------------------------------------------------ detener y salir
 
     fn kind(&self) -> ServerKind {
@@ -1049,8 +1077,12 @@ impl Worker {
         let ending = self.state().system_ending.load(Ordering::SeqCst);
         let mode = self.state().take_quit_mode();
         let mut action = policy::exit_action(self.kind(), on_exit, None, ending, mode);
+        let without_tray = self
+            .state()
+            .closed_without_tray
+            .swap(false, Ordering::SeqCst);
         if action == ExitAction::Ask {
-            let answer = self.ask_exit();
+            let answer = self.ask_exit(without_tray);
             action = policy::exit_action(self.kind(), on_exit, Some(answer), ending, mode);
         }
         match action {
@@ -1181,28 +1213,33 @@ impl Worker {
         }
     }
 
-    fn ask_exit(&self) -> Answer {
+    /// Pregunta qué hacer con el server. Con "Recordar mi elección", la respuesta queda en "Al
+    /// salir" (el mismo ajuste del menú del ícono) y la próxima vez no se pregunta.
+    fn ask_exit(&mut self, without_tray: bool) -> Answer {
         let running = (self.hooks.running)(&self.app);
-        let (stop, leave, cancel) = ("Detener y salir", "Dejarlo corriendo", "Cancelar");
-        let result = self
-            .app
-            .dialog()
-            .message(policy::exit_question(running))
-            .title("Salir de control-plane")
-            .kind(MessageDialogKind::Info)
-            .buttons(MessageDialogButtons::YesNoCancelCustom(
-                stop.into(),
-                leave.into(),
-                cancel.into(),
-            ))
-            .blocking_show_with_result();
-        match result {
-            MessageDialogResult::Yes => Answer::Stop,
-            MessageDialogResult::No => Answer::Leave,
-            MessageDialogResult::Custom(s) if s == stop => Answer::Stop,
-            MessageDialogResult::Custom(s) if s == leave => Answer::Leave,
-            _ => Answer::Cancel,
+        let working = (self.hooks.working)(&self.app);
+        let mut message = policy::exit_question(running, working);
+        if without_tray {
+            message = format!("{}\n\n{message}", policy::NO_TRAY_NOTE);
         }
+        let choice = crate::exit_dialog::ask(
+            &self.app,
+            "Salir de control-plane",
+            &message,
+            ["Detener y salir", "Dejarlo corriendo", "Cancelar"],
+        );
+        let answer = match choice.button {
+            Some(0) => Answer::Stop,
+            Some(1) => Answer::Leave,
+            _ => Answer::Cancel,
+        };
+        if let Some(on_exit) = policy::remembered(answer).filter(|_| choice.remember) {
+            self.save_settings(|s| s.on_exit = on_exit);
+            if let Some(tray) = self.app.try_state::<crate::tray::Tray<tauri::Wry>>() {
+                tray.sync_toggles(&self.app);
+            }
+        }
+        answer
     }
 
     fn exit_now(&self) {

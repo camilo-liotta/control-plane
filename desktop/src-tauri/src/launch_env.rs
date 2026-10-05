@@ -55,7 +55,12 @@ impl LaunchEnv {
             &shell,
             Some(&server_env),
         );
-        let claude = node::find_claude(env("CLAUDE_BIN"), &path, &shell);
+        let claude = node::find_claude(
+            settings.claude_path.as_deref(),
+            env("CLAUDE_BIN"),
+            &path,
+            &shell,
+        );
         Self {
             login,
             path,

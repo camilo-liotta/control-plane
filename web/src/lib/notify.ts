@@ -8,7 +8,7 @@ import type { NoticeOpen, ServerMessage } from "@shared/types"
 import { draggingFromDesktop, dropFromDesktop } from "./desktop-drop"
 import { playNotice } from "./sounds"
 import { useStore } from "./store"
-import { useUi } from "./ui"
+import { useUi, type UpdateFailure } from "./ui"
 
 type ToastMessage = Extract<ServerMessage, { type: "toast" }>
 
@@ -199,21 +199,35 @@ export function updateFromDesktop(info: unknown): boolean {
   return true
 }
 
+/** Solo la URL de acción de la app para reintentar (nada de navegar a otro lado). */
+export function retryUrlOf(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length > 300) return null
+  return /^(tauri:\/\/localhost|http:\/\/tauri\.localhost)\/__action\/update-retry\?t=[0-9a-f]{32}$/.test(raw) ? raw : null
+}
+
+/** "Reintentar": la app intercepta la navegación a su URL de acción (la página no se mueve). */
+export function retryUpdate(failure: UpdateFailure) {
+  if (!failure.retryUrl) return
+  toast.dismiss(`update-failed-${failure.version}`)
+  window.location.href = failure.retryUrl
+}
+
 /**
  * La actualización falló. El aviso del sistema puede no verse (o haberse ido), así que la página
  * también lo muestra, con "Ver log". Solo muestra: no le pide nada a la app.
  */
 export function updateFailedFromDesktop(info: unknown): boolean {
   if (!info || typeof info !== "object") return false
-  const { version, error, logPath, log } = info as Record<string, unknown>
+  const { version, error, logPath, log, retryUrl } = info as Record<string, unknown>
   if (typeof version !== "string" || !/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(version)) return false
   const failure = {
     version,
     error: typeof error === "string" ? error.slice(0, 500) : "",
     logPath: typeof logPath === "string" ? logPath.slice(0, 500) : "",
     log: typeof log === "string" ? log.slice(-20_000) : "",
+    retryUrl: retryUrlOf(retryUrl),
   }
-  toast.error(`No pude actualizar a v${version}`, {
+  toast.error(`No se pudo actualizar a v${version}`, {
     id: `update-failed-${version}`,
     description: failure.error || undefined,
     duration: Infinity,

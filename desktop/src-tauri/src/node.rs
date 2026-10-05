@@ -203,9 +203,10 @@ fn node_version(bin: &Path, env: Option<&BTreeMap<String, String>>) -> Result<Ve
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudeError {
-    /// `CLAUDE_BIN` apunta a algo que no existe o no se puede ejecutar.
+    /// `CLAUDE_BIN` (o el que se eligió a mano, `chosen`) no existe o no se puede ejecutar.
     Missing {
         path: PathBuf,
+        chosen: bool,
     },
     NotFound {
         shell: PathBuf,
@@ -216,34 +217,56 @@ pub enum ClaudeError {
 impl fmt::Display for ClaudeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Missing { path } => write!(
+            Self::Missing { path, chosen: true } => write!(
+                f,
+                "El Claude Code que elegiste ({}) ya no está o no se puede ejecutar.",
+                path.display()
+            ),
+            Self::Missing {
+                path,
+                chosen: false,
+            } => write!(
                 f,
                 "CLAUDE_BIN apunta a {}, que no existe o no se puede ejecutar.",
                 path.display()
             ),
             Self::NotFound { shell, name } => write!(
                 f,
-                "No encontré el binario de Claude Code (\"{name}\") en el PATH de tu shell de login ({}) \
-                 ni en las rutas de siempre. Instalalo o definí CLAUDE_BIN.",
+                "No está \"{name}\" en el PATH de tu shell de login ({}) ni en las rutas de siempre.",
                 shell.display()
             ),
         }
     }
 }
 
-/// `claude`: `CLAUDE_BIN` (una ruta o un nombre) o el del PATH combinado.
+/// `claude`: el elegido a mano (en los ajustes), `CLAUDE_BIN` (una ruta o un nombre) o el del
+/// PATH combinado.
 pub fn find_claude(
+    chosen: Option<&Path>,
     claude_bin: Option<&str>,
     path: &OsStr,
     shell: &Path,
 ) -> Result<PathBuf, ClaudeError> {
+    if let Some(p) = chosen {
+        return if p.is_absolute() && is_executable(p) {
+            Ok(p.to_path_buf())
+        } else {
+            Err(ClaudeError::Missing {
+                path: p.to_path_buf(),
+                chosen: true,
+            })
+        };
+    }
     let name = claude_bin.filter(|s| !s.is_empty()).unwrap_or("claude");
     if name.contains('/') {
         let p = PathBuf::from(name);
         return if is_executable(&p) {
             Ok(p)
         } else {
-            Err(ClaudeError::Missing { path: p })
+            Err(ClaudeError::Missing {
+                path: p,
+                chosen: false,
+            })
         };
     }
     which(name, path).ok_or_else(|| ClaudeError::NotFound {
@@ -384,15 +407,42 @@ mod tests {
         let shell = Path::new("/bin/zsh");
         let bin = exe(dir.path(), "claude", "true");
         let path = OsString::from(dir.path());
-        assert_eq!(find_claude(None, &path, shell), Ok(bin.clone()));
-        assert_eq!(find_claude(Some(""), &path, shell), Ok(bin.clone()));
-        assert_eq!(find_claude(bin.to_str(), &OsString::new(), shell), Ok(bin));
+        assert_eq!(find_claude(None, None, &path, shell), Ok(bin.clone()));
+        assert_eq!(find_claude(None, Some(""), &path, shell), Ok(bin.clone()));
+        assert_eq!(
+            find_claude(None, bin.to_str(), &OsString::new(), shell),
+            Ok(bin.clone())
+        );
         assert!(matches!(
-            find_claude(Some("/no/claude"), &path, shell),
-            Err(ClaudeError::Missing { .. })
+            find_claude(None, Some("/no/claude"), &path, shell),
+            Err(ClaudeError::Missing { chosen: false, .. })
         ));
-        let err = find_claude(Some("claude-beta"), &path, shell).unwrap_err();
+        let err = find_claude(None, Some("claude-beta"), &path, shell).unwrap_err();
         assert!(err.to_string().contains("\"claude-beta\""), "{err}");
+    }
+
+    #[test]
+    fn claude_chosen_by_hand_wins_and_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let shell = Path::new("/bin/zsh");
+        let in_path = exe(dir.path(), "claude", "true");
+        let picked = exe(other.path(), "claude-a-mano", "true");
+        let path = OsString::from(dir.path());
+        // Gana sobre CLAUDE_BIN y sobre el PATH.
+        assert_eq!(
+            find_claude(Some(&picked), Some("claude"), &path, shell),
+            Ok(picked)
+        );
+        // Si ya no está, se dice que es el elegido (no se cae al del PATH sin avisar).
+        let gone = other.path().join("no-esta");
+        let err = find_claude(Some(&gone), None, &path, shell).unwrap_err();
+        assert!(matches!(err, ClaudeError::Missing { chosen: true, .. }));
+        assert!(
+            err.to_string().starts_with("El Claude Code que elegiste"),
+            "{err}"
+        );
+        let _ = in_path;
     }
 
     #[test]
