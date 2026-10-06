@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, FolderCog, RefreshCw, Settings2, Trash2, Users } from "lucide-react"
+import { Check, ChevronsUpDown, Copy, FolderCog, LogIn, RefreshCw, Settings2, Trash2, Users } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 
@@ -26,7 +26,9 @@ import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSeparator } from 
 import { Input } from "@/components/ui/input"
 import { LoadError } from "@/components/ui/load-error"
 import { Spinner } from "@/components/ui/spinner"
+import { copy } from "@/components/tools/cli-login"
 import { api } from "@/lib/api"
+import { toneSoft } from "@/lib/status"
 import { shortPath } from "@/lib/format"
 import { useAccounts, useCurrentAccount } from "@/lib/store"
 import { useUi } from "@/lib/ui"
@@ -62,7 +64,9 @@ export function AccountSwitcher() {
   const current = useCurrentAccount()
   const ui = useUi()
   if (!current) return null
+  const needsLogin = Boolean(current.auth && !current.auth.loggedIn)
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -73,7 +77,7 @@ export function AccountSwitcher() {
           <Initial name={current.name} />
           <span className="min-w-0 flex-1">
             <span className="name block truncate text-ui" title={current.name}>{current.name}</span>
-            <span className={cn("block truncate text-2xs text-muted-foreground", current.auth && !current.auth.loggedIn && "text-status-error")}>
+            <span className={cn("block truncate text-2xs text-muted-foreground", needsLogin && "text-status-attention")}>
               {authLine(current.auth)}
             </span>
           </span>
@@ -105,6 +109,21 @@ export function AccountSwitcher() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* Sin login, las sesiones de esta cuenta no arrancan: te espera y frena, por eso va en ámbar. */}
+    {needsLogin && (
+      <button
+        type="button"
+        onClick={() => ui.set({ accountsDialog: true })}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium outline-hidden transition-colors hover:brightness-95 focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          toneSoft.attention
+        )}
+      >
+        <LogIn className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Loguear la cuenta</span>
+      </button>
+    )}
+    </>
   )
 }
 
@@ -159,14 +178,31 @@ function AccountRow({ account }: { account: Account }) {
                 {shortPath(account.configDir)}
                 {account.bin ? ` · ${account.bin}` : ""}
               </p>
-              <p className={cn("text-xs", account.auth?.loggedIn ? "text-muted-foreground" : "text-status-error")}>
+              <p className={cn("text-xs", account.auth && !account.auth.loggedIn ? "text-status-attention" : "text-muted-foreground")}>
                 {authLine(account.auth)}
                 {account.auth?.organization ? ` · ${account.auth.organization}` : ""}
               </p>
               {account.auth && !account.auth.loggedIn && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Para loguearla, corré en una terminal <code className="font-mono break-words">{loginCommand(account)}</code> y usá /login.
-                </p>
+                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+                  <li>
+                    En una terminal, corré{" "}
+                    <code className="rounded-md bg-muted px-1 py-0.5 font-mono break-words text-foreground">{loginCommand(account)}</code>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="ml-1 align-middle"
+                      aria-label="Copiar el comando"
+                      title="Copiar el comando"
+                      onClick={() => copy(loginCommand(account))}
+                    >
+                      <Copy />
+                    </Button>
+                  </li>
+                  <li>
+                    Adentro, escribí <code className="font-mono">/login</code> y seguí los pasos en el navegador.
+                  </li>
+                  <li>Volvé acá y tocá "Volver a verificar los logins".</li>
+                </ol>
               )}
             </>
           )}

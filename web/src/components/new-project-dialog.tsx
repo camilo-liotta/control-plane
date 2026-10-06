@@ -23,9 +23,30 @@ import { useAccounts, useCurrentAccount } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
+const DEFAULT_DIR = "~/projects/"
+const PARENT_KEY = "control-plane:last-repo-parent"
+
+/** Dónde empieza a buscar: la carpeta madre del último proyecto que creaste, o ~/projects/. */
+function startDir() {
+  try {
+    return localStorage.getItem(PARENT_KEY) || DEFAULT_DIR
+  } catch {
+    return DEFAULT_DIR
+  }
+}
+
+function rememberParent(repoPath: string) {
+  const parent = repoPath.replace(/\/+$/, "").replace(/\/[^/]*$/, "/")
+  try {
+    if (parent) localStorage.setItem(PARENT_KEY, parent)
+  } catch {
+    // sin almacenamiento local: la próxima arranca en ~/projects/
+  }
+}
+
 export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [, navigate] = useLocation()
-  const [path, setPath] = useState("~/projects/")
+  const [path, setPath] = useState(startDir)
   const [name, setName] = useState("")
   const [nameTouched, setNameTouched] = useState(false)
   const [suggest, setSuggest] = useState<DirSuggestion | null>(null)
@@ -57,11 +78,17 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
     if (!nameTouched && suggest?.exists) setName(basename(suggest.path))
   }, [suggest, nameTouched])
 
+  // La primera vez no hay carpeta reciente: si ~/projects/ no existe, se arranca en tu carpeta personal.
+  useEffect(() => {
+    if (suggest && !suggest.exists && path === DEFAULT_DIR && !suggest.dirs.length) setPath("~/")
+  }, [suggest, path])
+
   const create = async () => {
     if (!canCreate) return
     setCreating(true)
     try {
       const project = await api.createProject({ repoPath: path, name: name.trim() || undefined, accountId: account?.id })
+      rememberParent(project.repoPath)
       if (account && account.id !== current?.id) selectAccount(account.id)
       toast.success(`Proyecto ${project.name} creado`, { description: "La orquestadora ya está arrancando." })
       onOpenChange(false)
@@ -123,10 +150,12 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             {suggest && (
               <FieldDescription className={cn(suggest.exists && !suggest.isGitRepo && "text-status-pending")}>
                 {!suggest.exists
-                  ? "La carpeta no existe todavía."
+                  ? suggest.dirs.length
+                    ? "La carpeta no existe todavía: elegí una de abajo o seguí escribiendo."
+                    : "La carpeta no existe todavía: el proyecto va en un repo que ya tengas."
                   : suggest.isGitRepo
                     ? "Repositorio git encontrado."
-                    : "Esta carpeta no es un repositorio git: funciona igual, pero los workers no van a poder usar worktrees."}
+                    : "Esta carpeta no es un repositorio git: funciona igual, pero las sesiones no van a poder usar worktrees."}
               </FieldDescription>
             )}
             {suggest && suggest.dirs.length > 0 && (

@@ -204,7 +204,15 @@ function Catalog({ view, runner }: { view: ToolsView; runner: ReturnType<typeof 
               </Button>
             </li>
           ))}
-          {!shown.length && <li className="px-4 py-3 text-sm text-muted-foreground">Nada que coincida.</li>}
+          {!shown.length && (
+            <li className="px-4 py-3 text-sm text-muted-foreground">
+              {q.trim()
+                ? "Nada que coincida."
+                : list.length
+                  ? "Ya tenés instalado todo lo de tus marketplaces."
+                  : "Los plugins de tus marketplaces aparecen acá. Agregá uno en Marketplaces, abajo."}
+            </li>
+          )}
         </ul>
       )}
     </section>

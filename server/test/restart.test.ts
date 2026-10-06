@@ -286,12 +286,12 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
     const result = await restartOf(sessions).resumePending()
     assert.deepEqual(result.resumed, [fine.id])
     assert.deepEqual(result.failed.map((f) => [f.id, f.name]), [[broken.id, "ROTA"]])
-    assert.match(result.failed[0]!.error, /ENOENT/, "con el motivo")
+    assert.match(result.failed[0]!.error, /No existe la carpeta de la sesión/, "con el motivo")
     assert.ok(sessions.isRunning(fine.id))
     // Se ve cuál y por qué: en el log, en el toast y en su chat.
-    assert.match(resumeSummary(result)!, /^Retomé 1 sesión; 1 no arrancó: ROTA \(.*ENOENT.*\)\.$/)
+    assert.match(resumeSummary(result)!, /^Retomé 1 sesión; 1 no arrancó: ROTA \(.*No existe la carpeta de la sesión.*\)\.$/)
     const toast = hub.sent.find((m) => m.type === "toast" && m.title === "No se pudo retomar ROTA después de reiniciar")
-    assert.ok(toast && toast.type === "toast" && /ENOENT/.test(toast.body ?? ""))
+    assert.ok(toast && toast.type === "toast" && /No existe la carpeta de la sesión/.test(toast.body ?? ""))
     assert.ok(texts(broken.id).some((e) => e.kind === "notice" && e.level === "error" && e.text.includes("no se pudo retomar esta sesión")))
   })
 
