@@ -42,6 +42,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
+import { Kbd, KbdGroup, keyLabel, Shortcut } from "@/components/ui/kbd"
 import { isMac, useNav } from "@/lib/nav"
 import {
   archiveSession,
@@ -56,7 +57,7 @@ import {
 } from "@/lib/session-actions"
 import { projectSessions, useAccounts, useCurrentAccount, useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
-import { shortcutText } from "@shared/shortcuts"
+import { keysFor, SHORTCUTS, type ShortcutId } from "@shared/shortcuts"
 
 const sessionLabel = (s: Session) => (s.kind === "orchestrator" ? "Orquestadora" : s.name)
 
@@ -66,6 +67,20 @@ const sessionLabel = (s: Session) => (s.kind === "orchestrator" ? "Orquestadora"
  * llama a la misma función que su botón (session-actions.ts, appAction, los diálogos de useUi).
  * El atajo lo maneja GlobalShortcuts.
  */
+
+/** Las teclas de un atajo de shared/shortcuts, como teclas (Shift en vez de ⇧ fuera de la Mac). */
+function Keys({ id }: { id: ShortcutId }) {
+  const info = SHORTCUTS.find((x) => x.id === id)
+  if (!info) return null
+  return (
+    <KbdGroup>
+      {keysFor(info, isMac).map((k, i) => (
+        <Kbd key={i}>{!isMac && k === "⇧" ? "Shift" : k}</Kbd>
+      ))}
+    </KbdGroup>
+  )
+}
+
 export function CommandPalette() {
   const open = useUi((s) => s.palette)
   const setUi = useUi((s) => s.set)
@@ -112,7 +127,7 @@ export function CommandPalette() {
 
   return (
     <CommandDialog open={open} onOpenChange={(v) => setUi({ palette: v })} title="Paleta de comandos" description="Buscá una sesión, un proyecto o una acción">
-      <CommandInput placeholder="Buscá una sesión, un proyecto o una acción…" />
+      <CommandInput placeholder="Buscá una sesión, un proyecto o una acción…" aria-label="Buscá una sesión, un proyecto o una acción" />
       <CommandList>
         <CommandEmpty>No hay coincidencias.</CommandEmpty>
 
@@ -122,20 +137,20 @@ export function CommandPalette() {
               n.kind === "session" ? (
                 <CommandItem key={`n-${n.session.id}`} value={`te necesita ${n.session.name} ${projectName(n.session.projectId)}`} onSelect={goNeeds(n)}>
                   <SessionLamp session={n.session} className="mx-1" />
-                  <span className="font-mono">{sessionLabel(n.session)}</span>
+                  <span className="name max-w-[40%] min-w-0 shrink-0 truncate">{sessionLabel(n.session)}</span>
                   <span className="truncate text-muted-foreground">{n.session.statusDetail ?? "te necesita"} · {projectName(n.session.projectId)}</span>
                 </CommandItem>
               ) : n.kind === "proposals" ? (
                 <CommandItem key={`p-${n.projectId}`} value={`propuestas listas ${projectName(n.projectId)}`} onSelect={goNeeds(n)}>
                   <Compass />
                   {n.count === 1 ? "1 propuesta lista" : `${n.count} propuestas listas`}
-                  <span className="truncate text-muted-foreground">· {projectName(n.projectId)}</span>
+                  <span className="truncate text-muted-foreground">{projectName(n.projectId)}</span>
                 </CommandItem>
               ) : (
                 <CommandItem key={`t-${n.task.id}`} value={`tarea ${n.task.title} ${projectName(n.task.projectId)}`} onSelect={goNeeds(n)}>
                   <ClipboardList />
                   <span className="truncate">{n.task.title}</span>
-                  <span className="shrink-0 text-muted-foreground">· te espera</span>
+                  <span className="shrink-0 text-muted-foreground">te espera</span>
                 </CommandItem>
               )
             )}
@@ -147,7 +162,7 @@ export function CommandPalette() {
             {recents.map((s) => (
               <CommandItem key={`r-${s.id}`} value={`reciente ${s.name} ${s.role} ${projectName(s.projectId)}`} onSelect={go(`/p/${s.projectId}/s/${s.id}`)}>
                 <SessionLamp session={s} className="mx-1" />
-                <span className="font-mono">{sessionLabel(s)}</span>
+                <span className="name max-w-[40%] min-w-0 shrink-0 truncate">{sessionLabel(s)}</span>
                 <span className="truncate text-muted-foreground">{projectName(s.projectId)}</span>
               </CommandItem>
             ))}
@@ -160,7 +175,12 @@ export function CommandPalette() {
               <CommandItem value="interrumpir el turno" onSelect={run(() => interruptSession(session.id))}>
                 <Pause />
                 Interrumpir el turno
-                <CommandShortcut>Esc Esc</CommandShortcut>
+                <CommandShortcut>
+                  <KbdGroup>
+                    <Kbd>{keyLabel("esc")}</Kbd>
+                    <Kbd>{keyLabel("esc")}</Kbd>
+                  </KbdGroup>
+                </CommandShortcut>
               </CommandItem>
             )}
             {running ? (
@@ -177,12 +197,16 @@ export function CommandPalette() {
             <CommandItem value="ir a lo último del chat" onSelect={run(jumpToEnd)}>
               <ArrowDownToLine />
               Ir a lo último del chat
-              <CommandShortcut>{shortcutText("jump-to-end", isMac)}</CommandShortcut>
+              <CommandShortcut>
+                <Keys id="jump-to-end" />
+              </CommandShortcut>
             </CommandItem>
             <CommandItem value="terminal de la sesión" onSelect={run(() => toggleTerminal(session.id))}>
               <SquareTerminal />
               Abrir o esconder la terminal
-              <CommandShortcut>{isMac ? "⌃`" : "Ctrl+`"}</CommandShortcut>
+              <CommandShortcut>
+                <Shortcut keys="ctrl+backtick" />
+              </CommandShortcut>
             </CommandItem>
             <CommandItem value="renombrar la sesión" onSelect={run(() => renameSession(session.id))}>
               <Pencil />
@@ -269,7 +293,7 @@ export function CommandPalette() {
               {workers.map((w) => (
                 <CommandItem key={w.id} value={`${p.name} ${w.name} ${w.role}`} onSelect={go(`/p/${p.id}/s/${w.id}`)}>
                   <SessionLamp session={w} className="mx-1" />
-                  <span className="font-mono">{w.name}</span>
+                  <span className="name max-w-[40%] min-w-0 shrink-0 truncate">{w.name}</span>
                   {w.role && <span className="truncate text-muted-foreground">{w.role}</span>}
                 </CommandItem>
               ))}
@@ -327,10 +351,31 @@ export function CommandPalette() {
           <CommandItem value="atajos de teclado ayuda" onSelect={run(() => setUi({ shortcuts: true }))}>
             <Keyboard />
             Atajos de teclado
-            <CommandShortcut>?</CommandShortcut>
+            <CommandShortcut>
+              <Kbd>?</Kbd>
+            </CommandShortcut>
           </CommandItem>
         </CommandGroup>
       </CommandList>
+      <div className="hidden items-center gap-3 border-t px-3 py-2 text-2xs text-muted-foreground sm:flex" aria-hidden>
+        <span className="flex items-center gap-1">
+          <Shortcut keys="up" />
+          <Shortcut keys="down" />
+          moverse
+        </span>
+        <span className="flex items-center gap-1">
+          <Shortcut keys="enter" />
+          abrir
+        </span>
+        <span className="flex items-center gap-1">
+          <Shortcut keys="esc" />
+          cerrar
+        </span>
+        <span className="ml-auto flex items-center gap-1">
+          <Kbd>?</Kbd>
+          todos los atajos
+        </span>
+      </div>
     </CommandDialog>
   )
 }

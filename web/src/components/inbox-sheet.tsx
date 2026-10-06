@@ -5,11 +5,12 @@ import { Link, useLocation } from "wouter"
 import { DraftCard } from "@/components/draft-card"
 import { ReportCard } from "@/components/report-card"
 import { PriorityBadge } from "@/components/user-tasks"
-import { SessionLamp } from "@/components/status"
+import { SessionLamp, TonePill } from "@/components/status"
+import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { taskWaits } from "@shared/inbox-count"
+import { inboxCounts, taskWaits } from "@shared/inbox-count"
 import { orderTasks } from "@shared/task-order"
 import type { Draft, Report, Session, UserTask } from "@shared/types"
 import { useStore } from "@/lib/store"
@@ -33,17 +34,32 @@ interface Bucket {
 function Group({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   if (!count) return null
   return (
-    <section className="space-y-2.5">
-      <div className="flex items-center gap-2">
-        <h3 className="eyebrow">{title}</h3>
-        <span className="font-mono text-xs text-muted-foreground">{count}</span>
-      </div>
+    <section className="space-y-2">
+      <h3 className="eyebrow flex items-center gap-1.5">
+        {title}
+        <span className="font-normal">{count}</span>
+      </h3>
       {children}
     </section>
   )
 }
 
+/** Una lista de filas apoyada en la hoja (sin una caja por fila). */
+function Rows({ children }: { children: React.ReactNode }) {
+  return <ul className="surface-card divide-y overflow-hidden">{children}</ul>
+}
+
+const rowClass = "flex min-h-11 items-center gap-2.5 px-3 py-2 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none focus-visible:ring-inset"
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** Por qué te necesita una sesión, en una línea. */
+function needReason(s: Session, compacting: boolean | undefined) {
+  if (s.pending?.kind === "permission") return "pide permiso para una herramienta"
+  if (s.pending) return "te hizo una pregunta"
+  if (compacting) return "espera que elijas qué conservar al compactar"
+  return s.statusDetail ?? "te necesita"
+}
 
 function summary(b: Bucket) {
   const blocking = b.todo.filter((t) => t.blocking).length
@@ -51,7 +67,7 @@ function summary(b: Bucket) {
     b.needs.length && plural(b.needs.length, "te necesita", "te necesitan"),
     blocking && plural(blocking, "tarea te espera", "tareas te esperan"),
     b.todo.length - blocking && plural(b.todo.length - blocking, "tarea", "tareas"),
-    b.ready.length && plural(b.ready.length, "propuesta", "propuestas"),
+    b.ready.length && plural(b.ready.length, "propuesta lista", "propuestas listas"),
     b.staged.length && `${b.staged.length} en preparación`,
     b.queue.length && `${b.queue.length} en la cola`,
   ]
@@ -101,6 +117,7 @@ export function InboxSheet() {
     if (r.state === "queued" || r.state === "in_review") touch(bucket(r.projectId), r.createdAt).queue.push(r)
   }
 
+  const counts = inboxCounts({ sessions: Object.values(sessions), drafts: Object.values(drafts), tasks: Object.values(tasks) })
   const groups = Object.values(byProject)
   for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some(taskWaits)
   groups.sort(
@@ -118,10 +135,13 @@ export function InboxSheet() {
     <Sheet open={open} onOpenChange={(v) => setUi({ inbox: v })}>
       <SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>Bandeja</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">
+            Bandeja
+            {counts.total > 0 && <Badge variant="secondary">{counts.total}</Badge>}
+          </SheetTitle>
           <SheetDescription>Lo que espera una decisión tuya, proyecto por proyecto.</SheetDescription>
         </SheetHeader>
-        <div className="px-4 pb-6">
+        <div className="space-y-7 px-4 pb-6">
           {!groups.length && (
             <Empty>
               <EmptyHeader>
@@ -138,87 +158,89 @@ export function InboxSheet() {
           {groups.map((b) => {
             const isOpen = folded[b.projectId] ?? (!foldByDefault || b.urgent || b.projectId === here)
             const name = projects[b.projectId]?.name
+            // Ámbar solo para lo que frena (DESIGN.md): sesiones que te necesitan y tareas que frenan.
+            const waiting = b.needs.length + b.todo.filter(taskWaits).length
             return (
               <Collapsible
                 key={b.projectId}
                 open={isOpen}
                 onOpenChange={(v) => setFolded((f) => ({ ...f, [b.projectId]: v }))}
-                className="border-t py-4 first:border-t-0 first:pt-0"
+                className="space-y-4"
               >
                 <div className="flex items-start gap-1.5">
                   <CollapsibleTrigger
-                    aria-label={isOpen ? "Plegar proyecto" : "Desplegar proyecto"}
-                    className="mt-0.5 rounded-sm p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground [&[data-state=open]>svg]:rotate-90"
+                    aria-label={isOpen ? `Plegar ${name ?? "el proyecto archivado"}` : `Desplegar ${name ?? "el proyecto archivado"}`}
+                    className="mt-0.5 rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none [&[data-state=open]>svg]:rotate-90"
                   >
                     <ChevronRight className="size-4 transition-transform" />
                   </CollapsibleTrigger>
                   <div className="min-w-0 flex-1">
-                    {name ? (
-                      <Link
-                        href={`/p/${b.projectId}`}
-                        onClick={close}
-                        className="flex items-center gap-2 text-sm font-semibold hover:underline"
-                      >
-                        <span className={`size-1.5 shrink-0 rounded-full ${b.urgent ? "bg-status-attention" : ""}`} />
-                        <span className="truncate">{name}</span>
-                      </Link>
-                    ) : (
-                      <p className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-                        <span className={`size-1.5 shrink-0 rounded-full ${b.urgent ? "bg-status-attention" : ""}`} />
-                        Proyecto archivado
-                      </p>
-                    )}
-                    <p className="pl-3.5 text-xs text-muted-foreground">{summary(b)}</p>
+                    <div className="flex items-center gap-2">
+                      {name ? (
+                        <Link href={`/p/${b.projectId}`} onClick={close} className="truncate text-sm font-semibold hover:underline" title={name}>
+                          {name}
+                        </Link>
+                      ) : (
+                        <p className="truncate text-sm font-semibold text-muted-foreground">Proyecto archivado</p>
+                      )}
+                      {waiting > 0 && (
+                        <TonePill tone="attention">
+                          {waiting === 1 ? "1 te espera" : `${waiting} te esperan`}
+                        </TonePill>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{summary(b)}</p>
                   </div>
                 </div>
-                <CollapsibleContent className="space-y-5 pt-4 pl-6">
+                <CollapsibleContent className="space-y-5 pl-6">
                   <Group title="Te necesitan" count={b.needs.length}>
-                    <div className="space-y-1.5">
+                    <Rows>
                       {b.needs.map((s) => (
-                        <Link
-                          key={s.id}
-                          href={`/p/${s.projectId}/s/${s.id}`}
-                          onClick={() => {
-                            close()
-                            if (compactions[s.id]?.waiting) setUi({ compactFor: s.id })
-                          }}
-                          className="flex items-center gap-2.5 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 hover:bg-status-attention/10"
-                        >
-                          <SessionLamp session={s} />
-                          <span className="font-mono text-sm font-medium">{s.name}</span>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {s.pending?.kind === "permission"
-                              ? "pide una aprobación"
-                              : s.pending
-                                ? "tiene una pregunta"
-                                : compactions[s.id]?.waiting
-                                  ? "espera que elijas qué conservar al compactar"
-                                  : (s.statusDetail ?? "te necesita")}
-                          </span>
-                        </Link>
+                        <li key={s.id}>
+                          <Link
+                            href={`/p/${s.projectId}/s/${s.id}`}
+                            onClick={() => {
+                              close()
+                              if (compactions[s.id]?.waiting) setUi({ compactFor: s.id })
+                            }}
+                            className={rowClass}
+                          >
+                            <SessionLamp session={s} quiet />
+                            <span className="name max-w-[45%] min-w-0 shrink-0 truncate text-sm" title={s.name}>
+                              {s.name}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={needReason(s, Boolean(compactions[s.id]?.waiting))}>
+                              {needReason(s, Boolean(compactions[s.id]?.waiting))}
+                            </span>
+                            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                          </Link>
+                        </li>
                       ))}
-                    </div>
+                    </Rows>
                   </Group>
                   <Group title="Tareas para vos" count={b.todo.length}>
-                    <div className="space-y-1.5">
+                    <Rows>
                       {b.todo.map((t) => (
-                        <Link
-                          key={t.id}
-                          href={`/p/${t.projectId}`}
-                          onClick={close}
-                          className={
-                            t.blocking
-                              ? "flex items-center gap-2.5 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 hover:bg-status-attention/10"
-                              : "flex items-center gap-2.5 rounded-lg border px-3 py-2 hover:bg-muted"
-                          }
-                        >
-                          <ClipboardList className="size-4 shrink-0 text-muted-foreground" />
-                          <PriorityBadge priority={t.priority} />
-                          <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
-                          {t.blocking && <span className="shrink-0 text-xs text-muted-foreground">te espera</span>}
-                        </Link>
+                        <li key={t.id}>
+                          <Link
+                            href={`/p/${t.projectId}`}
+                            // M4: el resumen del proyecto abre esta tarea y la lleva a la vista.
+                            onClick={() => {
+                              close()
+                              setUi({ reveal: { kind: "tasks", id: t.projectId, item: t.id, at: Date.now() } })
+                            }}
+                            className={rowClass}
+                          >
+                            <ClipboardList className="size-4 shrink-0 text-muted-foreground" />
+                            <PriorityBadge priority={t.priority} />
+                            <span className="min-w-0 flex-1 truncate text-sm" title={t.title}>
+                              {t.title}
+                            </span>
+                            {taskWaits(t) && <TonePill tone="attention">te espera</TonePill>}
+                          </Link>
+                        </li>
                       ))}
-                    </div>
+                    </Rows>
                   </Group>
                   <Group title="Propuestas listas para enviar" count={b.ready.length}>
                     {b.ready.map((d) => (
@@ -226,9 +248,7 @@ export function InboxSheet() {
                     ))}
                   </Group>
                   <Group title="En preparación" count={b.staged.length}>
-                    <p className="text-xs text-muted-foreground">
-                      La orquestadora las está revisando junto con la cola: se liberan cuando termine.
-                    </p>
+                    <p className="text-xs text-muted-foreground">La orquestadora las revisa junto con la cola: se liberan cuando termine.</p>
                     {b.staged.map((d) => (
                       <DraftCard key={d.id} draft={d} compact />
                     ))}
