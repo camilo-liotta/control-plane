@@ -141,7 +141,7 @@ main() {
         usage
         exit 0
         ;;
-      *) die "No conozco la opción $1. Probá con --help." ;;
+      *) die "La opción $1 no existe. Probá con --help." ;;
     esac
     shift
   done
@@ -161,13 +161,13 @@ main() {
   if [[ "$os" == Linux && "$arch" != x86_64 ]]; then
     die "En Linux, por ahora, solo hay paquetes para x86_64 (esta máquina es $arch). Con el repo clonado podés compilarla: npm run app:install."
   fi
-  ((DRY)) && say "Modo prueba (--dry-run): bajo y verifico el paquete, pero no instalo nada."
+  ((DRY)) && say "Modo prueba (--dry-run): se baja y se verifica el paquete, pero no se instala nada."
 
   # ---- 1. Lo que hace falta ----
 
   command -v curl >/dev/null || die "Hace falta curl."
   use_node
-  command -v node >/dev/null || die "No encuentro Node. Instalá Node 24 (nvm, fnm o nodejs.org) y volvé a probar."
+  command -v node >/dev/null || die "No se encontró Node. Instalá Node 24 (nvm, fnm o nodejs.org) y volvé a probar."
   local node_major
   node_major="$(node -p 'process.versions.node.split(".")[0]')"
   ((node_major >= 24)) || die "Tenés Node $(node --version) y hace falta el 24 o más nuevo."
@@ -181,7 +181,7 @@ main() {
     [[ -f "$from/SHA256SUMS" ]] || die "En $from no hay SHA256SUMS."
     if [[ -z "$want" ]]; then
       want="$(sed -n 's/.*control-plane_\([^_]*\)_.*/\1/p' "$from/SHA256SUMS" | head -n 1)"
-      [[ -n "$want" ]] || die "No encuentro la versión en $from/SHA256SUMS: pasala con --version."
+      [[ -n "$want" ]] || die "No se encontró la versión en $from/SHA256SUMS: pasala con --version."
     fi
     version="$want"
   elif [[ -n "$want" ]]; then
@@ -190,7 +190,7 @@ main() {
     # /releases/latest redirige al último publicado (no a borradores ni prereleases).
     local url
     url="$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" ||
-      die "No pude consultar los releases en GitHub. ¿Hay internet?"
+      die "No se pudieron consultar los releases en GitHub. ¿Hay internet?"
     case "$url" in
       */releases/tag/v*) version="${url##*/releases/tag/v}" ;;
       *) die "Todavía no hay ninguna versión publicada en https://github.com/$REPO/releases." ;;
@@ -224,17 +224,17 @@ main() {
     [[ -f "$from/$file" ]] || die "En $from no está $file."
     cp "$from/SHA256SUMS" "$from/$file" "$TMP/"
   else
-    say "Bajo ${file}…"
+    say "Bajando ${file}…"
     fetch "$base/SHA256SUMS" "$TMP/SHA256SUMS" ||
-      die "No encontré la versión $version en https://github.com/$REPO/releases (¿está publicada?)."
-    fetch "$base/$file" "$TMP/$file" || die "No pude bajar $base/$file."
+      die "No se encontró la versión $version en https://github.com/$REPO/releases (¿está publicada?)."
+    fetch "$base/$file" "$TMP/$file" || die "No se pudo bajar $base/$file."
   fi
   local expected actual
   expected="$(awk -v f="$file" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS")"
-  [[ -n "$expected" ]] || die "SHA256SUMS no tiene $file: no lo instalo."
+  [[ -n "$expected" ]] || die "SHA256SUMS no tiene $file: no se instala."
   actual="$(sha256_of "$TMP/$file")"
   [[ "$actual" == "$expected" ]] ||
-    die "El sha256 de $file no coincide con SHA256SUMS (bajó $actual, esperaba $expected): no lo instalo."
+    die "El sha256 de $file no coincide con SHA256SUMS (bajó $actual, se esperaba $expected): no se instala."
   chmod 644 "$TMP/$file"
   say "Verificado (sha256 ${actual:0:16}…)."
 
@@ -255,7 +255,7 @@ main() {
     if [[ "$mode" == mac ]]; then
       say "No tiene firma de Apple: si la Mac no te deja abrirla, mirá \"La primera vez, sin firma de Apple\" en el README."
     fi
-    say "Si algo falla, el detalle está en \"Ver log del server\" del menú del ícono."
+    say "Si algo falla, el detalle está en el ícono de control-plane → \"Ver log del server\"."
   fi
 }
 
@@ -301,7 +301,7 @@ install_mac() {
     dest=/Applications
     if [[ ! -w "$dest" ]]; then
       dest="$HOME/Applications"
-      say "No puedo escribir en /Applications: la instalo en $dest."
+      say "No se puede escribir en /Applications: se instala en $dest."
       run mkdir -p "$dest"
     fi
     target="$dest/$APP.app"
@@ -319,14 +319,14 @@ install_mac() {
     fi
     # Con --app-pid, la que llama es de esta versión: ya sabe --restart-for-update.
     if [[ -n "$APP_PID" ]] || { [[ -x "$exe" ]] && knows_restart "$exe"; }; then
-      say "Cierro la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+      say "Cerrando la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
       run "$exe" --quit --restart-for-update
     else
       # Una app de antes no sabe reiniciarse para actualizar: salir como desde el Dock deja su
       # server corriendo. La nueva lo detecta al abrir y lo reinicia (sola si no hay sesiones
       # trabajando; si hay, desde el menú del ícono).
-      say "La app abierta es de una versión anterior: la cierro, pero su server queda corriendo."
-      say "Al abrirse, la nueva lo reinicia sola (si hay sesiones trabajando, te lo ofrece en el menú del ícono → Reiniciar el server)."
+      say "La app abierta es de una versión anterior: se cierra, pero su server queda corriendo."
+      say "Al abrirse, la nueva lo reinicia sola (si hay sesiones trabajando, te lo ofrece en el ícono de control-plane → Reiniciar el server)."
       run osascript -e "quit app \"$APP\""
     fi
     ((DRY)) || REOPEN_ON_FAIL="$target"
@@ -341,7 +341,7 @@ install_mac() {
   fi
   if ! run mv "$target.nueva" "$target"; then
     [[ -e "$target.vieja" ]] && mv "$target.vieja" "$target"
-    die "No pude poner la versión nueva en $target."
+    die "No se pudo poner la versión nueva en $target."
   fi
   run rm -rf "$target.vieja"
   REOPEN_ON_FAIL=""
@@ -381,20 +381,20 @@ install_linux() {
   #    falla o se cancela, la app nunca se cerró.
   if [[ "$mode" == deb ]]; then
     if [[ -t 0 ]]; then
-      say "Instalo el paquete (te va a pedir la contraseña)…"
+      say "Instalando el paquete (te va a pedir la contraseña)…"
       run sudo env DEBIAN_FRONTEND=noninteractive apt install -y "$pkg"
     elif command -v pkexec >/dev/null && [[ -x /usr/bin/apt ]]; then
       # Sin terminal (la lanzó la app): el sistema muestra su diálogo para la contraseña. apt por
       # su ruta: corre como root, no puede ser el primero que aparezca en el PATH. Y sin terminal
       # debconf no puede preguntar nada: que no lo intente (si no, llena el log de "unable to
       # initialize frontend").
-      say "Instalo el paquete (el sistema te va a pedir la contraseña)…"
+      say "Instalando el paquete (el sistema te va a pedir la contraseña)…"
       run pkexec /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt install -y "$pkg"
     else
       die "Para instalar el .deb hace falta pkexec o correr esto desde una terminal."
     fi
   else
-    say "Dejo el AppImage en $bin."
+    say "El AppImage queda en $bin."
     run mkdir -p "$(dirname "$bin")"
     # Copia aparte y después el cambio: la app abierta sigue con su archivo hasta que la cierres.
     run cp "$pkg" "$bin.nueva"
@@ -412,14 +412,14 @@ install_linux() {
   # 2. Cerrar la vieja (el server guarda las sesiones activas y se detiene) y abrir la nueva, que
   #    lanza el server nuevo y las retoma. App y server se actualizan juntos.
   if ((open && knows)); then
-    say "Cierro la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+    say "Cerrando la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
     run "$bin" --quit --restart-for-update
     if ! wait_closed app_pids "$bin"; then
       warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
       return 0
     fi
     if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-      say "No veo una sesión gráfica en esta terminal: abrí control-plane desde el lanzador."
+      say "Esta terminal no tiene una sesión gráfica: abrí control-plane desde el lanzador."
     else
       # Sin atarla a esta terminal y sin lo que la app no tiene que heredar de ella: NODE_ENV,
       # lo de npm y, si esto corre desde una sesión del dashboard, las CONTROL_PLANE_* del server.
@@ -429,7 +429,7 @@ install_linux() {
           npm_* | CONTROL_PLANE_*) unset_+=(-u "$v") ;;
         esac
       done < <(compgen -e)
-      say "Vuelvo a abrir la app."
+      say "Abriendo la app de nuevo."
       if ((DRY)); then
         printf '  (haría) env %s setsid %s\n' "${unset_[*]}" "$bin"
       else
@@ -437,10 +437,10 @@ install_linux() {
       fi
     fi
   elif ((open)); then
-    say "La app abierta es de una versión anterior, que no sabe reiniciarse para actualizar: no la cierro."
-    say "Para pasar a la nueva: menú del ícono → Salir → \"Detener y salir\", y volvé a abrirla desde el"
+    say "La app abierta es de una versión anterior, que no sabe reiniciarse para actualizar: no se cierra."
+    say "Para pasar a la nueva: ícono de control-plane → Salir → \"Detener y salir\", y volvé a abrirla desde el"
     say "lanzador: arranca con el server nuevo (las sesiones se reanudan cuando les escribís)."
-    say "Si la cerrás dejando el server, la nueva lo detecta y te ofrece reiniciarlo (menú del ícono →"
+    say "Si la cerrás dejando el server, la nueva lo detecta y te ofrece reiniciarlo (ícono de control-plane →"
     say "Reiniciar el server)."
   fi
 }

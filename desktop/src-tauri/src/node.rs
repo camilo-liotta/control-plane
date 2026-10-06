@@ -97,22 +97,22 @@ impl fmt::Display for NodeError {
         match self {
             Self::NotFound { shell, dirs } => write!(
                 f,
-                "No encontré node. Lo busqué en las {dirs} carpetas del PATH de tu shell de login ({}) \
-                 y en las rutas de siempre. Instalá Node {MIN_MAJOR} o más nuevo, o elegí cuál usar en los ajustes.",
+                "No se encontró Node en las {dirs} carpetas del PATH de tu shell de login ({}) \
+                 ni en las rutas de siempre. Instalá Node {MIN_MAJOR} o más nuevo, o elegí cuál usar.",
                 shell.display()
             ),
             Self::Missing { path, source } => write!(
                 f,
-                "El node que elegiste en {source} ({}) no existe o no se puede ejecutar.",
+                "El Node que elegiste en {source} ({}) no existe o no se puede ejecutar.",
                 path.display()
             ),
             Self::Broken { path, detail } => {
-                write!(f, "No pude preguntarle la versión a {} ({detail}).", path.display())
+                write!(f, "No se pudo leer la versión de {} ({detail}).", path.display())
             }
             Self::TooOld { path, version } => write!(
                 f,
-                "Necesitás Node {MIN_MAJOR} o más nuevo, y encontré {} en {}. \
-                 Actualizalo o elegí otro en los ajustes.",
+                "Hace falta Node {MIN_MAJOR} o más nuevo, y el de {1} es {0}. \
+                 Actualizalo o elegí otro.",
                 show(*version),
                 path.display()
             ),
@@ -324,7 +324,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(err.to_string().contains("encontré v22.1.0 en"), "{err}");
+        assert!(err.to_string().contains("es v22.1.0. Actualizalo"), "{err}");
     }
 
     #[test]

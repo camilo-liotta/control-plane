@@ -122,9 +122,10 @@ pub fn is_lock_error(log_tail: &[String]) -> bool {
 
 /// El server murió porque no encontró `claude`.
 pub fn is_claude_error(log_tail: &[String]) -> bool {
-    log_tail
-        .iter()
-        .any(|l| l.contains("No encontré el binario de Claude Code"))
+    log_tail.iter().any(|l| {
+        l.contains("No encontré el binario de Claude Code")
+            || l.contains("No se encontró el binario de Claude Code")
+    })
 }
 
 #[cfg(test)]

@@ -6,150 +6,243 @@
     <meta name="referrer" content="no-referrer" />
     <title>control-plane</title>
     <style>
+      /* Las fuentes de la web (Fontsource, OFL): las copia `npm run stage` (scripts/fonts.mjs). */
+      @font-face {
+        font-family: "Instrument Sans Variable";
+        font-weight: 400 700;
+        font-display: block;
+        src: url(fonts/instrument-sans-latin-wght-normal.woff2) format("woff2-variations");
+      }
+      @font-face {
+        font-family: "Bricolage Grotesque Variable";
+        font-weight: 200 800;
+        font-display: block;
+        src: url(fonts/bricolage-grotesque-latin-wght-normal.woff2) format("woff2-variations");
+      }
+      @font-face {
+        font-family: "Geist Mono Variable";
+        font-weight: 100 900;
+        font-display: block;
+        src: url(fonts/geist-mono-latin-wght-normal.woff2) format("woff2-variations");
+      }
+
+      /*
+       * Los colores de la base Estudio, copiados de web/src/index.css (:root y .dark). Si cambian
+       * ahí, cambialos acá: la mesa (--sidebar), la hoja (--background), la tarjeta (--card), los
+       * tonos de estado (texto --status-*, luz --lamp-*) y las alturas (--elev-1, --sheet).
+       */
       :root {
         color-scheme: light dark;
-        --bg: #f7f7f9;
-        --fg: #1f2430;
-        --muted: #6b7080;
-        --card: #ffffff;
-        --border: #e2e4ea;
-        --accent: #1f2430;
-        --accent-fg: #f7f7f9;
+        --ff-ui: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+        --ff-display: "Bricolage Grotesque Variable", "Instrument Sans Variable", ui-sans-serif, sans-serif;
+        --ff-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+        --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+        --elev-1: 0 0 0 1px oklch(0.25 0.03 280 / 6%), 0 1px 2px oklch(0.25 0.03 280 / 5%), 0 6px 16px -8px oklch(0.25 0.03 280 / 10%);
+        --sheet: 0 0 0 1px oklch(0.25 0.03 280 / 6%), 0 2px 6px oklch(0.25 0.03 280 / 5%), 0 18px 40px -24px oklch(0.25 0.03 280 / 18%);
+        --background: oklch(0.995 0.002 280);
+        --foreground: oklch(0.2 0.02 280);
+        --card: oklch(1 0 0);
+        --primary: oklch(0.22 0.025 280);
+        --primary-foreground: oklch(0.99 0.002 280);
+        --muted: oklch(0.965 0.006 280);
+        --muted-foreground: oklch(0.49 0.018 280);
+        --accent: oklch(0.95 0.009 280);
+        --input: oklch(0.85 0.01 280);
+        --ring: oklch(0.55 0.15 275);
+        --sidebar: oklch(0.955 0.007 280);
+        --status-attention: oklch(0.51 0.13 58);
+        --lamp-working: oklch(0.6 0.18 265);
+        --lamp-attention: oklch(0.75 0.15 66);
+        --lamp-error: oklch(0.62 0.2 22);
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #15171d;
-          --fg: #e8eaf0;
-          --muted: #9aa0ae;
-          --card: #1d2028;
-          --border: #2c303b;
-          --accent: #e8eaf0;
-          --accent-fg: #15171d;
+          --elev-1: 0 0 0 1px oklch(1 0 0 / 7%), 0 1px 0 oklch(1 0 0 / 4%) inset, 0 8px 20px -10px oklch(0 0 0 / 55%);
+          --sheet: 0 0 0 1px oklch(1 0 0 / 6%), 0 24px 48px -24px oklch(0 0 0 / 70%);
+          --background: oklch(0.205 0.01 280);
+          --foreground: oklch(0.94 0.006 280);
+          --card: oklch(0.24 0.012 280);
+          --primary: oklch(0.94 0.006 280);
+          --primary-foreground: oklch(0.2 0.015 280);
+          --muted: oklch(0.255 0.012 280);
+          --muted-foreground: oklch(0.71 0.015 280);
+          --accent: oklch(0.285 0.014 280);
+          --input: oklch(1 0 0 / 16%);
+          --ring: oklch(0.72 0.13 275);
+          --sidebar: oklch(0.155 0.008 280);
+          --status-attention: oklch(0.83 0.13 72);
+          --lamp-working: oklch(0.7 0.16 265);
+          --lamp-attention: oklch(0.8 0.14 70);
+          --lamp-error: oklch(0.68 0.18 22);
         }
       }
+
       * {
         box-sizing: border-box;
       }
+      html {
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+      }
+      /* La mesa, y encima la hoja. */
       body {
         margin: 0;
         min-height: 100vh;
         display: grid;
         place-items: center;
-        background: var(--bg);
-        color: var(--fg);
-        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+        background: var(--sidebar);
+        color: var(--foreground);
+        font: 14px/1.35rem var(--ff-ui);
       }
       main {
-        width: min(460px, calc(100vw - 48px));
+        width: min(480px, calc(100vw - 48px));
         padding: 28px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: var(--card);
+        border-radius: 1.125rem;
+        background: var(--background);
+        box-shadow: var(--sheet);
+      }
+      .brand {
+        margin: 0 0 14px;
+        color: var(--muted-foreground);
+        font: 600 12px/1rem var(--ff-display);
+        letter-spacing: -0.02em;
       }
       h1 {
-        margin: 0 0 8px;
-        font-size: 17px;
-        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 6px;
+        font: 600 1.25rem/1.75rem var(--ff-display);
+        letter-spacing: -0.015em;
       }
       p {
-        margin: 0 0 16px;
-        color: var(--muted);
-      }
-      code {
-        font: 13px ui-monospace, "SF Mono", "Ubuntu Mono", monospace;
+        margin: 0 0 18px;
+        color: var(--muted-foreground);
       }
       pre {
-        margin: 0 0 16px;
+        margin: 0 0 18px;
         padding: 10px 12px;
-        max-height: 180px;
+        max-height: 200px;
         overflow: auto;
-        border-radius: 8px;
-        background: var(--bg);
-        font: 12px/1.45 ui-monospace, "SF Mono", "Ubuntu Mono", monospace;
+        border-radius: 0.875rem;
+        background: var(--muted);
+        color: var(--foreground);
+        font: 12px/1.1rem var(--ff-mono);
         white-space: pre-wrap;
-      }
-      button {
-        padding: 7px 14px;
-        border: 0;
-        border-radius: 8px;
-        background: var(--accent);
-        color: var(--accent-fg);
-        font: inherit;
-        font-weight: 500;
-        cursor: pointer;
-      }
-      button:disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
-      .status {
-        margin: 12px 0 0;
-        font-size: 13px;
+        overflow-wrap: anywhere;
       }
       [hidden] {
         display: none !important;
       }
+
+      /* La luz de estado: arrancando late en azul, el aviso es ámbar y el error un rombo rojo. */
       .tone {
-        display: inline-block;
+        flex: none;
         width: 8px;
         height: 8px;
-        margin-right: 8px;
         border-radius: 50%;
-        vertical-align: middle;
-        background: var(--muted);
-      }
-      [data-tone="warn"] .tone {
-        background: #d08a1c;
-      }
-      [data-tone="error"] .tone {
-        background: #d0473b;
+        background: var(--lamp-working);
       }
       [data-tone="loading"] .tone {
-        animation: pulse 1.2s ease-in-out infinite;
+        animation: pulse 1.4s var(--ease-standard) infinite;
+      }
+      [data-tone="warn"] .tone {
+        background: var(--lamp-attention);
+      }
+      [data-tone="error"] .tone {
+        border-radius: 1px;
+        transform: rotate(45deg) scale(0.88);
+        background: var(--lamp-error);
       }
       @keyframes pulse {
         50% {
-          opacity: 0.3;
+          opacity: 0.35;
         }
       }
+
+      /* Los botones de la web: el principal (uno) y los secundarios como "outline". */
       .actions {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
         align-items: center;
       }
-      button.secondary {
-        background: transparent;
-        color: var(--fg);
-        box-shadow: inset 0 0 0 1px var(--border);
+      button {
+        height: 32px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 0.625rem;
+        background: var(--card);
+        color: var(--foreground);
+        box-shadow: var(--elev-1);
+        font: 500 14px var(--ff-ui);
+        white-space: nowrap;
+        cursor: pointer;
+        transition: background-color 180ms var(--ease-standard), opacity 180ms var(--ease-standard);
+      }
+      button:hover {
+        background: var(--accent);
+      }
+      button.primary {
+        background: var(--primary);
+        color: var(--primary-foreground);
+      }
+      button.primary:hover {
+        background: color-mix(in oklch, var(--primary) 88%, transparent);
+      }
+      button:active {
+        translate: 0 1px;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: none;
+        box-shadow: var(--elev-1), 0 0 0 1px var(--background), 0 0 0 3px color-mix(in oklch, var(--ring) 70%, transparent);
       }
       input {
-        width: 90px;
-        padding: 6px 8px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--bg);
-        color: var(--fg);
-        font: inherit;
+        width: 96px;
+        height: 32px;
+        padding: 0 10px;
+        border: 1px solid var(--input);
+        border-radius: 0.625rem;
+        background: var(--card);
+        color: var(--foreground);
+        font: 14px var(--ff-mono);
       }
+
+      /* Aviso que no frena (la shell de login no respondió): el fondo suave del tono ámbar. */
       .notice {
-        margin: 16px 0 0;
+        margin: 18px 0 0;
         padding: 10px 12px;
-        border-radius: 8px;
-        background: color-mix(in srgb, #d08a1c 14%, transparent);
-        color: var(--fg);
+        border-radius: 0.625rem;
+        background: color-mix(in oklch, var(--lamp-attention) 18%, transparent);
+        color: var(--status-attention);
         font-size: 13px;
+        line-height: 1.25rem;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+        [data-tone="loading"] .tone {
+          animation: none;
+        }
       }
     </style>
   </head>
   <body>
     <main>
-      <h1><span class="tone"></span><span id="title">Abriendo control-plane…</span></h1>
+      <p class="brand">control-plane</p>
+      <h1><span class="tone" aria-hidden="true"></span><span id="title">Abriendo control-plane…</span></h1>
       <p id="message"></p>
       <pre id="detail" hidden></pre>
       <pre id="log" hidden></pre>
       <div id="actions" class="actions"></div>
-      <p id="notice" class="notice" hidden></p>
+      <p id="notice" class="notice" role="status" hidden></p>
     </main>
     <script src="error.js"></script>
   </body>

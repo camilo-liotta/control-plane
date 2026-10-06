@@ -282,6 +282,16 @@ pub fn close_action(tray_visible: bool) -> Close {
     }
 }
 
+/// Dónde está el ícono de la app, para los textos: "la barra de arriba" en Linux, "la barra de menú"
+/// en la Mac.
+pub fn icon_place() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "el ícono de control-plane en la barra de menú"
+    } else {
+        "el ícono de control-plane en la barra de arriba"
+    }
+}
+
 /// Va antes de la pregunta de salida cuando se cerró la ventana sin un ícono visible.
 pub const NO_TRAY_NOTE: &str = "No se ve el ícono de control-plane en la barra de arriba (en GNOME hace falta una extensión, como AppIndicator): cerrar la ventana cierra la app.";
 

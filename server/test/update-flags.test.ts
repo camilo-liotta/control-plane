@@ -77,7 +77,7 @@ describe("al actualizar, get.sh reinicia app y server juntos", { skip: !linux &&
     const target = await openApp("vieja.AppImage", "control-plane-desktop --quit --keep-server  sale sin preguntar y deja el server corriendo")
     const out = update(target)
     assert.doesNotMatch(out, /\(haría\) \S+ --quit/)
-    assert.match(out, /versión anterior, que no sabe reiniciarse para actualizar: no la cierro/)
+    assert.match(out, /versión anterior, que no sabe reiniciarse para actualizar: no se cierra/)
     assert.match(out, /Detener y salir/)
   })
 })

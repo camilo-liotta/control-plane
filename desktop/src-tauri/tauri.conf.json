@@ -19,6 +19,7 @@
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self'",
+        "font-src": "'self'",
         "connect-src": "'none'"
       }
     }

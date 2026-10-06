@@ -12,3 +12,4 @@ dist/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/server-bundle/
+desktop/ui/fonts/

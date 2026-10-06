@@ -129,7 +129,7 @@ La ventana aparece enseguida ("Abriendo control-plane…"). Mientras tanto, la a
 Si el server se cae:
 
 - **El que lanzó la app**: avisa siempre. Lo relanza solo si había andado más de un minuto, y como mucho 3 veces cada 5 minutos.
-- **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzarlo** y **Reintentar**. La app no lo relanza sola.
+- **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzar el server** y **Reintentar**. La app no lo relanza sola.
 
 **Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde el menú del ícono. La primera vez, un aviso dice dónde quedó la app y cómo volver a abrirla.
 
@@ -195,19 +195,19 @@ Si la app adopta un server de una versión anterior (el de una app vieja que se 
 
 ### Pantallas de error
 
-Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
+Cuando algo no anda, la ventana lo dice y ofrece qué hacer. Las pantallas usan el mismo estilo que la web (Estudio), en claro u oscuro según el sistema, con las fuentes de la web incluidas en la app: no se baja nada de afuera.
 
-- **Falta Node 24**: no hay `node` en el PATH de tu shell de login, o es viejo. El detalle dice qué versión encontró y dónde buscó. **Elegir node…** (queda guardado en los ajustes), **Reintentar** o **Descargar Node** (nodejs.org).
-- **No encontré Claude Code**: **Elegir Claude Code…** (queda guardado en los ajustes, y el server y las sesiones usan ese), **Reintentar** o **Cómo instalarlo** (la guía de instalación). El texto trae el comando para instalarlo desde una terminal.
+- **Falta Node 24**: no hay `node` en el PATH de tu shell de login, o es viejo. El detalle dice qué versión encontró y dónde buscó. **Elegir Node…** (queda guardado en los ajustes), **Reintentar** o **Descargar Node** (nodejs.org).
+- **No se encontró Claude Code**: **Elegir Claude Code…** (queda guardado en los ajustes, y el server y las sesiones usan ese), **Reintentar** o **Ver cómo instalarlo** (la guía de instalación). El texto trae el comando para instalarlo desde una terminal.
 - **El puerto X lo usa otro programa**: lo que escucha ahí no es un control-plane. La app no lo toca: elegí otro puerto en la misma pantalla (**Usar este puerto**, queda guardado) o cerrá ese programa y **Reintentar**.
 - **Hay un control-plane viejo en este puerto**: un server de antes de la app, sin `/api/health`. Reinicialo o actualizalo; si no, **Abrir igual**.
-- **Ya hay un server usando esta carpeta de datos**: otro control-plane usa la misma `CONTROL_PLANE_HOME` en otro puerto. **Usar ese**, o detenelo y **Reintentar**.
-- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**. Si fue por Claude Code, además, **Elegir Claude Code…** y **Cómo instalarlo**.
-- **El server tarda más de lo normal**: a los 30 s todavía no responde. **Esperar**, **Ver log** o **Detener**.
+- **Ya hay un server usando esta carpeta de datos**: otro control-plane usa la misma `CONTROL_PLANE_HOME` en otro puerto. **Usar ese server**, o detenelo y **Reintentar**.
+- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**. Si fue por Claude Code, además, **Elegir Claude Code…** y **Ver cómo instalarlo**.
+- **El server tarda más de lo normal**: a los 30 s todavía no responde. **Esperar**, **Ver log** o **Detener el server**.
 - **El server se sigue cayendo**: ya lo relanzó 3 veces en 5 minutos. Mirá el log antes de reintentar.
 - **El server no responde**: está vivo pero no contesta, y la app no puede verificar que sea el suyo, así que no lo toca. Si no se recupera, detenelo a mano y **Reintentar**.
-- **El server se detuvo**: se cayó uno que no había lanzado la app. **Lanzarlo** o **Reintentar**.
-- **Aviso amarillo "No pude leer el entorno de tu shell…"**: la shell de login no respondió en 5 s o falló. La app usa las rutas de siempre (ver abajo).
+- **El server se detuvo**: se cayó uno que no había lanzado la app. **Lanzar el server** o **Reintentar**.
+- **Aviso amarillo "No se pudo leer el entorno de tu shell…"**: la shell de login no respondió en 5 s o falló. La app usa las rutas de siempre (ver abajo).
 
 ### Log y ajustes
 

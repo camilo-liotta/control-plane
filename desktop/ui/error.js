@@ -6,20 +6,21 @@ const $ = (id) => document.getElementById(id)
 
 const LABELS = {
   retry: "Reintentar",
-  launch: "Lanzarlo",
-  "pick-node": "Elegir node…",
+  launch: "Lanzar el server",
+  "pick-node": "Elegir Node…",
   "get-node": "Descargar Node",
   "pick-claude": "Elegir Claude Code…",
-  "get-claude": "Cómo instalarlo",
+  "get-claude": "Ver cómo instalarlo",
   "open-anyway": "Abrir igual",
   cancel: "Cancelar",
   "set-port": "Usar este puerto",
-  "use-that": "Usar ese",
+  "use-that": "Usar ese server",
   wait: "Esperar",
   log: "Ver log",
-  stop: "Detener",
+  stop: "Detener el server",
 }
-// Los que no son la acción principal van con un estilo más liviano.
+// La acción principal es la primera que no sea de las de consulta (ver el log, descargar…), como
+// en la web: un solo botón principal por vista; el resto, secundarios.
 const SECONDARY = new Set(["log", "cancel", "get-node", "get-claude", "wait", "stop"])
 
 function ask(action, extra = {}) {
@@ -42,6 +43,7 @@ text("log", params.get("log"))
 text("notice", params.get("notice"))
 
 const actions = (params.get("actions") ?? "").split(",").filter((a) => a in LABELS)
+const primary = actions.find((a) => !SECONDARY.has(a))
 for (const action of actions) {
   if (action === "set-port") {
     const input = document.createElement("input")
@@ -54,6 +56,7 @@ for (const action of actions) {
     const btn = document.createElement("button")
     btn.type = "button"
     btn.textContent = LABELS[action]
+    btn.className = "primary"
     btn.addEventListener("click", () => ask(action, { p: input.value }))
     input.addEventListener("keydown", (e) => e.key === "Enter" && btn.click())
     $("actions").append(btn)
@@ -62,7 +65,7 @@ for (const action of actions) {
   const btn = document.createElement("button")
   btn.type = "button"
   btn.textContent = LABELS[action]
-  if (SECONDARY.has(action)) btn.className = "secondary"
+  if (action === primary) btn.className = "primary"
   btn.addEventListener("click", () => ask(action))
   $("actions").append(btn)
 }

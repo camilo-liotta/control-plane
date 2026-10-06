@@ -72,7 +72,7 @@ describe("get.sh encuentra Node aunque la app no tenga el PATH de tu shell", { s
   })
 
   it("sin ningún node, el error de siempre", { skip: systemNode && "hay un node del sistema" }, () => {
-    assert.match(run({}), /No encuentro Node/)
+    assert.match(run({}), /No se encontró Node/)
   })
 })
 
