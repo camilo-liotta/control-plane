@@ -343,7 +343,7 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
                     )}
                   </li>
                 ))}
-                {!data.sources.length && <li className="px-4 py-3 text-sm text-muted-foreground">Todavía no hay fuentes de skills.</li>}
+                {!data.sources.length && <li className="px-4 py-3 text-sm text-muted-foreground">Las fuentes que agregues aparecen acá: un repo con carpetas SKILL.md.</li>}
               </ul>
               {data.suggested.length > 0 && (
                 <div className="flex flex-wrap gap-2">

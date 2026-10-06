@@ -1,16 +1,16 @@
-import { Archive, ArrowRight, ChevronRight, History, Inbox, Plus, RotateCcw } from "lucide-react"
-import { useCallback, useMemo, useState } from "react"
+import { Archive, ArrowRight, ChevronRight, History, Inbox, LogIn, Plus, RotateCcw } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
 import type { Project, Report, Session } from "@shared/types"
 
 import { Mark, useInboxParts } from "@/components/app-sidebar"
+import { authLine } from "@/components/accounts"
 import { PageHeader } from "@/components/page-header"
 import { Lamp, SessionLamp, TonePill } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Shortcut } from "@/components/ui/kbd"
 import { LoadError } from "@/components/ui/load-error"
 import { Spinner } from "@/components/ui/spinner"
@@ -139,7 +139,7 @@ function ProjectCard({ project }: { project: Project }) {
           )
         })}
         {all.length > shown.length && <li className="text-2xs text-muted-foreground">y {plural(all.length - shown.length, "sesión más", "sesiones más")}</li>}
-        {!workers.length && <li className="text-xs text-muted-foreground">Sin sesiones worker todavía</li>}
+        {!workers.length && <li className="text-xs text-muted-foreground">Todavía sin sesiones: contale el objetivo a la orquestadora y te las propone.</li>}
       </ul>
       <p className="mt-auto flex flex-wrap gap-x-2 text-2xs text-muted-foreground">
         {last > 0 && <span>Actividad {timeAgo(last)}</span>}
@@ -232,6 +232,64 @@ function RecentActivity({ projects }: { projects: Project[] }) {
   )
 }
 
+/** Lo mínimo para arrancar, con su estado: Claude Code instalado y la cuenta logueada. */
+function Requirement({ tone, title, detail, action }: { tone: Tone; title: string; detail: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <li className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+      <Lamp tone={tone} className="shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block text-xs text-muted-foreground">{detail}</span>
+      </span>
+      {action}
+    </li>
+  )
+}
+
+/** El inicio sin proyectos: qué es un proyecto, qué hace falta y el botón para crear el primero. */
+function FirstProject() {
+  const claude = useStore((s) => s.meta?.claudeVersion)
+  const account = useCurrentAccount()
+  const setUi = useUi((s) => s.set)
+  const auth = account?.auth ?? null
+  return (
+    <div className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-12 sm:py-20">
+      <Mark className="size-8" />
+      <div className="space-y-2">
+        <h2 className="page-title text-lg">Creá tu primer proyecto</h2>
+        <p className="text-sm text-muted-foreground">
+          Un proyecto es un repo con su orquestadora: con ella planeás el trabajo, lo reparte en sesiones de Claude Code que
+          trabajan en paralelo y te trae los resultados para revisar.
+        </p>
+      </div>
+      <ul className="surface-card divide-y overflow-hidden" aria-label="Lo que hace falta">
+        <Requirement
+          tone={claude ? "done" : "attention"}
+          title={claude ? "Claude Code instalado" : "Falta Claude Code"}
+          detail={claude ? <span className="font-mono">claude {claude}</span> : "Instalalo y reiniciá el server para crear sesiones."}
+        />
+        <Requirement
+          tone={!auth ? "idle" : auth.loggedIn ? "done" : "attention"}
+          title={!auth ? `Verificando la cuenta ${account?.name ?? ""}…` : auth.loggedIn ? `Cuenta ${account?.name} logueada` : `La cuenta ${account?.name} no tiene login`}
+          detail={!auth ? "Un momento." : auth.loggedIn ? authLine(auth) : "Las sesiones no arrancan hasta que la loguees."}
+          action={
+            auth && !auth.loggedIn ? (
+              <Button size="sm" variant="outline" onClick={() => setUi({ accountsDialog: true })}>
+                <LogIn />
+                Loguearla
+              </Button>
+            ) : undefined
+          }
+        />
+      </ul>
+      <Button className="self-start" onClick={() => setUi({ newProject: true })}>
+        <Plus />
+        Nuevo proyecto
+      </Button>
+    </div>
+  )
+}
+
 /** M8: los proyectos archivados de la cuenta, con Restaurar. Se cargan al abrir la sección. */
 function ArchivedProjects() {
   const account = useCurrentAccount()
@@ -248,6 +306,11 @@ function ArchivedProjects() {
       setError(err)
     }
   }, [])
+
+  // Se cargan al entrar (es una consulta chica) para no mostrar la sección si no hay ninguno.
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const mine = (list ?? []).filter((p) => (p.accountId ? p.accountId === account?.id : (account?.isDefault ?? true)))
 
@@ -266,6 +329,7 @@ function ArchivedProjects() {
       }
     })
 
+  if (!error && (!list || !mine.length)) return null
   return (
     <Collapsible
       open={open}
@@ -338,23 +402,7 @@ export function Home() {
       <div className="flex h-full flex-col">
         <PageHeader title="Inicio" />
         <div className="flex-1 overflow-y-auto">
-          <Empty className="min-h-[60%]">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <Mark className="size-6" />
-              </EmptyMedia>
-              <EmptyTitle>Creá tu primer proyecto</EmptyTitle>
-              <EmptyDescription>
-                Un proyecto es un repo con su orquestadora y sus sesiones worker. Elegí la carpeta y arrancamos.
-              </EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent>
-              <Button onClick={() => setUi({ newProject: true })}>
-                <Plus />
-                Nuevo proyecto
-              </Button>
-            </EmptyContent>
-          </Empty>
+          <FirstProject />
           <div className="mx-auto max-w-6xl px-4 pb-8 sm:px-6">
             <ArchivedProjects />
           </div>

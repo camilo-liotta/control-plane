@@ -424,7 +424,11 @@ export function SkillSection({ view, onChanged, readOnly = false }: { view: Tool
       {!readOnly && <AiSkillSearch view={view} onChanged={onChanged} onOpenSkill={setMarketSkill} />}
       <div className="flex flex-wrap items-center gap-3">
         <p className="flex-1 text-sm text-muted-foreground">
-          {view.skills.length} skills{total ? ` · su listado ocupa ~${tokens(total)} tokens en cada sesión` : ""}.
+          {view.skills.length
+            ? `${view.skills.length === 1 ? "1 skill" : `${view.skills.length} skills`}${total ? ` · su listado ocupa ~${tokens(total)} tokens en cada sesión` : ""}.`
+            : readOnly
+              ? "Esta sesión no tiene skills."
+              : "Todavía no hay skills: creá una o instalá una de un marketplace."}
           {!readOnly && (view.projectId ? " Los cambios de estado aplican solo para vos en este proyecto." : " Los cambios de estado aplican en todos tus proyectos.")}
         </p>
         {!readOnly && (
