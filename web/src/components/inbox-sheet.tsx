@@ -248,7 +248,6 @@ export function InboxSheet() {
                     ))}
                   </Group>
                   <Group title="En preparación" count={b.staged.length}>
-                    <p className="text-xs text-muted-foreground">La orquestadora las revisa junto con la cola: se liberan cuando termine.</p>
                     {b.staged.map((d) => (
                       <DraftCard key={d.id} draft={d} compact />
                     ))}
