@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils"
 
 /**
  * Lo que va en lugar de una lista o un panel cuando no se pudo cargar: nunca "vacío" ni un esqueleto
- * eterno. `what` completa la frase "No se pudo cargar …". `compact` es para dentro de una fila o una
+ * eterno. `what` completa la frase "No se pudo cargar …" (con "los" o "las" adelante, va en plural:
+ * "No se pudieron cargar las herramientas"). `compact` es para dentro de una fila o una
  * sección chica.
  */
 export function LoadError({
@@ -46,7 +47,9 @@ export function LoadError({
       )}
     >
       <div className="min-w-0 flex-1">
-        <p className="font-medium text-status-error">No se pudo cargar {what}.</p>
+        <p className="font-medium text-status-error">
+          {/^(los|las) /i.test(what) ? "No se pudieron cargar" : "No se pudo cargar"} {what}.
+        </p>
         {detail && <p className="truncate text-xs text-muted-foreground" title={detail}>{detail}</p>}
       </div>
       {onRetry && (
