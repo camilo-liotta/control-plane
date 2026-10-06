@@ -24,6 +24,8 @@ export interface Pty {
   mode(): Promise<TermMode | null>
   /** Corta la shell y todo lo que lanzó. Resuelve cuando no queda nada. */
   kill(): Promise<void>
+  /** Lo que corre adentro de la shell (sus descendientes), por nombre. Vacío si está esperando un comando. */
+  running?(): Promise<string[]>
   onData(cb: (data: string) => void): void
   onExit(cb: (code: number | null) => void): void
 }
@@ -162,6 +164,13 @@ export function spawnPty(opts: PtyOptions, platform: NodeJS.Platform = process.p
       // Hasta que los cosechen (un zombi todavía responde a kill 0).
       await waitFor(() => exited && pids.every((p) => !alive(p)), 3000)
     },
+    running: async () => {
+      const where = await locate()
+      if (!where || exited) return []
+      const tree = await processTree()
+      const mine = new Set(descendants(tree, where.pid))
+      return tree.filter((p) => mine.has(p.pid)).map((p) => p.comm)
+    },
     onData: (cb) => {
       child.stdout.on("data", cb)
       child.stderr.on("data", cb)
@@ -177,16 +186,18 @@ interface Proc {
   pid: number
   ppid: number
   tty: string
+  /** El nombre del ejecutable (sin la ruta ni los argumentos). */
+  comm: string
 }
 
 /** Todos los procesos, con `ps` (el mismo formato en Linux y en la Mac). */
 async function processTree(): Promise<Proc[]> {
-  const { stdout } = await run("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "tty="]).catch(() => ({ stdout: "" }))
+  const { stdout } = await run("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "tty=", "-o", "comm="]).catch(() => ({ stdout: "" }))
   return stdout
     .split("\n")
     .map((l) => l.trim().split(/\s+/))
     .filter((f) => f.length >= 2)
-    .map(([pid, ppid, tty]) => ({ pid: Number(pid), ppid: Number(ppid), tty: tty ?? "" }))
+    .map(([pid, ppid, tty, ...comm]) => ({ pid: Number(pid), ppid: Number(ppid), tty: tty ?? "", comm: (comm.join(" ").split("/").pop() ?? "").trim() }))
 }
 
 export function descendants(tree: { pid: number; ppid: number }[], root: number): number[] {

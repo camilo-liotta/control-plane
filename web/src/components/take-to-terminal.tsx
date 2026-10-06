@@ -1,4 +1,4 @@
-import { SquareTerminal } from "lucide-react"
+import { ArrowRight, SquareTerminal } from "lucide-react"
 import { createContext, useContext, useState } from "react"
 import { useLocation } from "wouter"
 
@@ -17,8 +17,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { TerminalPanel } from "@/components/terminal-panel"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useStore } from "@/lib/store"
 import { rememberedValues, rememberValues, useTerminal } from "@/lib/terminal"
 import { cn } from "@/lib/utils"
 
@@ -49,12 +52,16 @@ export function TakeToTerminal({
   const send = useTerminal((s) => s.send)
   const [location, navigate] = useLocation()
   const [asking, setAsking] = useState<CommandValue[] | null>(null)
+  const [sheet, setSheet] = useState(false)
+  const session = useStore((s) => (target ? s.sessions[target.sessionId] : undefined))
   if (!target) return null
 
+  const page = `/p/${target.projectId}/s/${target.sessionId}`
+  // En la sesión, va a su terminal. Desde otro lado (el tablero), la terminal se abre en una hoja
+  // abajo, sin sacarte de donde estás.
   const deliver = (text: string) => {
     send(target.sessionId, text)
-    const page = `/p/${target.projectId}/s/${target.sessionId}`
-    if (location !== page) navigate(page)
+    if (location !== page) setSheet(true)
   }
   const start = () => {
     const values = commandValues(command)
@@ -70,7 +77,7 @@ export function TakeToTerminal({
         aria-label="Llevar a la terminal"
         title="Llevar a la terminal (se pega sin Enter)"
         className={cn(
-          "inline-flex items-center gap-1 rounded-md border bg-background text-muted-foreground hover:text-foreground",
+          "inline-flex items-center gap-1 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
           compact ? "p-0.5 align-middle" : "p-1",
           className
         )}
@@ -88,6 +95,25 @@ export function TakeToTerminal({
             deliver(filled)
           }}
         />
+      )}
+      {session && (
+        <Sheet open={sheet} onOpenChange={setSheet}>
+          <SheetContent side="bottom" className="gap-0 p-0 data-[side=bottom]:h-[60svh]" onOpenAutoFocus={(e) => e.preventDefault()}>
+            <SheetHeader className="flex-row items-center gap-3 border-b py-3 pr-12">
+              <SheetTitle className="min-w-0 truncate text-base">
+                Terminal de <span className="name">{session.name}</span>
+              </SheetTitle>
+              <SheetDescription className="sr-only">El comando se pegó sin Enter: revisalo y correlo vos.</SheetDescription>
+              <Button size="sm" variant="ghost" className="ml-auto" onClick={() => (setSheet(false), navigate(page))}>
+                Ir a la sesión
+                <ArrowRight />
+              </Button>
+            </SheetHeader>
+            <div className="min-h-0 flex-1">
+              <TerminalPanel session={session} embedded onClose={() => setSheet(false)} />
+            </div>
+          </SheetContent>
+        </Sheet>
       )}
     </>
   )
@@ -154,7 +180,7 @@ function ValuesDialog({
               )}
             </div>
           ))}
-          <pre className="max-h-40 overflow-auto rounded-md border bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere">
+          <pre className="max-h-40 overflow-auto rounded-xl bg-muted/60 px-3 py-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere">
             {preview}
           </pre>
           <DialogFooter>

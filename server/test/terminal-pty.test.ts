@@ -142,6 +142,27 @@ test("cerrar la terminal mata la shell, lo que corre y los jobs de fondo", PTY_T
   }
 })
 
+test("dice qué corre adentro de la shell: nada en el prompt, el comando mientras corre", PTY_TEST, async () => {
+  const t = open()
+  try {
+    await t.until(/LISTO\$ /)
+    await waitUntil(() => t.pty.pid > 0, "el pid de la shell")
+    assert.deepEqual(await t.pty.running!(), [])
+    t.pty.write("sleep 30\r")
+    const end = Date.now() + 5000
+    let names: string[] = []
+    while (!names.includes("sleep") && Date.now() < end) {
+      names = await t.pty.running!()
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    assert.ok(names.includes("sleep"), `corre sleep: ${JSON.stringify(names)}`)
+    t.pty.write("\x03")
+    await t.until(/LISTO\$ /, t.out.length - 1)
+  } finally {
+    await t.pty.kill()
+  }
+})
+
 test("la shell va citada y el tamaño es un número", () => {
   assert.equal(shQuote("it's"), `'it'\\''s'`)
   assert.equal(innerScript("/opt/my shell/zsh", 80, 24), `stty rows 24 cols 80 2>/dev/null; SHELL='/opt/my shell/zsh'; export SHELL; exec "$SHELL" -l`)

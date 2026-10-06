@@ -72,8 +72,14 @@ describe("la terminal del dashboard", () => {
     assert.equal((await openTerminal("vieja")).statusCode, 400)
     assert.equal((await openTerminal("no-existe")).statusCode, 400)
     assert.equal(terminals.has("s1"), false, "nada de lo anterior abrió una terminal")
-    // Un GET no abre nada.
-    assert.equal((await app.inject({ method: "GET", url: "/api/sessions/s1/terminal", headers: { host: HOST, origin: SELF } })).statusCode, 404)
+    // Un GET solo dice si está abierta y qué corre: no abre nada.
+    // Sin Origin, como lo manda el navegador en un GET del mismo origen.
+    const peek = await app.inject({ method: "GET", url: "/api/sessions/s1/terminal", headers: { host: HOST } })
+    assert.equal(peek.statusCode, 200)
+    assert.deepEqual(peek.json(), { open: false, running: [] })
+    assert.equal(terminals.has("s1"), false, "el GET no la abrió")
+    assert.equal((await app.inject({ method: "GET", url: "/api/sessions/s1/terminal", headers: { host: HOST, origin: "https://malo.example" } })).statusCode, 403)
+    assert.equal((await app.inject({ method: "GET", url: "/api/sessions/s1/terminal", headers: { host: `malo.example:${PORT}` } })).statusCode, 403, "DNS rebinding")
   })
 
   it("el WebSocket rechaza otros orígenes, la falta de Origin y un token ajeno", TERM_TEST, async () => {

@@ -167,6 +167,8 @@ export const api = {
   /** Abre (o retoma) la terminal de la sesión; el token sirve para conectarse a /ws/terminal. */
   openTerminal: (id: string, cols: number, rows: number) => request<{ token: string; created: boolean }>("POST", `/api/sessions/${id}/terminal`, { cols, rows }),
   closeTerminal: (id: string) => request("DELETE", `/api/sessions/${id}/terminal`),
+  /** Si la terminal está abierta y qué corre adentro (vacío si espera un comando). */
+  terminalStatus: (id: string) => request<{ open: boolean; running: string[] }>("GET", `/api/sessions/${id}/terminal`),
   events: (id: string, before?: number, limit = 300) =>
     request<StoredEvent[]>("GET", `/api/sessions/${id}/events?limit=${limit}${before ? `&before=${before}` : ""}`),
   sessionReports: (id: string) => request<Report[]>("GET", `/api/sessions/${id}/reports`),
