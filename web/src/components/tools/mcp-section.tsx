@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils"
 
 const STATUS: Record<string, { label: string; tone: Tone }> = {
   connected: { label: "Conectado", tone: "done" },
-  "needs-auth": { label: "Requiere login", tone: "attention" },
+  "needs-auth": { label: "Requiere login", tone: "pending" },
   failed: { label: "Falló", tone: "error" },
   pending: { label: "Conectando", tone: "working" },
   disabled: { label: "Desactivado", tone: "idle" },

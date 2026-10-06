@@ -100,7 +100,7 @@ export function ImportSessionDialog({
               <Spinner /> Buscando conversaciones…
             </div>
           ) : items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No hay conversaciones de Claude Code en esta carpeta.</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">Las conversaciones de Claude Code que se abran en esta carpeta aparecen acá para importarlas.</p>
           ) : (
             items.map((it) => {
               const disabled = it.imported
