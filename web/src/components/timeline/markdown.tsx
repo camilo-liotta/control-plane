@@ -22,13 +22,14 @@ function CodeBlock({ children, className }: { children?: React.ReactNode; classN
       <pre>
         <code className={className}>{text}</code>
       </pre>
-      <div className="absolute top-1.5 right-1.5 flex items-center gap-1.5 opacity-0 transition-opacity group-hover/code:opacity-100">
-        {lang && <span className="font-mono text-[0.65rem] text-muted-foreground">{lang}</span>}
+      <div className="absolute top-1.5 right-1.5 flex items-center gap-1.5 opacity-0 transition-opacity group-focus-within/code:opacity-100 group-hover/code:opacity-100">
+        {lang && <span className="font-mono text-2xs text-muted-foreground">{lang}</span>}
         {isShellBlock(lang, text) && <TakeToTerminal command={blockCommand(text)} />}
         <button
           type="button"
-          aria-label="Copiar"
-          className="rounded-md border bg-background p-1 text-muted-foreground hover:text-foreground"
+          aria-label={copied ? "Copiado" : "Copiar"}
+          title="Copiar"
+          className="rounded-md bg-muted p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={() => {
             void navigator.clipboard.writeText(text)
             setCopied(true)

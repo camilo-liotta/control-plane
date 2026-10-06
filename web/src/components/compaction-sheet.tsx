@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import type { CompactionDraft } from "@shared/types"
 
 import { Button } from "@/components/ui/button"
+import { LoadError } from "@/components/ui/load-error"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -12,6 +13,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { timeAgo, tokens } from "@/lib/format"
+import { toneSoft } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
@@ -48,7 +50,7 @@ function Countdown({ deadline }: { deadline: number }) {
   const m = Math.floor(left / 60_000)
   const s = Math.floor((left % 60_000) / 1000)
   return (
-    <span className="font-mono">
+    <span className="font-medium">
       {m}:{String(s).padStart(2, "0")}
     </span>
   )
@@ -103,7 +105,7 @@ function PointRow({ point, onChange }: { point: Point; onChange: (patch: Partial
         >
           {point.text}
           {(point.edited || point.added) && (
-            <span className="ml-1.5 rounded-full bg-muted px-1.5 py-px align-middle text-[0.65rem] text-muted-foreground no-underline">
+            <span className="ml-1.5 rounded-full bg-muted px-1.5 py-px align-middle text-2xs text-muted-foreground no-underline">
               {point.added ? "agregado" : "editado"}
             </span>
           )}
@@ -203,14 +205,14 @@ export function CompactionSheet() {
         <SheetHeader className="border-b">
           <SheetTitle>Elegí qué sobrevive a la compactación</SheetTitle>
           <SheetDescription>
-            {session ? <span className="font-mono text-foreground">{session.name}</span> : null}
+            {session ? <span className="name text-foreground">{session.name}</span> : null}
             {ctx ? ` · ${tokens(ctx.tokens)} de contexto` : ""}. Destildá lo que Claude no necesita recordar; tocá un punto para
             editarlo. El resumen va a tener exactamente lo que quede tildado.
           </SheetDescription>
         </SheetHeader>
 
         {state?.waiting && (
-          <div className="flex items-center gap-2.5 border-b bg-status-attention/10 px-4 py-2.5 text-sm">
+          <div role="alert" className={cn("flex items-center gap-2.5 border-b px-4 py-2.5 text-sm", toneSoft.attention, "text-foreground")}>
             <Hourglass className="size-4 shrink-0 text-status-attention" />
             <span>
               {session?.name} está esperando para compactar. Si no elegís, compacta como siempre en <Countdown deadline={state.waiting.deadline} />.
@@ -219,7 +221,7 @@ export function CompactionSheet() {
         )}
 
         {state?.resendPending && !state.waiting && (
-          <div className="flex items-center gap-2.5 border-b bg-status-attention/10 px-4 py-2.5 text-sm">
+          <div className={cn("flex items-center gap-2.5 border-b px-4 py-2.5 text-sm", toneSoft.attention, "text-foreground")}>
             <Send className="size-4 shrink-0 text-status-attention" />
             <span>El último mensaje no entró por el contexto lleno: sale solo apenas termine de compactar.</span>
           </div>
@@ -244,15 +246,8 @@ export function CompactionSheet() {
           )}
 
           {!draft && !state?.drafting && state?.error && (
-            <div className="space-y-3 rounded-lg border border-status-error/30 bg-status-error/5 p-4 text-sm">
-              <p className="font-medium">No se pudo armar el borrador</p>
-              <p className="text-muted-foreground">{state.error}</p>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => void redo()}>
-                  <RotateCcw />
-                  Reintentar
-                </Button>
-              </div>
+            <div className="space-y-3">
+              <LoadError what="el borrador" error={state.error} onRetry={() => void redo()} />
               <p className="text-xs text-muted-foreground">
                 También podés escribir abajo instrucciones para el resumen, o compactar sin revisar.
               </p>
@@ -280,7 +275,7 @@ export function CompactionSheet() {
                   <section key={s.title + si}>
                     <div className="mb-1 flex items-center gap-2">
                       <h3 className="eyebrow">{s.title}</h3>
-                      <span className="font-mono text-xs text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {kept}/{s.points.length}
                       </span>
                       <button
@@ -332,8 +327,8 @@ export function CompactionSheet() {
           <span className="mr-auto text-xs text-muted-foreground">
             {draft ? (
               <>
-                <span className="font-mono text-foreground">{counts.kept}</span> se conservan ·{" "}
-                <span className="font-mono text-foreground">{counts.dropped}</span> se descartan
+                <span className="font-medium text-foreground">{counts.kept}</span> se conservan ·{" "}
+                <span className="font-medium text-foreground">{counts.dropped}</span> se descartan
               </>
             ) : null}
           </span>

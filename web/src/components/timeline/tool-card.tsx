@@ -1,5 +1,6 @@
 import {
   Bot,
+  Check,
   ChevronRight,
   CircleCheck,
   CircleX,
@@ -46,7 +47,7 @@ function Pre({ children, className }: { children: React.ReactNode; className?: s
   return (
     <pre
       className={cn(
-        "max-h-80 overflow-auto rounded-lg border bg-muted/40 p-2.5 font-mono text-[0.75rem] leading-relaxed whitespace-pre-wrap break-words",
+        "max-h-80 overflow-auto rounded-xl bg-muted/60 px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words",
         className
       )}
     >
@@ -70,6 +71,8 @@ function bashOutput(result: ToolResult | null): { out: string; err: string } {
 interface Described {
   icon: React.ComponentType<{ className?: string }>
   title: React.ReactNode
+  /** El título en texto plano, para el `title` cuando se corta. */
+  label?: string
   meta?: React.ReactNode
   detail?: React.ReactNode
 }
@@ -85,7 +88,8 @@ function describe(call: ToolCall, root?: string): Described {
       const { out, err } = bashOutput(result)
       return {
         icon: Terminal,
-        title: <span className="font-mono text-[0.8rem]">$ {str(input.command).split("\n")[0]}</span>,
+        title: <span className="font-mono text-xs">$ {str(input.command).split("\n")[0]}</span>,
+        label: str(input.command),
         meta: input.description ? str(input.description) : undefined,
         detail: (
           <div className="space-y-1.5">
@@ -100,7 +104,8 @@ function describe(call: ToolCall, root?: string): Described {
     case "Read":
       return {
         icon: FileText,
-        title: <>Leyó <span className="font-mono">{path()}</span></>,
+        title: <>Leyó <span className="font-mono text-xs">{path()}</span></>,
+        label: str(input.file_path),
         meta: input.offset || input.limit ? `líneas ${str(input.offset) || "1"}–${input.limit ? Number(input.offset ?? 1) + Number(input.limit) : "…"}` : undefined,
         detail: result?.content && !result.images?.length ? <Pre>{lines(result.content, 40)}</Pre> : null,
       }
@@ -110,7 +115,8 @@ function describe(call: ToolCall, root?: string): Described {
       const st = diffStats(oldText, newText)
       return {
         icon: FilePen,
-        title: <>Editó <span className="font-mono">{path()}</span></>,
+        title: <>Editó <span className="font-mono text-xs">{path()}</span></>,
+        label: str(input.file_path),
         meta: (
           <span className="font-mono">
             <span className="text-diff-add">+{st.add}</span> <span className="text-diff-del">−{st.del}</span>
@@ -123,7 +129,8 @@ function describe(call: ToolCall, root?: string): Described {
       const edits = Array.isArray(input.edits) ? (input.edits as Input[]) : []
       return {
         icon: FilePen,
-        title: <>Editó <span className="font-mono">{path()}</span></>,
+        title: <>Editó <span className="font-mono text-xs">{path()}</span></>,
+        label: str(input.file_path),
         meta: `${edits.length} cambios`,
         detail: (
           <div className="space-y-2">
@@ -138,40 +145,45 @@ function describe(call: ToolCall, root?: string): Described {
       const content = str(input.content)
       return {
         icon: FilePlus,
-        title: <>Escribió <span className="font-mono">{path()}</span></>,
+        title: <>Escribió <span className="font-mono text-xs">{path()}</span></>,
+        label: str(input.file_path),
         meta: plural(content.split("\n").length, "línea", "líneas"),
         detail: <Pre>{lines(content, 80)}</Pre>,
       }
     }
     case "NotebookEdit":
-      return { icon: NotebookPen, title: <>Editó <span className="font-mono">{path("notebook_path")}</span></> }
+      return { icon: NotebookPen, title: <>Editó <span className="font-mono text-xs">{path("notebook_path")}</span></>, label: str(input.notebook_path) }
     case "Grep":
       return {
         icon: Search,
         title: (
           <>
-            Buscó <span className="font-mono">“{str(input.pattern)}”</span>
-            {input.path ? <> en <span className="font-mono">{shortPath(str(input.path), root)}</span></> : null}
+            Buscó <span className="font-mono text-xs">"{str(input.pattern)}"</span>
+            {input.path ? <> en <span className="font-mono text-xs">{shortPath(str(input.path), root)}</span></> : null}
           </>
         ),
+        label: `${str(input.pattern)}${input.path ? ` en ${str(input.path)}` : ""}`,
         detail: result?.content ? <Pre>{lines(result.content, 60)}</Pre> : null,
       }
     case "Glob":
       return {
         icon: FolderSearch,
-        title: <>Buscó archivos <span className="font-mono">{str(input.pattern)}</span></>,
+        title: <>Buscó archivos <span className="font-mono text-xs">{str(input.pattern)}</span></>,
+        label: str(input.pattern),
         detail: result?.content ? <Pre>{lines(result.content, 60)}</Pre> : null,
       }
     case "WebFetch":
       return {
         icon: Globe,
-        title: <>Leyó <span className="font-mono">{str(input.url)}</span></>,
+        title: <>Leyó <span className="font-mono text-xs">{str(input.url)}</span></>,
+        label: str(input.url),
         detail: result?.content ? <Pre>{lines(result.content, 40)}</Pre> : null,
       }
     case "WebSearch":
       return {
         icon: Search,
-        title: <>Buscó en la web “{str(input.query)}”</>,
+        title: <>Buscó en la web "{str(input.query)}"</>,
+        label: str(input.query),
         detail: result?.content ? <Pre>{lines(result.content, 40)}</Pre> : null,
       }
     case "ListAgents":
@@ -192,7 +204,7 @@ function describe(call: ToolCall, root?: string): Described {
             ) : null}
             <SubagentSteps events={call.children} root={root} />
             {result?.content && (
-              <div className="rounded-lg border bg-muted/30 p-3">
+              <div className="rounded-xl bg-muted/60 px-3 py-2.5">
                 <Markdown text={result.content} />
               </div>
             )}
@@ -209,9 +221,10 @@ function describe(call: ToolCall, root?: string): Described {
         title: (
           <>
             {server && !isCp && <span className="text-muted-foreground">{server} · </span>}
-            <span className="font-mono">{label}</span>
+            <span className="font-mono text-xs">{label}</span>
           </>
         ),
+        label: server && !isCp ? `${server} · ${label}` : label,
         detail: (
           <div className="space-y-1.5">
             {Object.keys(input).length > 0 && <Pre>{JSON.stringify(input, null, 2)}</Pre>}
@@ -256,33 +269,40 @@ export function ToolRow({ call, root, live }: { call: ToolCall; root?: string; l
       <button
         type="button"
         onClick={() => d.detail && setOpen((v) => !v)}
+        aria-expanded={d.detail ? open : undefined}
         className={cn(
-          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-[0.82rem] text-foreground/80 transition-colors",
-          d.detail && "hover:bg-muted/70",
+          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-foreground/80 transition-colors",
+          d.detail ? "hover:bg-muted/70" : "cursor-default",
           open && "bg-muted/50"
         )}
       >
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate">{d.title}</span>
-        {d.meta && <span className="shrink-0 truncate text-xs text-muted-foreground">{d.meta}</span>}
+        <span className="min-w-0 truncate" title={d.label}>
+          {d.title}
+        </span>
+        {d.meta && <span className="hidden max-w-40 shrink-0 truncate text-xs text-muted-foreground sm:inline">{d.meta}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {pending ? (
             live ? (
               <Spinner className="size-3.5 text-status-working" />
             ) : (
-              <span className="text-xs text-muted-foreground">sin terminar</span>
+              <span className="text-xs text-muted-foreground">Sin terminar</span>
             )
           ) : error ? (
-            <CircleX className="size-3.5 text-status-error" />
+            <CircleX className="size-3.5 text-status-error" aria-label="Falló" />
           ) : (
-            <CircleCheck className="size-3.5 text-status-done/80" />
+            <CircleCheck className="size-3.5 text-status-done" aria-label="Listo" />
           )}
           {d.detail && (
             <ChevronRight className={cn("size-3.5 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
           )}
         </span>
       </button>
-      {errorLine && !open && <p className="truncate pl-7.5 font-mono text-[0.72rem] text-status-error">{errorLine}</p>}
+      {errorLine && !open && (
+        <p className="truncate pl-7.5 font-mono text-2xs text-status-error" title={errorLine}>
+          {errorLine}
+        </p>
+      )}
       {open && d.detail && <div className="mt-1 mb-2 ml-7.5">{d.detail}</div>}
     </div>
   )
@@ -312,7 +332,7 @@ function SubagentSteps({ events, root }: { events: StoredEvent[]; root?: string 
         it.type === "tool" ? (
           <ToolRow key={it.id} call={it.call} root={root} live={false} />
         ) : (
-          <p key={it.id} className="px-2 py-0.5 text-xs text-muted-foreground">
+          <p key={it.id} className="px-2 py-0.5 text-xs text-muted-foreground" title={it.text.length > 280 ? it.text : undefined}>
             {it.text.length > 280 ? it.text.slice(0, 279) + "…" : it.text}
           </p>
         )
@@ -329,24 +349,29 @@ export function TodoCard({ call }: { call: ToolCall }) {
   if (!todos.length) return null
   const done = todos.filter((t) => t.status === "completed").length
   return (
-    <div className="rounded-lg border bg-card/60 px-3 py-2">
-      <div className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+    <div className="surface-card px-4 py-3">
+      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
         <ListChecks className="size-3.5" />
-        <span className="font-medium">Plan de trabajo</span>
-        <span className="ml-auto font-mono">
+        <span className="eyebrow">Plan de trabajo</span>
+        <span className="ml-auto">
           {done}/{todos.length}
+          <span className="sr-only"> hechas</span>
         </span>
       </div>
       <ul className="space-y-1">
         {todos.map((t, i) => (
-          <li key={i} className="flex items-start gap-2 text-[0.82rem]">
+          <li key={i} className="flex items-start gap-2.5 text-ui">
             <span
               className={cn(
-                "mt-1 size-3 shrink-0 rounded-[3px] border",
-                t.status === "completed" && "border-status-done bg-status-done",
-                t.status === "in_progress" && "border-status-working bg-status-working/20"
+                "mt-1 flex size-3.5 shrink-0 items-center justify-center rounded-sm border border-input",
+                t.status === "completed" && "border-status-done-lamp bg-status-done-lamp text-background",
+                t.status === "in_progress" && "border-status-working-lamp"
               )}
-            />
+            >
+              {t.status === "completed" && <Check className="size-2.5" strokeWidth={3} />}
+              {t.status === "in_progress" && <span className="size-1.5 rounded-full bg-status-working-lamp" />}
+              <span className="sr-only">{t.status === "completed" ? "Hecha: " : t.status === "in_progress" ? "En curso: " : "Pendiente: "}</span>
+            </span>
             <span className={cn(t.status === "completed" && "text-muted-foreground line-through", t.status === "in_progress" && "font-medium")}>
               {t.status === "in_progress" ? t.activeForm || t.content : t.content}
             </span>
@@ -364,13 +389,15 @@ export function OutgoingMessage({ call }: { call: ToolCall }) {
   const text = str(input.message ?? input.content)
   const failed = call.result?.isError
   return (
-    <div className="ml-auto max-w-[85%] rounded-xl border border-dashed px-3 py-2">
+    <div className="ml-auto max-w-[85%] rounded-2xl bg-muted/60 px-4 py-3">
       <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <MessageSquareShare className="size-3.5" />
-        Mensaje a <span className="font-mono font-medium text-foreground">{to || "otra sesión"}</span>
-        {failed && <span className="text-status-error">· no se entregó</span>}
+        <MessageSquareShare className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          Mensaje a <span className="name text-foreground">{to || "otra sesión"}</span>
+        </span>
+        {failed && <span className="shrink-0 text-status-error">· No se entregó</span>}
       </div>
-      <p className="text-[0.85rem] whitespace-pre-wrap wrap-anywhere">{text}</p>
+      <p className="text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">{text}</p>
     </div>
   )
 }

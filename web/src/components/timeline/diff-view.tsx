@@ -57,7 +57,7 @@ export function DiffView({ oldText, newText, maxLines = 80 }: { oldText: string;
   const rows = useMemo(() => collapse(toLines(oldText, newText)), [oldText, newText])
   const visible = all ? rows : rows.slice(0, maxLines)
   return (
-    <div className="overflow-hidden rounded-lg border bg-muted/40 font-mono text-[0.75rem] leading-[1.55]">
+    <div className="overflow-hidden rounded-xl bg-muted/60 font-mono text-xs leading-relaxed">
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <tbody>
@@ -65,7 +65,7 @@ export function DiffView({ oldText, newText, maxLines = 80 }: { oldText: string;
               row.kind === "gap" ? (
                 <tr key={i} className="text-muted-foreground/70">
                   <td className="w-5 select-none" />
-                  <td className="px-2 py-0.5 text-[0.7rem]">··· {row.count} líneas sin cambios</td>
+                  <td className="px-2 py-0.5 font-sans text-2xs">··· {row.count} líneas sin cambios</td>
                 </tr>
               ) : (
                 <tr
@@ -96,7 +96,7 @@ export function DiffView({ oldText, newText, maxLines = 80 }: { oldText: string;
         <button
           type="button"
           onClick={() => setAll((v) => !v)}
-          className="w-full border-t bg-background/60 py-1 text-[0.7rem] font-medium text-muted-foreground hover:text-foreground"
+          className="w-full border-t py-1 font-sans text-2xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           {all ? "Mostrar menos" : `Mostrar ${rows.length - maxLines} líneas más`}
         </button>

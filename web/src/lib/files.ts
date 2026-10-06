@@ -14,15 +14,25 @@ function readAsBase64(blob: Blob): Promise<string> {
   })
 }
 
+export interface Shrunk {
+  /** Lado mayor antes y después, en px. */
+  from: number
+  to: number
+  /** Bytes antes. */
+  size: number
+}
+
 /** Achica imágenes muy grandes antes de subirlas (Claude las ve igual de bien y viajan más rápido). */
-async function shrinkImage(file: File): Promise<Blob> {
-  if (!VISION_TYPES.has(file.type) || file.type === "image/gif") return file
+async function shrinkImage(file: File): Promise<{ blob: Blob; shrunk: Shrunk | null }> {
+  const same = { blob: file as Blob, shrunk: null }
+  if (!VISION_TYPES.has(file.type) || file.type === "image/gif") return same
   const bitmap = await createImageBitmap(file).catch(() => null)
-  if (!bitmap) return file
-  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height))
+  if (!bitmap) return same
+  const side = Math.max(bitmap.width, bitmap.height)
+  const scale = Math.min(1, MAX_SIDE / side)
   if (scale === 1 && file.size <= MAX_IMAGE_BYTES) {
     bitmap.close()
-    return file
+    return same
   }
   const canvas = document.createElement("canvas")
   canvas.width = Math.round(bitmap.width * scale)
@@ -30,15 +40,23 @@ async function shrinkImage(file: File): Promise<Blob> {
   canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
   bitmap.close()
   const type = file.type === "image/png" && file.size <= MAX_IMAGE_BYTES * 2 ? "image/png" : "image/jpeg"
-  return new Promise((resolve) => canvas.toBlob((b) => resolve(b ?? file), type, 0.9))
+  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b ?? file), type, 0.9))
+  return { blob, shrunk: blob === file ? null : { from: side, to: Math.round(side * scale), size: file.size } }
 }
 
-export async function prepareUpload(file: File): Promise<{ name: string; mime: string; data: string; size: number }> {
-  const blob = await shrinkImage(file)
+/** Lo que se dice cuando una imagen se achicó para subirla. */
+export function shrunkText(s: Shrunk): string {
+  return s.to < s.from
+    ? `Se achicó de ${s.from} a ${s.to} px para que Claude la pueda ver (máximo ${MAX_SIDE} px y ${formatSize(MAX_IMAGE_BYTES)}).`
+    : `Se comprimió desde ${formatSize(s.size)} para que Claude la pueda ver (máximo ${MAX_SIDE} px y ${formatSize(MAX_IMAGE_BYTES)}).`
+}
+
+export async function prepareUpload(file: File): Promise<{ name: string; mime: string; data: string; size: number; shrunk: Shrunk | null }> {
+  const { blob, shrunk } = await shrinkImage(file)
   const mime = blob.type || file.type || "application/octet-stream"
   let name = file.name || "pegado"
   if (mime === "image/jpeg" && file.type !== "image/jpeg") name = name.replace(/\.\w+$/, "") + ".jpg"
-  return { name, mime, data: await readAsBase64(blob), size: blob.size }
+  return { name, mime, data: await readAsBase64(blob), size: blob.size, shrunk }
 }
 
 const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }

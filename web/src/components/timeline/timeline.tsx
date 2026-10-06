@@ -1,4 +1,4 @@
-import { Brain, ChevronRight, Info, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
+import { Brain, ChevronRight, Compass, Info, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -67,19 +67,17 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
   return (
     <div className="flex flex-col items-end gap-1">
       {event.origin === "draft" && (
-        <span className="text-xs text-muted-foreground">
-          Propuesta de la orquestadora{event.draftTitle ? ` · ${event.draftTitle}` : ""}
+        <span className="flex max-w-[85%] items-center gap-1.5 text-xs text-muted-foreground">
+          <Compass className="size-3.5 shrink-0" />
+          <span className="truncate" title={event.draftTitle ?? undefined}>
+            Propuesta de la orquestadora{event.draftTitle ? ` · ${event.draftTitle}` : ""}
+          </span>
         </span>
       )}
       {event.origin === "external" && <span className="text-xs text-muted-foreground">Desde fuera del dashboard</span>}
       {event.attachments && event.attachments.length > 0 && <AttachmentList items={event.attachments} />}
       {event.text && (
-        <div
-          className={cn(
-            "bubble-user max-w-[85%] px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap wrap-anywhere",
-            event.origin === "draft" && "border border-status-working/25 bg-status-working/8"
-          )}
-        >
+        <div className="bubble-user max-w-[85%] px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">
           {event.text}
         </div>
       )}
@@ -88,20 +86,22 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
           <SubagentSpecList specs={event.subagents} />
         </div>
       )}
-      <span className="font-mono text-2xs text-muted-foreground/70 tabular-nums">{clock(ev.ts)}</span>
+      <span className="text-2xs text-muted-foreground">{clock(ev.ts)}</span>
     </div>
   )
 }
 
 function PeerMessage({ ev }: { ev: Ev<"peer"> }) {
   return (
-    <div className="max-w-[85%] rounded-xl border border-l-4 border-l-status-working/60 bg-card px-3.5 py-2.5">
+    <div className="surface-card max-w-[85%] px-4 py-3">
       <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <MessageSquareReply className="size-3.5" />
-        Mensaje de <span className="font-mono font-medium text-foreground">{ev.event.from}</span>
-        <span className="ml-auto font-mono text-[0.65rem]">{clock(ev.ts)}</span>
+        <MessageSquareReply className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          Mensaje de <span className="name text-foreground">{ev.event.from}</span>
+        </span>
+        <span className="ml-auto shrink-0 text-2xs">{clock(ev.ts)}</span>
       </div>
-      <p className="text-[0.87rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">{ev.event.body}</p>
+      <p className="text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">{ev.event.body}</p>
     </div>
   )
 }
@@ -113,17 +113,17 @@ function Thinking({ text }: { text: string }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted/60"
+        aria-expanded={open}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+          open && "bg-muted/50"
+        )}
       >
-        <Brain className="size-3.5" />
+        <Brain className="size-3.5 shrink-0" />
         Pensamiento
-        <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
+        <ChevronRight className={cn("ml-auto size-3.5 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
       </button>
-      {open && (
-        <p className="mt-1 ml-2 border-l-2 pl-3 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
-          {text}
-        </p>
-      )}
+      {open && <p className="mt-1 mb-2 ml-7.5 border-l-2 pl-3 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">{text}</p>}
     </div>
   )
 }
@@ -134,15 +134,17 @@ function Notice({ ev }: { ev: Ev<"notice"> }) {
   const multiline = text.includes("\n")
   return (
     <div
+      role={level === "info" ? undefined : "note"}
+      title={clock(ev.ts)}
       className={cn(
         "notice-line",
-        level === "error" && "bg-status-error/10 text-status-error",
-        level === "warn" && "text-status-attention",
+        level === "error" && "border-status-error-lamp text-status-error",
+        level === "warn" && "border-status-attention-lamp text-foreground [&>svg]:text-status-attention",
         level === "info" && "text-muted-foreground"
       )}
     >
-      <Icon className="mt-0.5 size-3.5 shrink-0" />
-      {multiline ? <pre className="font-mono text-[0.72rem] whitespace-pre-wrap">{text}</pre> : <span>{text}</span>}
+      <Icon aria-label={level === "error" ? "Error" : level === "warn" ? "Aviso" : undefined} />
+      {multiline ? <pre className="min-w-0 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">{text}</pre> : <span className="min-w-0 wrap-anywhere">{text}</span>}
     </div>
   )
 }
@@ -150,13 +152,20 @@ function Notice({ ev }: { ev: Ev<"notice"> }) {
 function TurnEnd({ ev }: { ev: Ev<"turn_end"> }) {
   const { ok, durationMs, costUsd, error, terminalReason, tokens } = ev.event
   const aborted = Boolean(terminalReason?.startsWith("aborted"))
+  const failed = !ok && !aborted
   return (
-    <div className="flex items-center gap-3 py-1 text-[0.7rem] text-muted-foreground/80">
+    <div className="flex items-center gap-3 py-1 text-muted-foreground" title={error ?? undefined}>
       <div className="h-px flex-1 bg-border" />
-      <span className="turn-rule">
-        {aborted ? "interrumpido" : ok ? "turno terminado" : "error"} · {duration(durationMs)}
-        {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
-        {costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
+      <span className="turn-rule flex items-center gap-1">
+        {failed && <OctagonAlert className="size-3 text-status-error" />}
+        <span className={cn(failed && "font-medium text-status-error")}>
+          {aborted ? "Interrumpido" : ok ? "Turno terminado" : "Terminó con error"}
+        </span>
+        <span>
+          · {duration(durationMs)}
+          {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
+          {costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
+        </span>
       </span>
       <div className="h-px flex-1 bg-border" />
       {error && <span className="sr-only">{error}</span>}
@@ -169,21 +178,25 @@ function BatchCard({ ev }: { ev: Ev<"batch"> }) {
   const reports = useMemo(() => ev.event.reportIds.map((id) => all[id]).filter(Boolean), [all, ev.event.reportIds])
   const [open, setOpen] = useState(false)
   return (
-    <div className="rounded-xl border border-status-attention/40 bg-status-attention/5 p-3.5">
+    <div className="surface-card px-4 py-3.5">
       <div className="flex items-center gap-2 text-sm font-medium">
-        <Inbox className="size-4 text-status-attention" />
-        {ev.event.followUp ? "Llegaron más resultados mientras analizaba" : "Cola de resultados"}
-        <span className="font-mono text-xs text-muted-foreground">{ev.event.reportIds.length}</span>
-        <span className="ml-auto font-mono text-[0.65rem] text-muted-foreground">{clock(ev.ts)}</span>
+        <Inbox className="size-4 shrink-0 text-status-pending" />
+        <span className="min-w-0 truncate">{ev.event.followUp ? "Llegaron más resultados mientras analizaba" : "Cola de resultados"}</span>
+        <span className="text-xs font-normal text-muted-foreground">{ev.event.reportIds.length}</span>
+        <span className="ml-auto shrink-0 text-2xs font-normal text-muted-foreground">{clock(ev.ts)}</span>
       </div>
       {reports.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
+        <ul className="mt-2.5 space-y-2">
           {reports.map((r) => (
-            <li key={r!.id} className="flex items-start gap-2 text-[0.85rem]">
-              <TonePill tone={reportStatusView[r!.status].tone} className="mt-0.5 shrink-0">
-                {r!.sessionName}
+            <li key={r!.id} className="flex items-start gap-2.5 text-ui">
+              <TonePill tone={reportStatusView[r!.status].tone} className="mt-px max-w-40 shrink-0">
+                <span className="name truncate" title={r!.sessionName}>
+                  {r!.sessionName}
+                </span>
               </TonePill>
-              <span className="line-clamp-2 text-foreground/85">{r!.summary}</span>
+              <span className="line-clamp-2 text-foreground/85" title={r!.summary}>
+                {r!.summary}
+              </span>
             </li>
           ))}
         </ul>
@@ -191,12 +204,13 @@ function BatchCard({ ev }: { ev: Ev<"batch"> }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        aria-expanded={open}
+        className="mt-2.5 inline-flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground"
       >
         <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
         {open ? "Ocultar el mensaje que recibió" : "Ver el mensaje que recibió"}
       </button>
-      {open && <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-background/70 p-3 font-mono text-[0.72rem] whitespace-pre-wrap">{ev.event.text}</pre>}
+      {open && <pre className="mt-2 max-h-96 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-2xs leading-relaxed whitespace-pre-wrap">{ev.event.text}</pre>}
     </div>
   )
 }
@@ -206,15 +220,15 @@ function ReportCall({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false)
   const status = reportStatusView[input.status ?? "done"] ?? reportStatusView.done
   return (
-    <div className="rounded-xl border bg-card p-3.5">
-      <div className="flex items-center gap-2 text-sm font-medium">
+    <div className="surface-card px-4 py-3.5">
+      <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
         <Rows3 className="size-4 text-muted-foreground" />
         Reportó su resultado
         <TonePill tone={status.tone}>{status.label}</TonePill>
-        {call.result?.isError && <span className="text-xs text-status-error">no se registró</span>}
+        {call.result?.isError && <span className="text-xs text-status-error">No se registró</span>}
       </div>
       {input.summary && (
-        <p className="mt-1.5 text-[0.87rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">
+        <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">
           <RefText text={input.summary} />
         </p>
       )}
@@ -223,13 +237,14 @@ function ReportCall({ call }: { call: ToolCall }) {
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            aria-expanded={open}
+            className="mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
             Detalles
           </button>
           {open && (
-            <div className="mt-1.5 rounded-lg bg-muted/50 p-3">
+            <div className="mt-2 border-t pt-3">
               <Markdown text={input.details} />
             </div>
           )}
@@ -273,16 +288,17 @@ function CompactCard({ ev }: { ev: Ev<"compact"> }) {
   const curated = e.kept !== undefined
   return (
     <div className="py-1">
-      <div className="flex items-center gap-3 text-[0.7rem] text-muted-foreground">
+      <div className="flex items-center gap-3 text-muted-foreground">
         <div className="h-px flex-1 bg-border" />
         <button
           type="button"
           onClick={() => e.summary && setOpen((v) => !v)}
-          className={cn("flex items-center gap-1.5 font-mono", e.summary && "hover:text-foreground")}
+          aria-expanded={e.summary ? open : undefined}
+          className={cn("turn-rule flex items-center gap-1.5 rounded-md", e.summary && "hover:text-foreground")}
           disabled={!e.summary}
         >
           <Layers className="size-3" />
-          contexto compactado {e.trigger === "auto" ? "solo" : "a mano"}
+          Contexto compactado {e.trigger === "auto" ? "solo" : "a mano"}
           {size ? ` · ${size} tokens` : ""}
           {curated ? ` · ${e.kept} conservados${e.dropped ? `, ${e.dropped} descartados` : ""}` : ""}
           {e.summary && <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />}
@@ -290,7 +306,7 @@ function CompactCard({ ev }: { ev: Ev<"compact"> }) {
         <div className="h-px flex-1 bg-border" />
       </div>
       {open && e.summary && (
-        <div className="mt-2 rounded-lg border bg-muted/40 px-4 py-3">
+        <div className="mt-2 rounded-2xl bg-muted/60 px-4 py-3">
           <p className="eyebrow mb-2">Con esto siguió la conversación</p>
           <Markdown text={e.summary} />
         </div>
@@ -357,7 +373,7 @@ function ContextFullBar({ session, events }: { session: Session; events: StoredE
     }
   }
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 text-sm">
+    <div role="alert" className="surface-card flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-sm ring-2 ring-status-attention-lamp/70">
       <TriangleAlert className="size-4 shrink-0 text-status-attention" />
       <span className="min-w-0 flex-1">El contexto está lleno y el último mensaje no salió. Compactá la conversación y se reenvía.</span>
       <Button size="sm" onClick={() => void resend()} disabled={busy}>
@@ -409,17 +425,47 @@ export function TimelineItems({
     }
     return -1
   }, [items])
-  return (
-    <>
-      {items.map((it, i) =>
-        it.type === "tool" ? (
-          <ToolItem key={it.id} call={it.call} root={root} live={live && i > lastTurnIndex} />
-        ) : (
-          <EventItem key={it.ev.id} ev={it.ev} sessionId={sessionId} />
-        )
-      )}
-    </>
-  )
+  const render = (it: Item, i: number) =>
+    it.type === "tool" ? (
+      <ToolItem key={it.id} call={it.call} root={root} live={live && i > lastTurnIndex} />
+    ) : (
+      <EventItem key={it.ev.id} ev={it.ev} sessionId={sessionId} />
+    )
+  // Lo que hace la sesión entre mensaje y mensaje (herramientas y pensamiento) va junto, en un
+  // bloque apretado: el chat se lee por los mensajes y las tarjetas, no por cada paso.
+  const out: React.ReactNode[] = []
+  let run: React.ReactNode[] = []
+  let runKey = 0
+  const flush = () => {
+    if (run.length === 1) out.push(run[0])
+    else if (run.length) out.push(<div key={`steps-${runKey}`} className="flex flex-col gap-0.5">{run}</div>)
+    run = []
+  }
+  items.forEach((it, i) => {
+    if (isStep(it)) {
+      if (!run.length) runKey = it.type === "tool" ? it.id : it.ev.id
+      run.push(render(it, i))
+    } else {
+      flush()
+      out.push(render(it, i))
+    }
+  })
+  flush()
+  return <>{out}</>
+}
+
+/** Las herramientas que no son una tarjeta propia y el pensamiento: los pasos chicos del trabajo. */
+const CARD_TOOLS = new Set([
+  "TodoWrite",
+  "SendMessage",
+  "mcp__control-plane__report_result",
+  "mcp__control-plane__propose_prompt",
+  "mcp__control-plane__propose_session",
+  "Agent",
+  "Task",
+])
+function isStep(it: Item): boolean {
+  return it.type === "tool" ? !CARD_TOOLS.has(it.call.use.name) : it.ev.event.kind === "thinking"
 }
 
 export function Timeline({ session, events }: { session: Session; events: StoredEvent[] }) {

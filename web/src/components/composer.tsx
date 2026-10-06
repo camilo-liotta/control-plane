@@ -1,4 +1,4 @@
-import { ArrowUp, File as FileIcon, Paperclip, Square, TerminalSquare, X } from "lucide-react"
+import { ArrowUp, File as FileIcon, Paperclip, RotateCw, Square, TerminalSquare, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
@@ -11,13 +11,32 @@ import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { interruptSession } from "@/lib/session-actions"
 import { freshFiles, registerDropTarget } from "@/lib/desktop-drop"
-import { clipboardImages, formatSize, prepareUpload, VISION_TYPES } from "@/lib/files"
+import { clipboardImages, formatSize, prepareUpload, shrunkText, VISION_TYPES } from "@/lib/files"
 import { inDesktop } from "@/lib/notify"
 import { useStore } from "@/lib/store"
+import { toneSoft } from "@/lib/status"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
-const drafts = new Map<string, string>()
+/** El borrador de cada sesión: sobrevive a cambiar de sesión y a recargar la página. */
+const DRAFT_KEY = (id: string) => `control-plane:draft:${id}`
+const drafts = {
+  get(id: string): string {
+    try {
+      return localStorage.getItem(DRAFT_KEY(id)) ?? ""
+    } catch {
+      return ""
+    }
+  },
+  set(id: string, value: string) {
+    try {
+      if (value) localStorage.setItem(DRAFT_KEY(id), value)
+      else localStorage.removeItem(DRAFT_KEY(id))
+    } catch {
+      // sin localStorage: el borrador vive mientras la pestaña esté abierta
+    }
+  },
+}
 const commandCache = new Map<string, { at: number; list: SlashCommand[] }>()
 
 interface Pending {
@@ -29,6 +48,10 @@ interface Pending {
   status: "uploading" | "ready" | "error"
   id?: string
   error?: string
+  /** El archivo original, para reintentar si no se pudo subir. */
+  file: File
+  /** Si se achicó para subirla, qué se dice. */
+  shrunk?: string
 }
 
 function useCommands(sessionId: string, active: boolean) {
@@ -107,22 +130,37 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     drafts.set(session.id, value)
   }
 
+  const upload = (key: string, file: File) => {
+    let shrunk: string | undefined
+    void prepareUpload(file)
+      .then(({ name, mime, data, shrunk: s }) => {
+        shrunk = s ? shrunkText(s) : undefined
+        return api.upload(session.id, { name, mime, data })
+      })
+      .then(
+        (att) => setPending((p) => p.map((x) => (x.key === key ? { ...x, status: "ready", id: att.id, name: att.name, size: att.size, shrunk } : x))),
+        (err: Error) => {
+          setPending((p) => p.map((x) => (x.key === key ? { ...x, status: "error", error: err.message } : x)))
+          toast.error(`No se pudo adjuntar ${file.name || "el archivo"}`, { description: err.message })
+        }
+      )
+  }
+
   const addFiles = (files: File[]) => {
     for (const file of files) {
       const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const preview = VISION_TYPES.has(file.type) ? URL.createObjectURL(file) : undefined
-      setPending((p) => [...p, { key, name: file.name || "pegado", mime: file.type, size: file.size, preview, status: "uploading" }])
-      void prepareUpload(file)
-        .then((payload) => api.upload(session.id, payload))
-        .then(
-          (att) => setPending((p) => p.map((x) => (x.key === key ? { ...x, status: "ready", id: att.id, name: att.name, size: att.size } : x))),
-          (err: Error) => {
-            setPending((p) => p.map((x) => (x.key === key ? { ...x, status: "error", error: err.message } : x)))
-            toast.error(`No se pudo adjuntar ${file.name}`, { description: err.message })
-          }
-        )
+      setPending((p) => [...p, { key, name: file.name || "pegado", mime: file.type, size: file.size, preview, status: "uploading", file }])
+      upload(key, file)
     }
     ref.current?.focus()
+  }
+
+  const retry = (key: string) => {
+    const item = pending.find((x) => x.key === key)
+    if (!item) return
+    setPending((p) => p.map((x) => (x.key === key ? { ...x, status: "uploading", error: undefined } : x)))
+    upload(key, item.file)
   }
 
   // Los archivos que la app de escritorio lee cuando se sueltan en la ventana.
@@ -177,8 +215,10 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   }, [dropTarget, session.id])
 
   const uploading = pending.some((p) => p.status === "uploading")
+  const failed = pending.filter((p) => p.status === "error").length
   const ready = pending.filter((p) => p.status === "ready" && p.id)
-  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !sending && !(session.external && stopped)
+  // Un adjunto que no se pudo subir no se descarta en silencio: hay que reintentarlo o quitarlo.
+  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !failed && !sending && !(session.external && stopped)
 
   const send = async () => {
     if (!canSend) return
@@ -266,7 +306,11 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     }
   }
 
-  const hint = stopped
+  const hint = failed
+    ? failed === 1
+      ? "Un adjunto no se pudo subir: reintentalo o quitalo para enviar."
+      : `${failed} adjuntos no se pudieron subir: reintentalos o quitalos para enviar.`
+    : stopped
     ? session.external
       ? null
       : "La sesión está detenida: tu mensaje la reanuda."
@@ -275,10 +319,10 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
       : null
 
   return (
-    <div className="border-t bg-background/95 px-4 pt-3 pb-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <div className="bg-background px-4 pt-2 pb-4">
       <div className="relative mx-auto max-w-3xl">
         {session.external && stopped && (
-          <div className="mb-2 flex items-start gap-2 rounded-lg border border-status-attention/40 bg-status-attention/10 px-3 py-2 text-xs leading-snug">
+          <div role="note" className={cn("mb-2 flex items-start gap-2 rounded-xl px-3 py-2 text-xs leading-snug", toneSoft.attention, "text-foreground")}>
             <TerminalSquare className="mt-0.5 size-3.5 shrink-0 text-status-attention" />
             <span>
               {session.external.kind === "background" ? (
@@ -296,8 +340,8 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
           </div>
         )}
         {menuOpen && matches.length > 0 && (
-          <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border bg-popover shadow-lg">
-            <div className="border-b px-3 py-1.5 text-[0.7rem] text-muted-foreground">
+          <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl bg-popover shadow-overlay">
+            <div className="border-b px-3 py-1.5 text-2xs text-muted-foreground">
               Comandos y skills · <Kbd>↑</Kbd> <Kbd>↓</Kbd> para elegir, <Kbd>Tab</Kbd> para completar
             </div>
             <ul className="max-h-72 overflow-y-auto p-1">
@@ -313,10 +357,12 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
                       i === highlight && "bg-muted"
                     )}
                   >
-                    <span className="shrink-0 font-mono text-[0.82rem] font-medium">/{c.name}</span>
-                    {c.argumentHint && <span className="shrink-0 font-mono text-[0.72rem] text-muted-foreground">{c.argumentHint}</span>}
-                    <span className="min-w-0 truncate text-xs text-muted-foreground">{c.description}</span>
-                    {!c.builtin && <span className="ml-auto shrink-0 text-[0.65rem] text-muted-foreground/70">skill</span>}
+                    <span className="shrink-0 font-mono text-ui font-medium">/{c.name}</span>
+                    {c.argumentHint && <span className="shrink-0 font-mono text-xs text-muted-foreground">{c.argumentHint}</span>}
+                    <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.description}>
+                      {c.description}
+                    </span>
+                    {!c.builtin && <span className="ml-auto shrink-0 text-2xs text-muted-foreground">skill</span>}
                   </button>
                 </li>
               ))}
@@ -324,13 +370,10 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
           </div>
         )}
         <div
-          className={cn(
-            "composer relative rounded-2xl border bg-card shadow-xs transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20",
-            dragging && "border-status-working ring-3 ring-status-working/25"
-          )}
+          className={cn("composer relative bg-card", dragging && "ring-2 ring-status-working-lamp")}
         >
           {dragging && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-card/90 text-sm font-medium text-status-working">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-card/90 text-sm font-medium text-status-working">
               Soltá los archivos para adjuntarlos
             </div>
           )}
@@ -340,39 +383,47 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
                 <div
                   key={p.key}
                   className={cn(
-                    "group/att relative flex items-center gap-2 rounded-lg border bg-background pr-7 text-xs",
-                    p.preview ? "p-1" : "px-2.5 py-1.5",
-                    p.status === "error" && "border-status-error/60"
+                    "flex items-center gap-2 rounded-xl bg-muted/60 text-xs",
+                    p.preview ? "py-1 pr-1 pl-1" : "py-1 pr-1 pl-2.5",
+                    p.status === "error" && "ring-1 ring-status-error-lamp"
                   )}
-                  title={p.error ?? p.name}
                 >
                   {p.preview ? (
                     <button
                       type="button"
                       onClick={() => useUi.getState().set({ lightbox: p.id ? { id: p.id, name: p.name } : { name: p.name, src: p.preview } })}
-                      className="rounded-md focus-visible:ring-3 focus-visible:ring-ring/40 focus-visible:outline-none"
+                      className="rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                       aria-label={`Ver ${p.name}`}
                     >
-                      <img src={p.preview} alt={p.name} className="size-12 rounded-md object-cover" />
+                      <img src={p.preview} alt={p.name} className="size-11 rounded-lg object-cover" />
                     </button>
                   ) : (
-                    <FileIcon className="size-4 text-muted-foreground" />
+                    <FileIcon className="size-4 shrink-0 text-muted-foreground" />
                   )}
-                  <span className="flex max-w-40 flex-col">
-                    <span className="truncate font-medium">{p.name}</span>
-                    <span className="text-muted-foreground">
-                      {p.status === "uploading" ? "subiendo…" : p.status === "error" ? "no se pudo subir" : formatSize(p.size)}
+                  <span className="flex max-w-40 min-w-0 flex-col">
+                    <span className="truncate font-medium" title={p.name}>
+                      {p.name}
+                    </span>
+                    <span className={cn("truncate", p.status === "error" ? "text-status-error" : "text-muted-foreground")} title={p.error ?? p.shrunk}>
+                      {p.status === "uploading" ? "Subiendo…" : p.status === "error" ? "No se pudo subir" : p.shrunk ? `${formatSize(p.size)} · achicada` : formatSize(p.size)}
                     </span>
                   </span>
-                  {p.status === "uploading" && <Spinner className="size-3.5" />}
-                  <button
-                    type="button"
+                  {p.status === "uploading" && <Spinner className="size-3.5 text-muted-foreground" />}
+                  {p.status === "error" && (
+                    <Button size="icon-sm" variant="ghost" onClick={() => retry(p.key)} aria-label={`Reintentar ${p.name}`} title="Reintentar">
+                      <RotateCw />
+                    </Button>
+                  )}
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
                     onClick={() => remove(p.key)}
-                    className="absolute top-1 right-1 rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="text-muted-foreground"
                     aria-label={`Quitar ${p.name}`}
+                    title="Quitar"
                   >
-                    <X className="size-3.5" />
-                  </button>
+                    <X className="size-4" />
+                  </Button>
                 </div>
               ))}
             </div>
@@ -396,7 +447,8 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
             }}
             rows={1}
             placeholder={`Escribile a ${session.name}… (/ para comandos)`}
-            className="block max-h-80 min-h-11 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[0.92rem] leading-relaxed outline-none placeholder:text-muted-foreground/70"
+            aria-label={`Mensaje para ${session.name}`}
+            className="block max-h-80 min-h-11 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-2 px-2.5 pb-2">
             <input
@@ -419,7 +471,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
             >
               <Paperclip />
             </Button>
-            <span className="truncate text-xs text-muted-foreground">
+            <span className={cn("min-w-0 truncate text-xs", failed ? "text-status-error" : "text-muted-foreground")} title={hint ?? undefined}>
               {hint ?? (
                 <>
                   <Kbd>Enter</Kbd> envía · <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> salto de línea
@@ -427,7 +479,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
               )}
             </span>
             {session.queuedMessages > 0 && (
-              <span className="shrink-0 font-mono text-[0.7rem] text-status-working">{session.queuedMessages} en cola</span>
+              <span className="shrink-0 text-2xs font-medium text-status-pending">{session.queuedMessages} en cola</span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
               {busy && (

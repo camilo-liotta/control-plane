@@ -1,7 +1,9 @@
 import { toast } from "sonner"
 
 import { api } from "@/lib/api"
+import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
+import { undoable } from "@/lib/undo"
 import { useUi } from "@/lib/ui"
 
 /**
@@ -14,11 +16,21 @@ const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : 
 /** Reanuda una sesión detenida. */
 export const startSession = (id: string) => api.start(id).then(() => void toast.success("Sesión reanudada"), fail)
 
-/** Detiene el proceso de la sesión (se reanuda al escribirle o con Reanudar). */
-export const stopSession = (id: string) => api.stop(id).then(() => void toast.success("Sesión detenida"), fail)
+/**
+ * Detiene el proceso de la sesión (se reanuda al escribirle o con Reanudar). Si está trabajando o
+ * esperándote, corta lo que hacía: no pregunta, pero deja 5 s para deshacerlo.
+ */
+export const stopSession = async (id: string) => {
+  const status = useStore.getState().sessions[id]?.status
+  if (status === "working" || status === "needs_input") {
+    undoable({ message: "Sesión detenida", run: () => api.stop(id), failMessage: "No se pudo detener la sesión" })
+    return
+  }
+  await api.stop(id).then(() => void toast.success("Sesión detenida"), fail)
+}
 
 /** Corta el turno en curso; la sesión sigue viva y espera tu próximo mensaje. */
-export const interruptSession = (id: string) => api.interrupt(id).then(() => {}, fail)
+export const interruptSession = (id: string) => api.interrupt(id).then(() => void toast("Turno interrumpido"), fail)
 
 export const toggleTerminal = (id: string) => useTerminal.getState().toggle(id)
 export const openCompaction = (id: string) => useUi.getState().set({ compactFor: id })
