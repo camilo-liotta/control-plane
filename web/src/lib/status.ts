@@ -28,7 +28,7 @@ export function sessionStatus(s: Session): StatusView {
     case "working":
       return { label: "Trabajando", tone: "working", pulse: true }
     case "starting":
-      return { label: "Iniciando", tone: "working", pulse: true }
+      return { label: "Arrancando", tone: "working", pulse: true }
     case "stopped":
       if (s.external) return { label: s.external.kind === "background" ? "En segundo plano" : "En una terminal", tone: "pending", pulse: false }
       if (s.taskState === "reported_done") return { label: "Terminó", tone: "done", pulse: false }
@@ -42,6 +42,9 @@ export function sessionStatus(s: Session): StatusView {
       return { label: "Esperando", tone: "idle", pulse: false }
   }
 }
+
+/** La regla única de "te necesita" (ver DESIGN.md): una sesión esperando algo tuyo. "Bloqueada" no entra. */
+export { sessionWaits as sessionNeedsYou } from "@shared/inbox-count"
 
 export const toneText: Record<Tone, string> = {
   working: "text-status-working",

@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input"
  * - Con hijo, el hijo abre el diálogo (asChild). Sin hijo, se controla con `open` y `onOpenChange`
  *   (por ejemplo desde un ítem de menú).
  * - `onConfirm` puede ser asíncrono: hay spinner, no se cierra hasta que termina y, si falla, queda
- *   abierto con el error en un toast.
+ *   abierto con un toast "No se pudo …" (o `failMessage`) y el motivo abajo.
  * - `confirmText`: hay que escribirlo para habilitar el botón (solo para lo grave, como borrar un
  *   proyecto). Con el texto ya escrito, Enter confirma.
  */
@@ -35,6 +35,7 @@ export function ConfirmAction({
   cancelLabel = "Cancelar",
   destructive = true,
   confirmText,
+  failMessage,
   onConfirm,
 }: {
   children?: React.ReactNode
@@ -46,6 +47,8 @@ export function ConfirmAction({
   cancelLabel?: string
   destructive?: boolean
   confirmText?: string
+  /** El título del toast si falla (el motivo va abajo). Por defecto, "No se pudo <confirmLabel>". */
+  failMessage?: string
   onConfirm: () => unknown
 }) {
   const [typed, setTyped] = React.useState("")
@@ -94,7 +97,9 @@ export function ConfirmAction({
               try {
                 await onConfirm()
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : String(err))
+                toast.error(failMessage ?? `No se pudo ${confirmLabel.charAt(0).toLowerCase()}${confirmLabel.slice(1)}`, {
+                  description: err instanceof Error ? err.message : String(err),
+                })
                 throw err
               }
             }}
