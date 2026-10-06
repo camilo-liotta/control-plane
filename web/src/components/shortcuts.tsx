@@ -108,7 +108,7 @@ function Keys({ keys }: { keys: string[] }) {
   return (
     <KbdGroup>
       {keys.map((k, i) => (
-        <Kbd key={i}>{k}</Kbd>
+        <Kbd key={i}>{!isMac && k === "⇧" ? "Shift" : k}</Kbd>
       ))}
     </KbdGroup>
   )
@@ -128,9 +128,9 @@ function ShortcutsDialog() {
             Andan también con el foco en el composer, salvo los de una tecla sola. En la terminal, las teclas son de la shell.
           </DialogDescription>
         </DialogHeader>
-        <ul className="divide-y text-sm">
+        <ul className="-mx-1 max-h-96 divide-y overflow-y-auto px-1 text-sm">
           {rows.map((r) => (
-            <li key={r.label} className="flex items-center gap-3 py-2">
+            <li key={r.label} className="flex min-h-10 items-center gap-3 py-2">
               <span className="min-w-0 flex-1">
                 {r.label}
                 {r.where && <span className="block text-xs text-muted-foreground">{r.where}</span>}

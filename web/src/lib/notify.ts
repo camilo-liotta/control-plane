@@ -248,3 +248,47 @@ export function installDesktopApi() {
     updateFailed: updateFailedFromDesktop,
   }
 }
+
+// ------------------------------------------------------------------ qué trae esta versión (M10)
+
+const SEEN_VERSION = "cp:version-vista"
+
+/** a > b, comparando versiones x.y.z. */
+function newer(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number)
+  const pb = b.split(".").map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d) return d > 0
+  }
+  return false
+}
+
+/**
+ * Después de actualizar, un aviso (una sola vez por versión) con el link a las novedades. La primera
+ * vez que se abre la web solo se anota la versión: no hay "antes" con qué comparar.
+ */
+export function installWhatsNew() {
+  const check = (version: string | undefined, repoUrl: string | null | undefined) => {
+    if (!version) return
+    let seen: string | null = null
+    try {
+      seen = localStorage.getItem(SEEN_VERSION)
+      localStorage.setItem(SEEN_VERSION, version)
+    } catch {
+      return
+    }
+    if (!seen || seen === version || !newer(version, seen)) return
+    const notes = repoUrl ? `${repoUrl.replace(/\/$/, "")}/releases/tag/v${version}` : null
+    toast.success(`control-plane actualizado a v${version}`, {
+      id: `whats-new-${version}`,
+      description: notes ? "Las novedades están en las notas de la versión." : undefined,
+      duration: 20_000,
+      action: notes ? { label: "Ver novedades", onClick: () => window.open(notes, "_blank", "noopener") } : undefined,
+    })
+  }
+  check(useStore.getState().meta?.version, useStore.getState().meta?.repoUrl)
+  useStore.subscribe((s, prev) => {
+    if (s.meta?.version !== prev.meta?.version) check(s.meta?.version, s.meta?.repoUrl)
+  })
+}

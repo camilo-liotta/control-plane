@@ -35,7 +35,11 @@ interface UiState {
    * en el chat de la orquestadora (`id`: la sesión) o las tareas del tablero (`id`: el proyecto).
    * La página lo limpia cuando lo muestra.
    */
-  reveal: { kind: "proposals" | "tasks" | "environments" | "archived"; id: string; at: number } | null
+  /**
+   * Lo que la página de destino tiene que mostrar al llegar. Con `item`, además, cuál dentro de la
+   * sección (con "tasks", el id de la tarea: el resumen del proyecto la abre).
+   */
+  reveal: { kind: "proposals" | "tasks" | "environments" | "archived"; id: string; item?: string; at: number } | null
   /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde el menú de su ícono). */
   desktopUpdate: { version: string; notesUrl: string } | null
   /** La actualización de la app falló: el motivo y lo último de su log (para "Ver log"). */
