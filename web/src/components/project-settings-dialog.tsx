@@ -205,7 +205,7 @@ export function ProjectSettingsDialog({
             />
           </Field>
         </FieldGroup>
-        <DialogFooter className="sticky -bottom-5 z-10 -mx-5 -mb-5 bg-popover px-5 pt-3 pb-5 sm:justify-between">
+        <DialogFooter sticky className="sm:justify-between">
           <div className="flex gap-2">
             <ConfirmAction
               title={`¿Archivar ${project.name}?`}
