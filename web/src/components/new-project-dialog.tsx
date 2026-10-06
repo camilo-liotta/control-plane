@@ -67,7 +67,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
       onOpenChange(false)
       navigate(`/p/${project.id}`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo crear el proyecto", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setCreating(false)
     }
@@ -121,7 +121,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               aria-activedescendant={highlight >= 0 ? `repo-dir-${highlight}` : undefined}
             />
             {suggest && (
-              <FieldDescription className={cn(suggest.exists && !suggest.isGitRepo && "text-status-attention")}>
+              <FieldDescription className={cn(suggest.exists && !suggest.isGitRepo && "text-status-pending")}>
                 {!suggest.exists
                   ? "La carpeta no existe todavía."
                   : suggest.isGitRepo
@@ -130,7 +130,7 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               </FieldDescription>
             )}
             {suggest && suggest.dirs.length > 0 && (
-              <div id="repo-path-suggestions" role="listbox" aria-label="Carpetas" className="max-h-48 overflow-y-auto rounded-lg border p-1">
+              <div id="repo-path-suggestions" role="listbox" aria-label="Carpetas" className="max-h-48 overflow-y-auto rounded-xl bg-muted/50 p-1">
                 {suggest.dirs.map((d, i) => (
                   <button
                     key={d.path}
@@ -143,14 +143,14 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
                       if (el && i === highlight) el.scrollIntoView({ block: "nearest" })
                     }}
                     onClick={() => setPath(d.path + "/")}
-                    className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted", i === highlight && "bg-muted")}
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-background", i === highlight && "bg-background shadow-raised")}
                   >
                     {d.isGitRepo ? (
-                      <FolderGit2 className="size-4 text-status-done" />
+                      <FolderGit2 className="size-4 text-foreground" aria-label="Repo de git" />
                     ) : (
                       <FolderOpen className="size-4 text-muted-foreground" />
                     )}
-                    <span className="truncate font-mono text-[0.8rem]">{shortPath(d.path)}</span>
+                    <span className="truncate font-mono text-xs" title={d.path}>{shortPath(d.path)}</span>
                   </button>
                 ))}
               </div>

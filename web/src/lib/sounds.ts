@@ -26,8 +26,8 @@ export const SOUNDS: { id: SoundId; label: string }[] = [
 
 export const EVENTS: { id: NoticeEvent; label: string; hint: string }[] = [
   { id: "needs_you", label: "Te necesita", hint: "Una pregunta de Claude o un permiso" },
-  { id: "result", label: "Resultado", hint: "Un worker terminó y reportó" },
-  { id: "blocked", label: "Bloqueado", hint: "Un worker quedó trabado y pide una decisión" },
+  { id: "result", label: "Resultado", hint: "Una sesión terminó y reportó" },
+  { id: "blocked", label: "Bloqueado", hint: "Una sesión quedó trabada y pide una decisión" },
   { id: "proposals", label: "Propuestas listas", hint: "La orquestadora terminó de revisar" },
   { id: "compaction", label: "Compactación", hint: "El contexto se llena o espera tu elección" },
   { id: "task", label: "Tarea para vos", hint: "Una sesión te dejó algo para hacer" },

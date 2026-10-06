@@ -1,7 +1,7 @@
 import { Blocks, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
-import { useLocation } from "wouter"
+import { useLocation, useSearch } from "wouter"
 
 import type { ToolsView } from "@shared/types"
 
@@ -12,11 +12,12 @@ import { PluginSection } from "@/components/tools/plugin-section"
 import { SkillSection } from "@/components/tools/skill-section"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
-import { timeAgo } from "@/lib/format"
+import { shortPath, timeAgo } from "@/lib/format"
 import { useAccounts, useCurrentAccount, useProjects, useStore } from "@/lib/store"
 
 const ACCOUNT = "__account"
@@ -48,6 +49,10 @@ export function useToolsView(accountId: string | null, projectId: string | null)
   return { view, loading, error, reload: () => load(true) }
 }
 
+/** Las pestañas: se pueden abrir directo con ?tab=clis (o mcp, plugins, skills). */
+const TABS = ["mcp", "plugins", "skills", "clis"] as const
+type Tab = (typeof TABS)[number]
+
 function viaText(view: ToolsView) {
   return view.via.kind === "session" ? `leído de la sesión ${view.via.name}` : "consultado a Claude Code"
 }
@@ -61,17 +66,21 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
   const account = project ? (accounts.find((a) => a.id === project.accountId) ?? accounts.find((a) => a.isDefault) ?? current) : current
   const projects = useProjects(account)
   const { view, loading, error, reload } = useToolsView(account?.id ?? null, projectId)
-  const [tab, setTab] = useState("mcp")
+  const search = useSearch()
+  const asked = new URLSearchParams(search).get("tab")
+  const tab: Tab = TABS.includes(asked as Tab) ? (asked as Tab) : "mcp"
+  const base = projectId ? `/p/${projectId}/tools` : "/tools"
+  const setTab = (t: string) => navigate(t === "mcp" ? base : `${base}?tab=${t}`, { replace: true })
 
   const refresh = () =>
     reload().catch((err: Error) => {
-      toast.error(err.message)
+      toast.error("No se pudieron actualizar las herramientas", { description: err.message })
     })
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        leading={<Blocks className="size-4.5 shrink-0" />}
+        leading={<Blocks className="hidden size-4.5 shrink-0 sm:block" />}
         title="Herramientas"
         subtitle={
           <>
@@ -81,20 +90,23 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
         }
         actions={
           <>
-            <Select value={projectId ?? ACCOUNT} onValueChange={(v) => navigate(v === ACCOUNT ? "/tools" : `/p/${v}/tools`)}>
-              <SelectTrigger size="sm" className="w-52 text-xs">
+            <Select
+              value={projectId ?? ACCOUNT}
+              onValueChange={(v) => navigate(`${v === ACCOUNT ? "/tools" : `/p/${v}/tools`}${tab === "mcp" ? "" : `?tab=${tab}`}`)}
+            >
+              <SelectTrigger size="sm" className="w-36 text-xs sm:w-52" aria-label="De qué ver las herramientas">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ACCOUNT}>Toda la cuenta</SelectItem>
                 {projects.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
-                    Proyecto {p.name}
+                    {p.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
+            <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading} aria-label="Actualizar">
               {loading ? <Spinner /> : <RefreshCw />}
               <span className="hidden sm:inline">Actualizar</span>
             </Button>
@@ -102,25 +114,23 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-4 py-6">
+        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
           <p className="mb-5 text-sm text-muted-foreground">
             {project
-              ? `Lo que usa Claude Code en ${project.name} (${project.repoPath}): lo de tu cuenta más lo propio del proyecto.`
+              ? <>
+                  Lo que usa Claude Code en {project.name} (<code className="font-mono text-xs" title={project.repoPath}>{shortPath(project.repoPath)}</code>):
+                  lo de tu cuenta más lo propio del proyecto.
+                </>
               : "Lo que tiene tu cuenta de Claude Code en todos los proyectos. Elegí un proyecto para ver y ajustar lo que aplica en él."}
           </p>
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="mb-5">
+            <TabsList className="mb-5 max-w-full overflow-x-auto">
               <TabsTrigger value="mcp">MCP{view ? ` · ${view.mcp.filter((s) => !s.internal).length}` : ""}</TabsTrigger>
               <TabsTrigger value="plugins">Plugins{view ? ` · ${view.plugins.length}` : ""}</TabsTrigger>
               <TabsTrigger value="skills">Skills{view ? ` · ${view.skills.length}` : ""}</TabsTrigger>
               <TabsTrigger value="clis">CLIs</TabsTrigger>
             </TabsList>
-            {tab !== "clis" && error && (
-              <div className="mb-4 rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-sm">
-                <p className="font-medium">No pude leer las herramientas</p>
-                <p className="text-muted-foreground">{error}</p>
-              </div>
-            )}
+            {tab !== "clis" && error && <LoadError what="las herramientas" error={error} onRetry={refresh} className="mb-4" />}
             {tab !== "clis" && !view && !error && (
               <div className="space-y-3">
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
