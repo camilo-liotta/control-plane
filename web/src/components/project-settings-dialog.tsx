@@ -6,18 +6,8 @@ import type { CompactMode, Project, ProjectSettings } from "@shared/types"
 
 import { COMPACT_MODES } from "@/components/context-meter"
 import { EffortSelect, ModelSelect } from "@/components/new-session-dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +23,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import { shortPath } from "@/lib/format"
 import { useUi } from "@/lib/ui"
 
 export function ProjectSettingsDialog({
@@ -67,21 +58,18 @@ export function ProjectSettingsDialog({
       toast.success("Configuración guardada")
       onOpenChange(false)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo guardar la configuración", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setSaving(false)
     }
   }
 
+  // Si falla, ConfirmAction muestra el error y queda abierto.
   const archive = async () => {
-    try {
-      await api.archiveProject(project.id)
-      toast.success(`Proyecto ${project.name} archivado`)
-      onOpenChange(false)
-      navigate("/")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
+    await api.archiveProject(project.id)
+    toast.success(`Proyecto ${project.name} archivado`)
+    onOpenChange(false)
+    navigate("/")
   }
 
   return (
@@ -89,7 +77,9 @@ export function ProjectSettingsDialog({
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Configuración de {project.name}</DialogTitle>
-          <DialogDescription className="font-mono text-xs">{project.repoPath}</DialogDescription>
+          <DialogDescription className="truncate font-mono text-xs" title={project.repoPath}>
+            {shortPath(project.repoPath)}
+          </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field>
@@ -215,35 +205,30 @@ export function ProjectSettingsDialog({
             />
           </Field>
         </FieldGroup>
-        <DialogFooter className="sm:justify-between">
+        <DialogFooter className="sticky -bottom-5 z-10 -mx-5 -mb-5 bg-popover px-5 pt-3 pb-5 sm:justify-between">
           <div className="flex gap-2">
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive">Archivar proyecto</Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>¿Archivar {project.name}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Se detienen todas sus sesiones y desaparece del dashboard. No se borra nada del repo ni de las
-                    conversaciones de Claude Code.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={archive}>Archivar</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <ConfirmAction
+              title={`¿Archivar ${project.name}?`}
+              description={
+                <>
+                  <p>Se detienen todas sus sesiones y deja de aparecer en la barra lateral.</p>
+                  <p>No se borra nada: lo restaurás cuando quieras desde el inicio, en Archivados.</p>
+                </>
+              }
+              confirmLabel="Archivar"
+              destructive={false}
+              onConfirm={archive}
+            >
+              <Button variant="outline">Archivar…</Button>
+            </ConfirmAction>
             <Button
-              variant="outline"
-              className="text-destructive hover:text-destructive"
+              variant="ghost"
               onClick={() => {
                 onOpenChange(false)
                 setUi({ deleteFor: project.id })
               }}
             >
-              Borrar…
+              Borrar proyecto…
             </Button>
           </div>
           <div className="flex gap-2">

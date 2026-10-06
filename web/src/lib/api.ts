@@ -144,6 +144,9 @@ export const api = {
   updateProject: (id: string, body: { name?: string; settings?: Partial<ProjectSettings> }) =>
     request<Project>("PATCH", `/api/projects/${id}`, body),
   archiveProject: (id: string) => request<Project>("DELETE", `/api/projects/${id}`),
+  archivedProjects: () => request<Project[]>("GET", "/api/projects/archived"),
+  restoreProject: (id: string) =>
+    request<{ project: Project; restored: number; skipped: string[] }>("POST", `/api/projects/${id}/restore`),
   deleteProject: (id: string, confirm: string) =>
     request<{ ok: true; stopped: number }>("POST", `/api/projects/${id}/delete`, { confirm }),
   reviewNow: (id: string) => request("POST", `/api/projects/${id}/review-now`),

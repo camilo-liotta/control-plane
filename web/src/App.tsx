@@ -21,10 +21,13 @@ import { SubagentSheet } from "@/components/subagent-sheet"
 import { SessionToolsSheet } from "@/components/tools/session-tools-sheet"
 import { UpdateFailureDialog } from "@/components/update-failure-dialog"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { restartHint, versionMismatch } from "@/lib/server-version"
 import { useCurrentAccount, useStore } from "@/lib/store"
+import { toneSoft, type Tone } from "@/lib/status"
 import { useUi } from "@/lib/ui"
+import { cn } from "@/lib/utils"
 import { inDesktop, trayIconPlace } from "@/lib/notify"
 import { lastRoute } from "@/lib/nav"
 import { connect } from "@/lib/ws"
@@ -113,7 +116,7 @@ function LeaveDeletedProject() {
     if (!removed) return
     if (location !== `/p/${removed.id}` && !location.startsWith(`/p/${removed.id}/`)) return
     navigate("/")
-    toast.success(`Borré el proyecto ${removed.name}`, { id: `deleted-${removed.id}` })
+    toast.success(`Proyecto ${removed.name} borrado`, { id: `deleted-${removed.id}` })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [removed])
   return null
@@ -151,11 +154,23 @@ function ConnectionBanner() {
   const loaded = useStore((s) => s.loaded)
   if (connected || !loaded) return null
   return (
-    <div className="border-b border-status-error/30 bg-status-error/10 px-4 py-1.5 text-center text-xs text-status-error">
-      Se cortó la conexión con el server local. Reintentando…{" "}
-      {inDesktop()
-        ? "Si el server se cerró, la app lo vuelve a lanzar o te muestra cómo seguir."
-        : "Si lo cerraste, volvé a levantarlo con npm start."}
+    <Banner tone="error">
+      <Spinner className="size-3.5 shrink-0" />
+      <span>
+        <span className="font-semibold">Se cortó la conexión con el server local.</span> Reintentando…{" "}
+        {inDesktop()
+          ? "Si el server se cerró, la app lo vuelve a lanzar o te muestra cómo seguir."
+          : "Si lo cerraste, volvé a levantarlo con npm start."}
+      </span>
+    </Banner>
+  )
+}
+
+/** Un aviso de toda la app, arriba de la hoja: el tono dice qué tan urgente es y el texto, qué pasa. */
+function Banner({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+  return (
+    <div role="status" className={cn("flex items-center justify-center gap-2 px-4 py-2 text-center text-xs leading-snug text-balance", toneSoft[tone])}>
+      {children}
     </div>
   )
 }
@@ -169,11 +184,11 @@ function VersionBanner() {
   const mismatch = versionMismatch(server)
   if (!mismatch) return null
   return (
-    <div className="flex items-center justify-center gap-3 border-b border-status-attention/30 bg-status-attention/10 px-4 py-1.5 text-xs">
+    <Banner tone="attention">
       <span>
         El server es la v{mismatch.server} y {mismatch.where === "app" ? "la app" : "esta página"} es la v{mismatch.expected}: algunas funciones no van a andar hasta que lo reinicies, {restartHint()}.
       </span>
-    </div>
+    </Banner>
   )
 }
 
@@ -196,19 +211,22 @@ function UpdateBanner() {
     setDismissed(update.version)
   }
   return (
-    <div className="flex items-center justify-center gap-3 border-b border-status-working/30 bg-status-working/10 px-4 py-1.5 text-xs">
+    <Banner tone="pending">
       <span>
         Hay una versión nueva (v{update.version}). Actualizala desde {trayIconPlace()} → Actualizar a v{update.version}.{" "}
         <a href={update.notesUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">
           Qué trae
         </a>
       </span>
-      <button type="button" onClick={hide} aria-label="Ocultar este aviso" className="rounded p-0.5 text-muted-foreground hover:text-foreground">
-        <X className="size-3.5" />
-      </button>
-    </div>
+      <Button size="icon-xs" variant="ghost" onClick={hide} aria-label="Ocultar este aviso" className="text-current hover:bg-transparent hover:text-foreground">
+        <X />
+      </Button>
+    </Banner>
   )
 }
+
+/** La barra lateral: 256 px en pantallas anchas y nunca más de lo que hace falta en una angosta (a 900 px, 216). */
+const SIDEBAR_WIDTH = "clamp(13.5rem, 24vw, 16rem)"
 
 export default function App() {
   const loaded = useStore((s) => s.loaded)
@@ -221,7 +239,7 @@ export default function App() {
   }, [pending])
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
+    <SidebarProvider className="h-svh overflow-hidden" style={{ "--sidebar-width": SIDEBAR_WIDTH } as React.CSSProperties}>
       <AppSidebar />
       <LeaveOtherAccount />
       <LeaveDeletedProject />
@@ -231,7 +249,7 @@ export default function App() {
         <VersionBanner />
         <UpdateBanner />
         {!loaded ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+          <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Spinner />
             Conectando con el server local…
           </div>
