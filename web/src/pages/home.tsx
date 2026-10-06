@@ -77,7 +77,7 @@ function InboxSummary() {
     >
       <Inbox className="size-4 shrink-0 text-muted-foreground" />
       <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-        {blocking > 0 && <TonePill tone="attention">{blocking} {blocking === 1 ? "te necesita" : "te necesitan"}</TonePill>}
+        {blocking > 0 && <TonePill tone="attention">{blocking} {blocking === 1 ? "te espera" : "te esperan"}</TonePill>}
         {ready > 0 && <TonePill tone="pending">{plural(ready, "propuesta lista", "propuestas listas")}</TonePill>}
       </span>
       <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs font-medium", tone === "attention" ? "text-foreground" : "text-muted-foreground")}>
@@ -350,8 +350,6 @@ function ArchivedProjects() {
           <p className="flex items-center gap-2 px-1 text-xs text-muted-foreground" role="status">
             <Spinner className="size-3.5" /> Cargando…
           </p>
-        ) : !mine.length ? (
-          <p className="px-1 text-xs text-muted-foreground">No hay proyectos archivados en esta cuenta.</p>
         ) : (
           <ul className="surface-card divide-y overflow-hidden">
             {mine.map((p) => (

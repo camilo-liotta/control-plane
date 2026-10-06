@@ -21,7 +21,8 @@ import { cn } from "@/lib/utils"
 export const STATE: Record<CliCredential["state"], { label: string; tone: Tone }> = {
   ok: { label: "Logueado", tone: "done" },
   expired: { label: "Vencido", tone: "error" },
-  logged_out: { label: "Sin login", tone: "idle" },
+  // Sin login no frena la sesión: es para mirar cuando puedas (la cuenta de Claude Code sin login sí frena).
+  logged_out: { label: "Sin login", tone: "pending" },
   unknown: { label: "No se sabe", tone: "idle" },
 }
 
