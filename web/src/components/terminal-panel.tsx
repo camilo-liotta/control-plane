@@ -10,35 +10,61 @@ import { pasteText } from "@shared/command-values"
 import type { Session } from "@shared/types"
 
 import { Button } from "@/components/ui/button"
+import { ConfirmAction } from "@/components/ui/confirm-action"
+import { Shortcut } from "@/components/ui/kbd"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { isNotFound, STALE_SERVER } from "@/lib/server-version"
+import { toneSoft } from "@/lib/status"
 import { useTerminal } from "@/lib/terminal"
 import { cn } from "@/lib/utils"
 
 type Status = "connecting" | "open" | "exited" | "error"
 
-const THEMES = {
-  dark: {
-    background: "#0b0d10",
-    foreground: "#e6e6e6",
-    cursor: "#e6e6e6",
-    selectionBackground: "#3a4150",
-  },
-  light: {
-    background: "#fbfbfa",
-    foreground: "#1f2328",
-    cursor: "#1f2328",
-    selectionBackground: "#cfd6e0",
-  },
+/**
+ * Un color de los tokens (que están en oklch) como rgb, que es lo que entiende xterm. El canvas
+ * hace la conversión: anda igual en el navegador, en WebKitGTK y en WKWebView.
+ */
+function tokenColor(name: string, alpha = 1): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })
+  if (!ctx || !value) return alpha < 1 ? `rgba(128,128,128,${alpha})` : "#808080"
+  ctx.fillStyle = value
+  ctx.fillRect(0, 0, 1, 1)
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+  return `rgba(${r},${g},${b},${alpha})`
 }
+
+/** Los colores de la terminal salen de los del tema (claro u oscuro): fondo de tarjeta y texto. */
+function themeColors() {
+  return {
+    background: tokenColor("--card"),
+    foreground: tokenColor("--foreground"),
+    cursor: tokenColor("--foreground"),
+    cursorAccent: tokenColor("--card"),
+    selectionBackground: tokenColor("--status-working", 0.28),
+  }
+}
+
+const monoFont = () => getComputedStyle(document.documentElement).getPropertyValue("--ff-mono").trim() || "ui-monospace, monospace"
+
+const MIN_HEIGHT = 160
+/** Lo mínimo que le queda al chat cuando agrandás la terminal. */
+const MIN_CHAT = 200
 
 /**
  * La terminal de la sesión, al pie de la vista. La shell corre en el server (en la carpeta de la
  * sesión) y sigue viva al cambiar de sesión o recargar: al volver, se ve lo último que mostró.
+ * `embedded`: adentro de otra cosa (la hoja de "Llevar a la terminal" desde el tablero), sin
+ * tirador ni "esconder", y abierta siempre.
  */
-export function TerminalPanel({ session }: { session: Session }) {
-  const open = useTerminal((s) => !!s.open[session.id])
+export function TerminalPanel({ session, embedded = false, onClose }: { session: Session; embedded?: boolean; onClose?: () => void }) {
+  const open = useTerminal((s) => !!s.open[session.id]) || embedded
   const setOpen = useTerminal((s) => s.setOpen)
+  const height = useTerminal((s) => s.height)
+  const setHeight = useTerminal((s) => s.setHeight)
+  const section = useRef<HTMLElement>(null)
+  const [confirmClose, setConfirmClose] = useState<string[] | null>(null)
   const pending = useTerminal((s) =>
     s.pending?.sessionId === session.id ? s.pending.at : null
   )
@@ -56,18 +82,28 @@ export function TerminalPanel({ session }: { session: Session }) {
 
   useEffect(() => {
     if (!open || !host.current) return
-    const dark = document.documentElement.classList.contains("dark")
     const t = new Terminal({
-      fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+      fontFamily: monoFont(),
       fontSize: 13,
       cursorBlink: true,
       scrollback: 5000,
-      theme: dark ? THEMES.dark : THEMES.light,
+      theme: themeColors(),
     })
     const fit = new FitAddon()
     t.loadAddon(fit)
     t.open(host.current)
     fit.fit()
+    // La fuente puede llegar después de abrir: xterm vuelve a medir las celdas al cambiarla.
+    void document.fonts?.load(`13px ${monoFont()}`).then(() => {
+      if (disposed) return
+      t.options.fontFamily = monoFont()
+      fit.fit()
+    })
+    // Sigue el tema: al pasar de claro a oscuro (o al revés), cambian los colores.
+    const themeWatch = new MutationObserver(() => {
+      t.options.theme = themeColors()
+    })
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] })
     setStatus("connecting")
     setError(null)
     setSecure(false)
@@ -108,7 +144,12 @@ export function TerminalPanel({ session }: { session: Session }) {
         ws.onclose = (ev) => {
           if (disposed) return
           setSecure(false)
-          if (ev.code === 4403) setError("La terminal se cerró.")
+          // 4403: la cerraron (desde otra pestaña o se venció). No es una falla.
+          if (ev.code === 4403) {
+            setError("La terminal se cerró.")
+            setStatus("exited")
+            return
+          }
           setStatus((s) => (s === "exited" ? s : "error"))
         }
       })
@@ -189,6 +230,7 @@ export function TerminalPanel({ session }: { session: Session }) {
 
     return () => {
       disposed = true
+      themeWatch.disconnect()
       input.dispose()
       moved.dispose()
       rendered.dispose()
@@ -219,32 +261,102 @@ export function TerminalPanel({ session }: { session: Session }) {
     setGeneration((g) => g + 1)
   }
 
+  const close = async () => {
+    try {
+      await api.closeTerminal(session.id)
+    } catch (err) {
+      toast.error("No se pudo cerrar la terminal", { description: err instanceof Error ? err.message : String(err) })
+      return
+    }
+    setOpen(session.id, false)
+    onClose?.()
+  }
+
+  // Si corre algo adentro (un servidor, un build), cerrarla lo corta: se pregunta antes.
+  const askClose = async () => {
+    const running = status === "open" ? await api.terminalStatus(session.id).then((s) => s.running, () => []) : []
+    if (running.length) setConfirmClose(running)
+    else await close()
+  }
+
+  // El tirador: el alto se cambia arrastrando o con las flechas, y se recuerda.
+  const maxHeight = () => Math.max(MIN_HEIGHT, (section.current?.parentElement?.clientHeight ?? 800) - MIN_CHAT)
+  const clampHeight = (px: number) => Math.min(maxHeight(), Math.max(MIN_HEIGHT, px))
+  const current = () => section.current?.getBoundingClientRect().height ?? MIN_HEIGHT
+  const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    const startY = e.clientY
+    const startH = current()
+    const move = (ev: PointerEvent) => {
+      if (section.current) section.current.style.height = `${clampHeight(startH + startY - ev.clientY)}px`
+    }
+    const up = (ev: PointerEvent) => {
+      handle.removeEventListener("pointermove", move)
+      handle.removeEventListener("pointerup", up)
+      handle.removeEventListener("pointercancel", up)
+      setHeight(clampHeight(startH + startY - ev.clientY))
+    }
+    handle.addEventListener("pointermove", move)
+    handle.addEventListener("pointerup", up)
+    handle.addEventListener("pointercancel", up)
+  }
+  const keyResize = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 96 : 32
+    if (e.key === "ArrowUp") setHeight(clampHeight(current() + step))
+    else if (e.key === "ArrowDown") setHeight(clampHeight(current() - step))
+    else return
+    e.preventDefault()
+  }
+
+  const names = confirmClose ? [...new Set(confirmClose)] : []
+
   return (
     <section
+      ref={section}
       data-terminal=""
-      className="flex h-[40%] min-h-48 shrink-0 flex-col border-t bg-card"
+      className={cn("relative flex shrink-0 flex-col bg-card", embedded ? "h-full" : "min-h-40 border-t", !embedded && !height && "h-[40%]")}
+      style={!embedded && height ? { height: `min(${height}px, calc(100% - ${MIN_CHAT}px))` } : undefined}
       aria-label="Terminal"
     >
-      <header className="flex items-center gap-2 border-b px-3 py-1 text-xs text-muted-foreground">
-        <SquareTerminal className="size-3.5" />
-        <span className="font-medium text-foreground">Terminal</span>
-        <span className="truncate font-mono" title={session.cwd}>
+      {!embedded && (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Alto de la terminal"
+          aria-valuemin={MIN_HEIGHT}
+          aria-valuenow={Math.round(height ?? 0) || undefined}
+          tabIndex={0}
+          onPointerDown={startDrag}
+          onKeyDown={keyResize}
+          onDoubleClick={() => setHeight(clampHeight((section.current?.parentElement?.clientHeight ?? 800) * 0.4))}
+          title="Arrastrá para cambiar el alto (o usá ↑ y ↓; doble clic lo vuelve al de siempre)"
+          className="group/handle absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-row-resize touch-none items-center justify-center outline-none"
+        >
+          <span className="h-1 w-10 rounded-full bg-border transition-colors group-hover/handle:bg-ring group-focus-visible/handle:bg-ring" />
+        </div>
+      )}
+      <header className="flex min-w-0 items-center gap-2 border-b px-3 py-1 text-xs text-muted-foreground">
+        <SquareTerminal className="size-3.5 shrink-0" />
+        {!embedded && <span className="shrink-0 font-medium text-foreground">Terminal</span>}
+        <span className="min-w-0 truncate font-mono" title={session.cwd}>
           {session.cwd}
         </span>
-        <span className={cn("ml-1", status === "error" && "text-status-error")}>
+        <span className={cn("ml-1 shrink-0", status === "error" && "text-status-error")}>
           {status === "connecting"
-            ? "conectando…"
+            ? "Conectando…"
             : status === "exited"
-              ? "la shell terminó"
+              ? (error ?? "La shell terminó")
               : status === "error"
-                ? (error ?? "sin conexión")
+                ? (error ?? "Sin conexión")
                 : ""}
         </span>
         {secure && (
           <span
             data-terminal-secure=""
             role="status"
-            className="flex min-w-0 items-center gap-1 rounded-sm bg-status-attention/15 px-1.5 py-0.5 font-medium text-foreground"
+            className={cn("flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium", toneSoft.attention, "text-foreground")}
           >
             <LockKeyhole className="size-3.5 shrink-0 text-status-attention" />
             <span className="truncate">
@@ -254,27 +366,27 @@ export function TerminalPanel({ session }: { session: Session }) {
         )}
         <span className="ml-auto flex items-center gap-1">
           {(status === "exited" || status === "error") && (
-            <Button size="xs" variant="ghost" onClick={() => void restart()}>
+            <Button size="sm" variant="ghost" onClick={() => void restart()}>
               <RotateCcw />
               Abrir otra
             </Button>
           )}
+          {!embedded && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="icon-sm" variant="ghost" onClick={() => setOpen(session.id, false)} aria-label="Esconder la terminal (sigue abierta)">
+                  <ChevronDown />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Esconder: sigue abierta <Shortcut keys="ctrl+backtick" />
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Button
-            size="icon-xs"
+            size="icon-sm"
             variant="ghost"
-            onClick={() => setOpen(session.id, false)}
-            aria-label="Esconder la terminal (sigue abierta)"
-            title="Esconder (Ctrl+`): sigue abierta"
-          >
-            <ChevronDown />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => {
-              api.closeTerminal(session.id).catch((err: unknown) => toast.error(`No se pudo cerrar la terminal: ${err instanceof Error ? err.message : String(err)}`))
-              setOpen(session.id, false)
-            }}
+            onClick={() => void askClose()}
             aria-label="Cerrar la terminal"
             title="Cerrar: corta la shell y lo que esté corriendo"
           >
@@ -282,6 +394,21 @@ export function TerminalPanel({ session }: { session: Session }) {
           </Button>
         </span>
       </header>
+      <ConfirmAction
+        open={confirmClose !== null}
+        onOpenChange={(v) => !v && setConfirmClose(null)}
+        title="¿Cerrar la terminal?"
+        description={
+          <p>
+            Adentro corre <span className="font-mono text-foreground">{names.slice(0, 3).join(", ")}</span>
+            {names.length > 3 ? ` y ${names.length - 3} más` : ""}. Al cerrarla se corta la shell y todo lo que lanzó. Si solo querés
+            sacarla de la vista, escondela: sigue corriendo.
+          </p>
+        }
+        confirmLabel="Cerrar y cortar"
+        cancelLabel="Dejarla abierta"
+        onConfirm={close}
+      />
       <div className="relative min-h-0 flex-1">
         <div ref={host} className="h-full px-2 py-1" />
         {secure && (

@@ -28,6 +28,16 @@ export function registerTerminal(app: FastifyInstance, { db, terminals, port, ex
     }
   }
 
+  // Para leer el estado (no abre ni escribe nada): el navegador no manda Origin en un GET del mismo
+  // origen, así que alcanza con el Host (frena el DNS rebinding) y con rechazar un Origin ajeno. Una
+  // página de otro sitio igual no puede leer la respuesta (no hay CORS).
+  const sameHost = async (req: FastifyRequest, reply: FastifyReply) => {
+    const origin = req.headers.origin
+    if (!hosts.has(String(req.headers.host ?? "")) || (origin !== undefined && !origins.has(String(origin)))) {
+      return reply.code(403).send({ error: "la terminal solo se abre desde el dashboard" })
+    }
+  }
+
   const session = (id: string) => {
     const s = db.getSession(id)
     if (!s || s.archivedAt) throw new Error("La sesión no existe o está archivada")
@@ -44,6 +54,12 @@ export function registerTerminal(app: FastifyInstance, { db, terminals, port, ex
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
     }
+  })
+
+  // Si la terminal está abierta y si corre algo adentro (para preguntar antes de cerrarla).
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/terminal", { preValidation: sameHost }, async (req) => {
+    const open = terminals.has(req.params.id)
+    return { open, running: open ? await terminals.running(req.params.id) : [] }
   })
 
   app.delete<{ Params: { id: string } }>("/api/sessions/:id/terminal", { preValidation: strict }, async (req) => {

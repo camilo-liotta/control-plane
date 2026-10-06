@@ -126,6 +126,13 @@ export class Terminals {
     return { token: term.token, created: true }
   }
 
+  /** Lo que corre adentro de la shell de la sesión (vacío si no hay terminal o si espera un comando). */
+  async running(sessionId: string): Promise<string[]> {
+    const term = this.terms.get(sessionId)
+    if (!term || term.exited || !term.pty.running) return []
+    return term.pty.running().catch(() => [])
+  }
+
   has(sessionId: string) {
     const t = this.terms.get(sessionId)
     return !!t && !t.exited
