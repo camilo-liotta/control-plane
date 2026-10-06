@@ -322,8 +322,8 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     <div className="bg-background px-4 pt-2 pb-4">
       <div className="relative mx-auto max-w-3xl">
         {session.external && stopped && (
-          <div role="note" className={cn("mb-2 flex items-start gap-2 rounded-xl px-3 py-2 text-xs leading-snug", toneSoft.attention, "text-foreground")}>
-            <TerminalSquare className="mt-0.5 size-3.5 shrink-0 text-status-attention" />
+          <div role="note" className={cn("mb-2 flex items-start gap-2 rounded-xl px-3 py-2 text-xs leading-snug", toneSoft.pending, "text-foreground")}>
+            <TerminalSquare className="mt-0.5 size-3.5 shrink-0 text-status-pending" />
             <span>
               {session.external.kind === "background" ? (
                 <>

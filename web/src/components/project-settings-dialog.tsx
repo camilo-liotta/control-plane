@@ -111,7 +111,7 @@ export function ProjectSettingsDialog({
               type="number"
               min={0}
               max={600}
-              className="w-24 font-mono"
+              className="w-24"
               value={settings.batchWindowSec}
               onChange={(e) => set("batchWindowSec", Number(e.target.value))}
             />
@@ -163,7 +163,7 @@ export function ProjectSettingsDialog({
                 type="number"
                 min={1}
                 max={45}
-                className="w-24 font-mono"
+                className="w-24"
                 value={settings.compactWaitMin}
                 onChange={(e) => set("compactWaitMin", Number(e.target.value))}
               />
@@ -192,7 +192,7 @@ export function ProjectSettingsDialog({
               placeholder="Convenciones de commits, comandos para correr tests, zonas del repo que no se tocan…"
               className="min-h-24"
             />
-            <FieldDescription>Se suman al protocolo de cada worker. Aplican al iniciar o reanudar la sesión.</FieldDescription>
+            <FieldDescription>Se suman al protocolo de cada worker. Aplican desde que la sesión arranca o se reanuda.</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="p-orch">Para la orquestadora</FieldLabel>

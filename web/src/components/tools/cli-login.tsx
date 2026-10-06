@@ -20,14 +20,14 @@ import { cn } from "@/lib/utils"
 
 export const STATE: Record<CliCredential["state"], { label: string; tone: Tone }> = {
   ok: { label: "Logueado", tone: "done" },
-  expired: { label: "Vencido", tone: "attention" },
+  expired: { label: "Vencido", tone: "error" },
   logged_out: { label: "Sin login", tone: "idle" },
   unknown: { label: "No se sabe", tone: "idle" },
 }
 
-export function copy(text: string) {
+export function copy(text: string, done = "Comando copiado") {
   void navigator.clipboard.writeText(text).then(
-    () => toast.success("Copiado"),
+    () => toast.success(done),
     () => toast.error("No se pudo copiar")
   )
 }
@@ -147,9 +147,9 @@ export function JobPanel({ job }: { job: CliJob }) {
           {job.command}
         </code>
         {running ? (
-          <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => api.cliCancel(job.id).catch((err: unknown) => toast.error("No se pudo cancelar", { description: err instanceof Error ? err.message : String(err) }))}>
+          <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => api.cliCancel(job.id).catch((err: unknown) => toast.error("No se pudo cortar el login", { description: err instanceof Error ? err.message : String(err) }))}>
             <Square />
-            Cancelar
+            Cortar
           </Button>
         ) : (
           <button
@@ -166,7 +166,7 @@ export function JobPanel({ job }: { job: CliJob }) {
         <div className="mt-2 flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Código:</span>
           <code className="rounded-md bg-background px-2 py-0.5 font-mono text-base font-semibold tracking-widest">{job.code}</code>
-          <Button size="xs" variant="outline" onClick={() => copy(job.code!)}>
+          <Button size="xs" variant="outline" onClick={() => copy(job.code!, "Código copiado")}>
             <Copy />
             Copiar
           </Button>

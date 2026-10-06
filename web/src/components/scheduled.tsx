@@ -57,7 +57,7 @@ function StatusChip({ item, pending }: { item: ScheduledItem; pending: boolean }
   const s = pending
     ? { label: "Cancelación pedida", tone: "pending" as Tone }
     : item.paused
-      ? { label: "En pausa", tone: "attention" as Tone }
+      ? { label: "En pausa", tone: "pending" as Tone }
       : STATUS[item.status]
   return (
     <TonePill tone={s.tone} className="shrink-0">
@@ -127,7 +127,7 @@ function CancelControl({ item, session, state }: { item: ScheduledItem; session:
   return (
     <div className="pt-0.5">
       {state === "failed" && (
-        <p className="text-2xs font-medium text-status-attention">
+        <p className="text-2xs font-medium text-status-error">
           <span className="name">{session.name}</span> no la canceló: mirá el chat.
         </p>
       )}
@@ -245,10 +245,10 @@ export function SessionScheduled({ session }: { session: Session }) {
       ? `${active.length} ${active.length === 1 ? "activa" : "activas"}${next ? ` · la próxima ${untilText(next.nextAt!, now)}` : ""}`
       : "nada activo"
   return (
-    <Section id="scheduled" title="Programado" count={active.length || undefined} attention={paused.length > 0} summary={summary}>
+    <Section id="scheduled" title="Programado" count={active.length || undefined} pending={paused.length > 0} summary={summary}>
       <div className="space-y-2">
         {paused.length > 0 && (
-          <p role="note" className={cn("rounded-xl px-3 py-2 text-xs leading-snug", toneSoft.attention, "text-foreground")}>
+          <p role="note" className={cn("rounded-xl px-3 py-2 text-xs leading-snug", toneSoft.pending, "text-foreground")}>
             La sesión está detenida: lo programado no corre hasta que la reanudes. Si al volver ya pasó la hora de algo de una vez,
             Claude Code te pregunta antes de correrlo.
           </p>
@@ -298,7 +298,7 @@ export function ProjectScheduled({ sessions }: { sessions: Session[] }) {
             {paused > 0 && (
               <>
                 {" · "}
-                <span className="font-medium text-status-attention">{paused} en pausa (sesión detenida)</span>
+                <span className="font-medium text-status-pending">{paused} en pausa (sesión detenida)</span>
               </>
             )}
           </span>

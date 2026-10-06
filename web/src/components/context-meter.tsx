@@ -10,6 +10,7 @@ import { tokens } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 export const COMPACT_MODES: Record<CompactMode, { label: string; description: string }> = {
   auto: { label: "Claude decide", description: "Compacta sola, como siempre, sin avisarte." },
@@ -62,7 +63,7 @@ export function ContextMeter({ session }: { session: Session }) {
       await api.compactionDirect(session.id)
       toast.success("Compactando", { description: "Claude arma el resumen como siempre." })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("compactar")(err)
     }
   }
 

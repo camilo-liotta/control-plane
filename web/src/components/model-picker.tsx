@@ -102,7 +102,7 @@ export function ModelChoices({ session }: { session: Session }) {
             >
               <DropdownMenuRadioItem value={DEFAULT}>El de tu configuración</DropdownMenuRadioItem>
               {efforts.map((e) => (
-                <DropdownMenuRadioItem key={e} value={e} className="font-mono">
+                <DropdownMenuRadioItem key={e} value={e}>
                   {e}
                 </DropdownMenuRadioItem>
               ))}

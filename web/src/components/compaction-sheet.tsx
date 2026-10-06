@@ -17,6 +17,7 @@ import { toneSoft } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 interface Point {
   id: string
@@ -132,7 +133,7 @@ export function CompactionSheet() {
   // Al abrir, si no hay borrador, se pide uno.
   useEffect(() => {
     if (!sessionId || state?.draft || state?.drafting || state?.error) return
-    api.compactionDraft(sessionId).catch((err: Error) => toast.error(err.message))
+    api.compactionDraft(sessionId).catch(failed("armar el borrador"))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
@@ -158,7 +159,7 @@ export function CompactionSheet() {
       list.map((s, i) => (i === si ? { ...s, points: [...s.points, { id: `n${++added}`, text: "", keep: true, edited: false, added: true }] } : s))
     )
 
-  const redo = () => sessionId && api.compactionDraft(sessionId).catch((err: Error) => toast.error(err.message))
+  const redo = () => sessionId && api.compactionDraft(sessionId).catch(failed("armar el borrador"))
 
   const apply = async () => {
     if (!sessionId) return
@@ -173,7 +174,7 @@ export function CompactionSheet() {
       })
       close()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("compactar con tu selección")(err)
     } finally {
       setBusy(false)
     }
@@ -187,7 +188,7 @@ export function CompactionSheet() {
       toast.success(state?.waiting ? "Claude compacta como siempre" : "Compactando", { description: "Claude arma el resumen sin tu selección." })
       close()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("compactar")(err)
     } finally {
       setBusy(false)
     }

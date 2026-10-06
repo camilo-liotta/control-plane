@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
+import { failed } from "@/lib/errors"
 
 /** Lo que tiene cargado una sesión ahora: sus MCP (en vivo), skills y plugins. */
 export function SessionToolsSheet() {
@@ -50,7 +51,7 @@ export function SessionToolsSheet() {
       setView(await api.reloadSessionTools(sessionId))
       toast.success("Plugins y skills recargados en la sesión")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("recargar los plugins y las skills")(err)
     } finally {
       setBusy(false)
     }

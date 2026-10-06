@@ -1,6 +1,5 @@
 import { ChevronRight, CircleHelp, ShieldQuestion } from "lucide-react"
 import { useState } from "react"
-import { toast } from "sonner"
 
 import type { TimelineEvent } from "@shared/types"
 
@@ -11,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 type QuestionEvent = Extract<TimelineEvent, { kind: "question" }>
 type PermissionEvent = Extract<TimelineEvent, { kind: "permission" }>
@@ -44,7 +44,7 @@ export function QuestionCard({ sessionId, event }: { sessionId: string; event: Q
     try {
       await api.answer(sessionId, event.requestId, answers)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("mandar la respuesta")(err)
     } finally {
       setSending(false)
     }
@@ -132,7 +132,7 @@ export function PermissionCard({ sessionId, event }: { sessionId: string; event:
     try {
       await api.permission(sessionId, event.requestId, allow)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed(allow ? "aprobar" : "rechazar")(err)
     } finally {
       setSending(null)
     }

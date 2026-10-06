@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 
 const MODELS = [
-  { value: "__inherit", label: "El del worker" },
+  { value: "__inherit", label: "El de la sesión" },
   { value: "haiku", label: "Haiku" },
   { value: "sonnet", label: "Sonnet" },
   { value: "opus", label: "Opus" },
