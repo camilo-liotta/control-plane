@@ -96,6 +96,9 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  /* El velo detrás de diálogos y paneles. */
+  --color-overlay: var(--overlay);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -169,6 +172,8 @@
   --lamp-error: oklch(0.62 0.2 22);
   --lamp-idle: oklch(0.74 0.01 280);
   --destructive: var(--status-error);
+  --destructive-foreground: oklch(1 0 0);
+  --overlay: oklch(0.2 0.03 280 / 0.22);
   --diff-add: var(--status-done);
   --diff-del: var(--status-error);
   --claude: oklch(0.6 0.15 42);
@@ -213,6 +218,8 @@
   --lamp-error: oklch(0.68 0.18 22);
   --lamp-idle: oklch(0.52 0.01 280);
   --claude: oklch(0.72 0.14 45);
+  --destructive-foreground: oklch(0.18 0.02 22);
+  --overlay: oklch(0 0 0 / 0.45);
 }
 
 @layer base {

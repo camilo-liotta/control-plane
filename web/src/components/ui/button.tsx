@@ -21,7 +21,7 @@ const buttonVariants = cva(
         ghost:
           "text-foreground hover:bg-accent aria-expanded:bg-accent",
         destructive:
-          "bg-destructive text-white shadow-raised hover:bg-destructive/88 focus-visible:ring-destructive/60 dark:text-[oklch(0.18_0.02_22)]",
+          "bg-destructive text-destructive-foreground shadow-raised hover:bg-destructive/88 focus-visible:ring-destructive/60",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

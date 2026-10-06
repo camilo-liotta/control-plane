@@ -147,6 +147,15 @@ No se usan: **Eliminar** (es Borrar), **Iniciar** para sesiones (es Reanudar) ni
 - **El ícono de control-plane en la barra de arriba**. En la Mac: "en la barra de menú".
 - **Herramientas, Entornos, Apps, Programado**: con mayúscula, porque son nombres de secciones.
 
+### "Te necesita" y "te espera"
+Una sola regla en toda la app. Los predicados están en `@shared/inbox-count`:
+- **Te necesita**: solo una **sesión** que espera algo tuyo (`sessionWaits`, `status === "needs_input"`): una pregunta, un permiso o una compactación por decidir. Es "1 te necesita" o "3 te necesitan". Tono `attention`.
+- **Te espera**: una **tarea para vos que frena** a una sesión (`taskWaits`). Tono `attention`.
+- **El número de la Bandeja** (botón, ícono de la app, dock): `inboxCounts().total`, que suma las dos cosas de arriba más las propuestas listas (`draftWaits`). Va neutro, como conteo, porque mezcla cosas que frenan con cosas que no.
+- Una propuesta lista o un resultado en cola no "te necesitan": son `pending`.
+- **"Bloqueada"** (una sesión que reportó que está trabada) va en tono `attention`, porque frena, pero **no cuenta** como "te necesita": la resuelve la orquestadora con la cola. **"Por compactar"** sí cuenta: es `needs_input`.
+- En la web, usá `sessionNeedsYou(s)` de `lib/status.ts`, que es lo mismo que `sessionWaits`, para contar y para decidir si dice "te necesita". No cuentes "todo lo ámbar" de `sessionStatus`.
+
 ### Formato
 - **Mayúsculas**: solo la primera palabra y los nombres propios ("Nueva sesión", "Tareas para vos"). Nada en versalitas ni todo en mayúsculas, salvo los nombres de sesión que el usuario escribió así.
 - **Tiempo**:
