@@ -397,7 +397,7 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
             </>
           )}
         </FieldGroup>
-        <DialogFooter className="sticky -bottom-5 z-10 -mx-5 -mb-5 bg-popover px-5 pt-3 pb-5">
+        <DialogFooter sticky>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
