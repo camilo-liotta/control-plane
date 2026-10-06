@@ -690,6 +690,15 @@ export class Db {
     return r ? toProject(r) : null
   }
 
+  /** Los archivados, del más reciente al más viejo. */
+  listArchivedProjects(): ProjectRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC")
+        .all() as Row[]
+    ).map(toProject)
+  }
+
   listProjects(): ProjectRecord[] {
     return (
       this.db

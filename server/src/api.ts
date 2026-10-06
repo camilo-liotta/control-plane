@@ -20,6 +20,7 @@ import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
 import { deleteProject } from "./project-delete.ts"
+import { archiveProject, restoreProject } from "./project-archive.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
 import type { Environments } from "./environments.ts"
@@ -377,13 +378,17 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
   )
 
   app.delete<{ Params: { id: string } }>("/api/projects/:id", (req, reply) =>
-    guard(reply, async () => {
-      const p = requireProject(req.params.id)
-      for (const s of db.listSessions().filter((s) => s.projectId === p.id)) await sessions.archive(s.id)
-      db.updateProject(p.id, { archivedAt: now() })
-      const view = orchestration.projectView(db.getProject(p.id)!)
-      deps.hub.broadcast({ type: "project", project: view })
-      return view
+    guard(reply, () => archiveProject(deps, requireProject(req.params.id)))
+  )
+
+  // Los archivados (de todas las cuentas: la web filtra por la que estás mirando).
+  app.get("/api/projects/archived", () => db.listArchivedProjects().map((p) => orchestration.projectView(p)))
+
+  app.post<{ Params: { id: string } }>("/api/projects/:id/restore", (req, reply) =>
+    guard(reply, () => {
+      const result = restoreProject(deps, req.params.id)
+      if (result.project.accountId) broadcastAccount(result.project.accountId)
+      return result
     })
   )
 

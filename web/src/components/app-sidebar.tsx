@@ -1,16 +1,16 @@
-import { Bell, BellOff, BellRing, Blocks, ChevronRight, Compass, Inbox, Monitor, Moon, Plus, Search, Sun } from "lucide-react"
+import { Bell, BellOff, BellRing, Blocks, ChevronRight, Inbox, Monitor, Moon, Plus, Search, Sun } from "lucide-react"
 import { useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
 
-import { inboxCounts } from "@shared/inbox-count"
+import { draftWaits, inboxCounts, sessionWaits, taskWaits } from "@shared/inbox-count"
 import type { Project, Session } from "@shared/types"
 
 import { AccountSwitcher } from "@/components/accounts"
 import { GithubMark } from "@/components/github-mark"
 import { SettingsMenu } from "@/components/settings-menu"
 import { SoundsMenu } from "@/components/sounds-menu"
-import { SessionLamp } from "@/components/status"
+import { Lamp, SessionLamp } from "@/components/status"
 import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -38,9 +38,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { UsageMeter } from "@/components/usage-meter"
 import { inDesktop, requestNotifications, setOsNotificationsEnabled, systemNotification, trayIconPlace, useNotifications } from "@/lib/notify"
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
-import { isMac, useNav } from "@/lib/nav"
+import { useNav } from "@/lib/nav"
 import { useUi } from "@/lib/ui"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import { Shortcut } from "@/components/ui/kbd"
+import { toneSoft } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
 /** Marca: la orquestadora (un punto adentro de un aro) y sus 6 sesiones, en la versión simplificada del ícono (se lee a 18–24 px). */
@@ -68,21 +69,22 @@ export function Mark({ className }: { className?: string }) {
 
 function SessionLink({ session, active }: { session: Session; active: boolean }) {
   const unread = useStore((s) => s.unread[session.id] ?? 0)
-  const attention = session.status === "needs_input"
+  const name = session.kind === "orchestrator" ? "Orquestadora" : session.name
+  // Si te necesita, ya lo dice la luz: no se suma el punto de no leído.
+  const showUnread = unread > 0 && session.status !== "needs_input"
   return (
     <SidebarMenuSubItem>
-      <SidebarMenuSubButton asChild isActive={active}>
-        <Link href={`/p/${session.projectId}/s/${session.id}`}>
-          {session.kind === "orchestrator" ? (
-            <Compass className="!size-3.5" />
-          ) : (
-            <SessionLamp session={session} className="ml-0.5" />
-          )}
-          <span className={cn("name truncate text-ui", unread > 0 && "font-semibold")}>
-            {session.kind === "orchestrator" ? "Orquestadora" : session.name}
+      <SidebarMenuSubButton asChild isActive={active} className="h-7 text-ui">
+        <Link href={`/p/${session.projectId}/s/${session.id}`} title={name}>
+          <SessionLamp session={session} className="shrink-0" />
+          <span className={cn("name min-w-0 flex-1 truncate", session.kind === "orchestrator" && "text-muted-foreground", showUnread && "text-foreground")}>
+            {name}
           </span>
-          {session.kind === "orchestrator" && <SessionLamp session={session} className="ml-auto" />}
-          {session.kind === "worker" && !attention && unread > 0 && <span className="ml-auto size-1.5 rounded-full bg-foreground/60" />}
+          {showUnread && (
+            <span className="size-1.5 shrink-0 rounded-full bg-foreground/70">
+              <span className="sr-only">, mensajes sin leer</span>
+            </span>
+          )}
         </Link>
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
@@ -99,41 +101,50 @@ function ProjectMenu({ project }: { project: Project }) {
   const setOpen = (v: boolean) => useNav.getState().setFolded(project.id, !v)
   const { orchestrator, workers } = projectSessions(sessions, project.id)
   const ready = openDrafts(drafts, project.id).filter((d) => d.state === "ready").length
+  const needs = [orchestrator, ...workers].filter((s) => s?.status === "needs_input").length
   const base = `/p/${project.id}`
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <SidebarMenuItem>
-        <SidebarMenuButton asChild isActive={location === base} tooltip={project.repoPath}>
-          <Link href={base}>
-            <span className="truncate font-medium">{project.name}</span>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-label={open ? `Ocultar las sesiones de ${project.name}` : `Mostrar las sesiones de ${project.name}`}
+            className="absolute top-1.5 left-1 z-10 flex size-5 items-center justify-center rounded-md text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          >
+            <ChevronRight className="size-3.5 transition-transform data-[open=true]:rotate-90" data-open={open} />
+          </button>
+        </CollapsibleTrigger>
+        <SidebarMenuButton asChild isActive={location === base} className="h-8 pl-7 text-ui">
+          <Link href={base} title={`${project.name} · ${project.repoPath}`}>
+            <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
+            {/* Plegado, que se vea igual si alguna sesión te necesita. */}
+            {!open && needs > 0 && <Lamp tone="attention" label={`${needs} ${needs === 1 ? "te necesita" : "te necesitan"}`} className="shrink-0" />}
           </Link>
         </SidebarMenuButton>
         {ready > 0 && (
-          <SidebarMenuBadge className="right-7 bg-status-attention/15 font-mono text-status-attention">{ready}</SidebarMenuBadge>
+          <SidebarMenuBadge
+            className={cn("right-1.5 rounded-full px-1.5 text-2xs font-semibold", toneSoft.pending, "group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0")}
+          >
+            {ready}
+            <span className="sr-only">{ready === 1 ? " propuesta lista" : " propuestas listas"}</span>
+          </SidebarMenuBadge>
         )}
-        <CollapsibleTrigger asChild>
-          <SidebarMenuAction className="transition-transform data-[state=open]:rotate-90" aria-label="Mostrar sesiones">
-            <ChevronRight />
-          </SidebarMenuAction>
-        </CollapsibleTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SidebarMenuAction showOnHover aria-label={`Nueva sesión en ${project.name}`} onClick={() => setUi({ newSessionFor: project.id })}>
+              <Plus />
+            </SidebarMenuAction>
+          </TooltipTrigger>
+          <TooltipContent side="right">Nueva sesión</TooltipContent>
+        </Tooltip>
         <CollapsibleContent>
-          <SidebarMenuSub>
+          <SidebarMenuSub className="mr-0 ml-3.5 gap-0.5 pr-0 pl-2">
             {orchestrator && <SessionLink session={orchestrator} active={location === `${base}/s/${orchestrator.id}`} />}
             {workers.map((w) => (
               <SessionLink key={w.id} session={w} active={location === `${base}/s/${w.id}`} />
             ))}
-            <SidebarMenuSubItem>
-              <SidebarMenuSubButton
-                asChild
-                className="text-muted-foreground"
-              >
-                <button type="button" onClick={() => setUi({ newSessionFor: project.id })}>
-                  <Plus className="!size-3.5" />
-                  <span>Nueva sesión</span>
-                </button>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
           </SidebarMenuSub>
         </CollapsibleContent>
       </SidebarMenuItem>
@@ -152,7 +163,7 @@ function ThemeToggle() {
         <button
           type="button"
           onClick={() => setTheme(next)}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          className="rounded-md p-1.5 text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
           aria-label={label}
         >
           <Icon className="size-4" />
@@ -173,7 +184,7 @@ function DesktopNotificationsMenu() {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              className="rounded-md p-1.5 text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
               aria-label={label}
             >
               <Bell className="size-4" />
@@ -225,7 +236,7 @@ function BrowserNotificationsMenu() {
   }
   const test = () => {
     const ok = systemNotification("Aviso de prueba de control-plane", "Así te vamos a avisar cuando una sesión te necesite.")
-    toast.success(ok ? "Mandé un aviso de prueba" : "El navegador no dejó mostrar el aviso", {
+    toast.success(ok ? "Aviso de prueba enviado" : "El navegador no dejó mostrar el aviso", {
       description: ok
         ? "Si no lo ves, revisá los ajustes de notificaciones del sistema para tu navegador."
         : "Revisá el permiso de notificaciones del sitio.",
@@ -240,13 +251,13 @@ function BrowserNotificationsMenu() {
             <button
               type="button"
               className={cn(
-                "relative rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
+                "relative rounded-md p-1.5 text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
                 on && "text-foreground"
               )}
               aria-label={label}
             >
               <Icon className="size-4" />
-              {permission === "denied" && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-status-error" />}
+              {permission === "denied" && <span aria-hidden className="absolute top-1 right-1 size-1.5 rounded-full bg-status-error-lamp" />}
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -261,7 +272,7 @@ function BrowserNotificationsMenu() {
           </p>
         </div>
         {desktop && (
-          <p className="rounded-md border bg-muted/40 p-2.5 text-xs leading-snug">
+          <p className="rounded-lg bg-muted p-2.5 text-xs leading-snug">
             La app de escritorio está conectada: los avisos del sistema los manda ella. Cuando la cierres, vuelven a salir
             desde acá.
           </p>
@@ -285,7 +296,7 @@ function BrowserNotificationsMenu() {
           </Button>
         )}
         {permission === "denied" && (
-          <div className="space-y-1.5 rounded-md border border-status-error/30 bg-status-error/5 p-2.5 text-xs leading-snug">
+          <div className="space-y-1.5 rounded-lg bg-muted p-2.5 text-xs leading-snug">
             <p className="font-medium text-foreground">El navegador los tiene bloqueados para este sitio.</p>
             <ol className="list-decimal space-y-0.5 pl-4 text-muted-foreground">
               <li>Tocá el ícono a la izquierda de la dirección ({location.host}).</li>
@@ -302,6 +313,19 @@ function BrowserNotificationsMenu() {
   )
 }
 
+/** Lo que hay en la Bandeja: lo que frena (te necesita) y lo que mirás cuando puedas (propuestas listas). */
+export function useInboxParts() {
+  const drafts = useStore((s) => s.drafts)
+  const sessions = useStore((s) => s.sessions)
+  const tasks = useStore((s) => s.tasks)
+  // Las mismas reglas que el número del ícono de escritorio (inboxCounts), separadas por tono.
+  return useMemo(() => {
+    const ready = Object.values(drafts).filter(draftWaits).length
+    const blocking = Object.values(sessions).filter(sessionWaits).length + Object.values(tasks).filter(taskWaits).length
+    return { blocking, ready }
+  }, [drafts, sessions, tasks])
+}
+
 /** El número de la Bandeja: el mismo que el del ícono de la app de escritorio. */
 export function useInboxCount() {
   const drafts = useStore((s) => s.drafts)
@@ -313,6 +337,30 @@ export function useInboxCount() {
   )
 }
 
+function NavLink({ icon: Icon, label, active, onClick, href, children }: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  active?: boolean
+  onClick?: () => void
+  href?: string
+  children?: React.ReactNode
+}) {
+  const inner = (
+    <>
+      <Icon />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {children}
+    </>
+  )
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild={Boolean(href)} isActive={active} onClick={onClick} className="h-8 text-ui">
+        {href ? <Link href={href}>{inner}</Link> : inner}
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
 export function AppSidebar() {
   const projects = useProjects()
   const connected = useStore((s) => s.connected)
@@ -320,7 +368,7 @@ export function AppSidebar() {
   const version = useStore((s) => s.meta?.version)
   const repoUrl = useStore((s) => s.meta?.repoUrl)
   const setUi = useUi((s) => s.set)
-  const inbox = useInboxCount()
+  const inbox = useInboxParts()
   const [location] = useLocation()
   // En móvil la barra es un panel encima de la página: se cierra al ir a otro lado.
   const { isMobile, setOpenMobile } = useSidebar()
@@ -330,18 +378,17 @@ export function AppSidebar() {
 
   return (
     <Sidebar variant="inset">
-      <SidebarHeader className="gap-3">
-        <div className="flex items-center gap-2 px-2 pt-1.5">
-          <Link href="/" className="flex items-center gap-2">
+      <SidebarHeader className="gap-2 pb-1">
+        <div className="flex h-8 items-center gap-2 px-2">
+          <Link href="/" className="flex items-center gap-2 rounded-md outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring" aria-label="Inicio">
             <Mark className="size-4.5" />
             <span className="brand-word">control-plane</span>
           </Link>
           <Tooltip>
             <TooltipTrigger asChild>
-              <span
-                className={cn("ml-auto size-2 rounded-full", connected ? "bg-status-done" : "animate-pulse bg-status-error")}
-                aria-label={connected ? "Conectado" : "Sin conexión con el server"}
-              />
+              <span className="ml-auto flex size-5 items-center justify-center" tabIndex={0}>
+                <Lamp tone={connected ? "done" : "error"} pulse={!connected} label={connected ? "Conectado al server local" : "Sin conexión con el server"} />
+              </span>
             </TooltipTrigger>
             <TooltipContent>{connected ? "Conectado al server local" : "Sin conexión con el server: reintentando…"}</TooltipContent>
           </Tooltip>
@@ -350,50 +397,50 @@ export function AppSidebar() {
         <button
           type="button"
           onClick={() => setUi({ palette: true })}
-          className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-8 items-center gap-2 rounded-lg bg-background px-2.5 text-ui text-muted-foreground shadow-raised transition-colors outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
         >
           <Search className="size-4" />
           Buscar…
-          <KbdGroup className="ml-auto">
-            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
-            <Kbd>K</Kbd>
-          </KbdGroup>
+          <Shortcut keys="mod+k" className="ml-auto" />
         </button>
-        <button
-          type="button"
-          onClick={() => setUi({ inbox: true })}
-          className="inbox-button flex items-center gap-2 rounded-lg border bg-background px-2.5 py-2 text-sm font-medium shadow-raised transition-colors hover:bg-muted"
-        >
-          <Inbox className="size-4" />
-          Bandeja
-          {inbox > 0 && (
-            <span className="ml-auto rounded-full bg-status-attention-lamp px-1.5 font-mono text-2xs font-semibold text-background tabular-nums">{inbox}</span>
-          )}
-        </button>
-        <Link
-          href="/tools"
-          className={cn(
-            "-mt-1.5 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
-            location.endsWith("/tools") && "bg-sidebar-accent text-foreground"
-          )}
-        >
-          <Blocks className="size-4" />
-          Herramientas
-        </Link>
+        <SidebarMenu className="gap-0.5 pt-1">
+          <NavLink icon={Inbox} label="Bandeja" onClick={() => setUi({ inbox: true })}>
+            {inbox.blocking + inbox.ready > 0 && (
+              <span
+                className={cn(
+                  "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-2xs font-semibold",
+                  inbox.blocking > 0 ? toneSoft.attention : toneSoft.pending
+                )}
+              >
+                {inbox.blocking + inbox.ready}
+                <span className="sr-only">
+                  {inbox.blocking > 0 ? `, ${inbox.blocking} te ${inbox.blocking === 1 ? "necesita" : "necesitan"}` : ""}
+                  {inbox.ready > 0 ? `, ${inbox.ready} ${inbox.ready === 1 ? "propuesta lista" : "propuestas listas"}` : ""}
+                </span>
+              </span>
+            )}
+          </NavLink>
+          <NavLink icon={Blocks} label="Herramientas" href="/tools" active={location.endsWith("/tools")} />
+        </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
+        <SidebarGroup className="pt-1">
           <SidebarGroupLabel className="eyebrow">Proyectos</SidebarGroupLabel>
-          <SidebarGroupAction title="Nuevo proyecto" onClick={() => setUi({ newProject: true })}>
-            <Plus />
-          </SidebarGroupAction>
-          <SidebarMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarGroupAction aria-label="Nuevo proyecto" onClick={() => setUi({ newProject: true })}>
+                <Plus />
+              </SidebarGroupAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">Nuevo proyecto</TooltipContent>
+          </Tooltip>
+          <SidebarMenu className="gap-0.5">
             {projects.map((p) => (
               <ProjectMenu key={p.id} project={p} />
             ))}
             {projects.length === 0 && (
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={() => setUi({ newProject: true })} className="text-muted-foreground">
+                <SidebarMenuButton onClick={() => setUi({ newProject: true })} className="text-ui text-muted-foreground">
                   <Plus />
                   <span>Crear el primero</span>
                 </SidebarMenuButton>
@@ -416,7 +463,7 @@ export function AppSidebar() {
                   href={repoUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                  className="ml-auto rounded-md p-1.5 text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
                   aria-label="control-plane en GitHub"
                 >
                   <GithubMark className="size-4" />
@@ -429,8 +476,8 @@ export function AppSidebar() {
         {(version || claudeVersion) && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <p className="-mt-2 truncate px-2 font-mono text-2xs text-muted-foreground">
-                {version && <span className="text-foreground/80">control-plane v{version}</span>}
+              <p tabIndex={0} className="-mt-2 truncate rounded-md px-2 font-mono text-2xs text-muted-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring">
+                {version && <span className="text-foreground/80">v{version}</span>}
                 {version && claudeVersion && " · "}
                 {claudeVersion && <span>claude {claudeVersion}</span>}
               </p>
