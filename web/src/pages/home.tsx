@@ -18,7 +18,7 @@ import { api } from "@/lib/api"
 import { plural, shortPath, timeAgo, tokens, totals, usd } from "@/lib/format"
 import { lastRoute } from "@/lib/nav"
 import { openDrafts, projectSessions, useCurrentAccount, useProjects, useStore } from "@/lib/store"
-import { reportStatusView, sessionStatus, type Tone } from "@/lib/status"
+import { reportStatusView, sessionNeedsYou, sessionStatus, type Tone } from "@/lib/status"
 import { useAction } from "@/lib/use-action"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
@@ -65,7 +65,8 @@ function ContinueWhereYouWere() {
 
 /** Cuánto hay en la Bandeja, en una línea: el detalle está allá, no se repite acá. */
 function InboxSummary() {
-  const { blocking, ready } = useInboxParts()
+  const { needs, waiting, ready } = useInboxParts()
+  const blocking = needs + waiting
   const setUi = useUi((s) => s.set)
   if (!blocking && !ready) return null
   const tone: Tone = blocking ? "attention" : "pending"
@@ -77,7 +78,8 @@ function InboxSummary() {
     >
       <Inbox className="size-4 shrink-0 text-muted-foreground" />
       <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-        {blocking > 0 && <TonePill tone="attention">{blocking} {blocking === 1 ? "te espera" : "te esperan"}</TonePill>}
+        {needs > 0 && <TonePill tone="attention">{needs} {needs === 1 ? "te necesita" : "te necesitan"}</TonePill>}
+        {waiting > 0 && <TonePill tone="attention">{waiting} {waiting === 1 ? "te espera" : "te esperan"}</TonePill>}
         {ready > 0 && <TonePill tone="pending">{plural(ready, "propuesta lista", "propuestas listas")}</TonePill>}
       </span>
       <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs font-medium", tone === "attention" ? "text-foreground" : "text-muted-foreground")}>
@@ -93,7 +95,7 @@ function ProjectCard({ project }: { project: Project }) {
   const drafts = useStore((s) => s.drafts)
   const { orchestrator, workers } = projectSessions(sessions, project.id)
   const all = [orchestrator, ...workers].filter((s) => s !== null)
-  const needs = all.filter((s) => sessionStatus(s).tone === "attention").length
+  const needs = all.filter(sessionNeedsYou).length
   const working = all.filter((s) => s.status === "working" || s.status === "starting").length
   const ready = openDrafts(drafts, project.id).filter((d) => d.state === "ready").length
   const last = Math.max(0, ...all.map((s) => s.lastActivityAt ?? 0))

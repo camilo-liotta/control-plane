@@ -41,7 +41,7 @@ import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { useNav } from "@/lib/nav"
 import { useUi } from "@/lib/ui"
 import { Shortcut } from "@/components/ui/kbd"
-import { toneSoft } from "@/lib/status"
+import { sessionNeedsYou, toneSoft } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
 /** Marca: la orquestadora (un punto adentro de un aro) y sus 6 sesiones, en la versión simplificada del ícono (se lee a 18–24 px). */
@@ -71,7 +71,7 @@ function SessionLink({ session, active }: { session: Session; active: boolean })
   const unread = useStore((s) => s.unread[session.id] ?? 0)
   const name = session.kind === "orchestrator" ? "Orquestadora" : session.name
   // Si te necesita, ya lo dice la luz: no se suma el punto de no leído.
-  const showUnread = unread > 0 && session.status !== "needs_input"
+  const showUnread = unread > 0 && !sessionNeedsYou(session)
   return (
     <SidebarMenuSubItem>
       <SidebarMenuSubButton asChild isActive={active} className="h-7 text-ui">
@@ -101,7 +101,7 @@ function ProjectMenu({ project }: { project: Project }) {
   const setOpen = (v: boolean) => useNav.getState().setFolded(project.id, !v)
   const { orchestrator, workers } = projectSessions(sessions, project.id)
   const ready = openDrafts(drafts, project.id).filter((d) => d.state === "ready").length
-  const needs = [orchestrator, ...workers].filter((s) => s?.status === "needs_input").length
+  const needs = [orchestrator, ...workers].filter((s) => s !== null && sessionNeedsYou(s)).length
   const base = `/p/${project.id}`
 
   return (
@@ -313,16 +313,18 @@ function BrowserNotificationsMenu() {
   )
 }
 
-/** Lo que hay en la Bandeja: lo que frena (te necesita) y lo que mirás cuando puedas (propuestas listas). */
+/** Lo que hay en la Bandeja, por regla (DESIGN.md): sesiones que te necesitan, tareas que te esperan y propuestas listas. */
 export function useInboxParts() {
   const drafts = useStore((s) => s.drafts)
   const sessions = useStore((s) => s.sessions)
   const tasks = useStore((s) => s.tasks)
   // Las mismas reglas que el número del ícono de escritorio (inboxCounts), separadas por tono.
   return useMemo(() => {
-    const ready = Object.values(drafts).filter(draftWaits).length
-    const blocking = Object.values(sessions).filter(sessionWaits).length + Object.values(tasks).filter(taskWaits).length
-    return { blocking, ready }
+    return {
+      needs: Object.values(sessions).filter(sessionWaits).length,
+      waiting: Object.values(tasks).filter(taskWaits).length,
+      ready: Object.values(drafts).filter(draftWaits).length,
+    }
   }, [drafts, sessions, tasks])
 }
 
@@ -369,6 +371,7 @@ export function AppSidebar() {
   const repoUrl = useStore((s) => s.meta?.repoUrl)
   const setUi = useUi((s) => s.set)
   const inbox = useInboxParts()
+  const inboxTotal = useInboxCount()
   const [location] = useLocation()
   // En móvil la barra es un panel encima de la página: se cierra al ir a otro lado.
   const { isMobile, setOpenMobile } = useSidebar()
@@ -405,16 +408,13 @@ export function AppSidebar() {
         </button>
         <SidebarMenu className="gap-0.5 pt-1">
           <NavLink icon={Inbox} label="Bandeja" onClick={() => setUi({ inbox: true })}>
-            {inbox.blocking + inbox.ready > 0 && (
-              <span
-                className={cn(
-                  "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-2xs font-semibold",
-                  inbox.blocking > 0 ? toneSoft.attention : toneSoft.pending
-                )}
-              >
-                {inbox.blocking + inbox.ready}
+            {/* El número va neutro: mezcla lo que frena con lo que no (DESIGN.md, "te necesita" y "te espera"). */}
+            {inboxTotal > 0 && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-sidebar-accent px-1.5 text-2xs font-semibold text-foreground">
+                {inboxTotal}
                 <span className="sr-only">
-                  {inbox.blocking > 0 ? `, ${inbox.blocking} te ${inbox.blocking === 1 ? "necesita" : "necesitan"}` : ""}
+                  {inbox.needs > 0 ? `, ${inbox.needs} te ${inbox.needs === 1 ? "necesita" : "necesitan"}` : ""}
+                  {inbox.waiting > 0 ? `, ${inbox.waiting} te ${inbox.waiting === 1 ? "espera" : "esperan"}` : ""}
                   {inbox.ready > 0 ? `, ${inbox.ready} ${inbox.ready === 1 ? "propuesta lista" : "propuestas listas"}` : ""}
                 </span>
               </span>
