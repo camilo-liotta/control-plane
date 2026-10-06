@@ -60,7 +60,7 @@ const SCREENS = {
     ["30-menu-ajustes", "/", { sidebar: true, act: (t) => t.press('button[aria-label="Ajustes"]') }],
     ["31-selector-de-cuenta", "/", { sidebar: true, act: (t) => t.clickText("Principal") }],
     ["32-selector-de-modelo", sess("API"), { act: (t) => t.clickText("Modelo por defecto") }],
-    ["33-terminal", sess("PAGOS"), { act: (t) => t.press('button[aria-label="Terminal"]'), wait: 2500 }],
+    ["33-terminal", sess("PAGOS"), { act: (t) => t.press('button[aria-label="Abrir la terminal"], button[aria-label="Terminal"]'), wait: 2500 }],
     ["34-subagente", sess("WEB"), { sections: ALL, act: (t) => t.clickText("revisar") }],
     ["35-toast", portal, { sections: ALL, act: (t) => t.press('button[aria-label="Copiar usuario"]'), wait: 400 }],
     ["36-app-log", portal, { sections: ALL, act: (t) => t.press('button[aria-label="Ver el log"]') }],

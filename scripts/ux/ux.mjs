@@ -28,15 +28,27 @@ function launch(name, file, argv, { env = process.env, cwd } = {}) {
   return child.pid
 }
 
-/** El PATH del server: solo lo que necesita, así Herramientas → CLIs no muestra los CLIs (ni los logins) reales. */
+/**
+ * El PATH del server: todo lo del sistema (la terminal y los scripts de /etc/profile.d lo usan) menos
+ * los CLIs del catálogo de Herramientas → CLIs, así no aparecen los reales ni sus logins.
+ */
 function prepareBin() {
   fs.rmSync(BIN, { recursive: true, force: true })
   fs.mkdirSync(BIN, { recursive: true })
-  fs.symlinkSync(process.execPath, path.join(BIN, "node"))
-  for (const b of ["git", "python3", "bash", "sh", "env", "ls", "cat", "grep", "sed", "head", "tail", "uname", "id", "dirname", "basename", "readlink", "mkdir", "rm", "sleep", "tput", "stty"]) {
-    const found = ["/usr/bin", "/bin", "/usr/local/bin"].map((d) => path.join(d, b)).find((f) => fs.existsSync(f))
-    if (found) fs.symlinkSync(found, path.join(BIN, b))
+  const catalog = fs.readFileSync(path.join(REPO, "server/src/clis.ts"), "utf8")
+  const hidden = new Set([...catalog.matchAll(/bins:\s*\[([^\]]*)\]/g)].flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1])))
+  hidden.add("claude")
+  for (const dir of ["/usr/local/bin", "/usr/bin", "/bin", "/usr/local/sbin", "/usr/sbin", "/sbin"]) {
+    let names = []
+    try { names = fs.readdirSync(dir) } catch { continue }
+    for (const n of names) {
+      const target = path.join(BIN, n)
+      if (hidden.has(n) || fs.existsSync(target)) continue
+      try { fs.symlinkSync(path.join(dir, n), target) } catch {}
+    }
   }
+  fs.rmSync(path.join(BIN, "node"), { force: true })
+  fs.symlinkSync(process.execPath, path.join(BIN, "node"))
 }
 
 async function server() {
@@ -46,6 +58,9 @@ async function server() {
   if (!fs.existsSync(path.join(dist, "index.html"))) throw new Error(`Falta ${dist}: compilalo antes (env -u NODE_ENV npm run build -w web)`)
   if (has("reset")) for (const d of [SRV, FAKE_HOME, REPOS]) fs.rmSync(d, { recursive: true, force: true })
   fs.mkdirSync(path.join(FAKE_HOME, ".claude"), { recursive: true })
+  // La terminal del sembrado sale en las capturas: un prompt inventado, sin tu usuario ni tu máquina.
+  fs.writeFileSync(path.join(FAKE_HOME, ".bashrc"), "PS1='demo@banco:\\w\\$ '\n")
+  fs.writeFileSync(path.join(FAKE_HOME, ".profile"), ". ~/.bashrc\n")
   prepareBin()
   execFileSync(process.execPath, [path.join(REPO, "scripts/ux/fake-claude.mjs")], { stdio: "inherit" })
   const env = {

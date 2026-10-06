@@ -85,4 +85,5 @@ Es el de los tests (`server/test/fake-claude.ts`), con algunos agregados en `fak
 - `PERMISO`: un pedido de permiso;
 - `MUERE`: la sesión termina con error;
 - una sesión con `FACTURACION` en el nombre tiene el contexto lleno y un borrador de compactación por decidir;
+- `LARGO` se puede interrumpir (Esc dos veces o Interrumpir): el turno cierra como interrumpido;
 - del de los tests vienen `LARGO` (un turno que no termina), `PREGUNTA`, `SUBAGENTE`, `CRON …` y `WAKEUP …`.
