@@ -36,5 +36,31 @@ must(
 )
 const DEMO = fs.readFileSync(new URL("./fake-demo.js.txt", import.meta.url), "utf8")
 must('  // "PREGUNTA": pide contestar', DEMO + '  // "PREGUNTA": pide contestar')
+// Interrumpir: el loop de stdin está esperando el turno largo, así que el pedido de interrupt se
+// atiende aparte (contesta, corta la espera y el turno cierra como interrumpido).
+must(
+  '  if (text.includes("LARGO")) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LONG_MS ?? 30000)))',
+  `  if (text.includes("LARGO")) {
+    const cut = await new Promise((r) => { const t = setTimeout(() => r(false), Number(process.env.FAKE_LONG_MS ?? 30000)); globalThis.__cpInterrupt = () => { clearTimeout(t); r(true) } })
+    globalThis.__cpInterrupt = null
+    if (cut) { result({ subtype: "error_during_execution", is_error: false, terminal_reason: "aborted_streaming" }); continue }
+  }`
+)
+must(
+  'for await (const line of readline.createInterface({ input: process.stdin })) {',
+  `process.stdin.on("data", (chunk) => {
+  for (const l of String(chunk).split("\\n")) {
+    if (!l.includes('"interrupt"')) continue
+    try {
+      const m = JSON.parse(l)
+      if (m.type === "control_request" && m.request?.subtype === "interrupt" && globalThis.__cpInterrupt) {
+        out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } })
+        globalThis.__cpInterrupt()
+      }
+    } catch {}
+  }
+})
+for await (const line of readline.createInterface({ input: process.stdin })) {`
+)
 fs.writeFileSync(bin, s, { mode: 0o755 })
 console.log(FAKE_CLAUDE)
