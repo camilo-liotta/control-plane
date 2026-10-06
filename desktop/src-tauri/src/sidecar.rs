@@ -644,7 +644,7 @@ impl Worker {
         let entry = bundle.join("server.mjs");
         if !entry.is_file() {
             return self.show(Screen::failed(&format!(
-                "No encontré el server empaquetado en {}. En desarrollo se genera con `npm run stage -w desktop`.",
+                "No se encontró el server empaquetado en {}. En desarrollo se genera con `npm run stage -w desktop`.",
                 entry.display()
             )));
         }
@@ -671,7 +671,7 @@ impl Worker {
             Ok(x) => x,
             Err(e) => {
                 return self.show(Screen::failed(&format!(
-                    "No pude abrir el log {}: {e}",
+                    "No se pudo abrir el log {}: {e}",
                     log_path.display()
                 )))
             }
@@ -681,7 +681,7 @@ impl Worker {
             Ok(c) => c,
             Err(e) => {
                 return self.show(Screen::failed(&format!(
-                    "No pude ejecutar {}: {e}",
+                    "No se pudo ejecutar {}: {e}",
                     node.display()
                 )))
             }
@@ -850,7 +850,7 @@ impl Worker {
                             (self.hooks.notify)(
                                 &self.app,
                                 "El server se detuvo",
-                                "No lo había lanzado la app, así que no lo relanzo sola.",
+                                "No lo había lanzado la app, así que no se relanza solo.",
                             );
                             self.show(Screen::foreign_gone(port));
                         } else {
@@ -909,7 +909,7 @@ impl Worker {
                 (self.hooks.notify)(
                     &self.app,
                     "El server se cerró",
-                    &format!("Terminó {code}. Lo vuelvo a lanzar."),
+                    &format!("Terminó {code}. Se está relanzando."),
                 );
                 self.show(Screen::restarting());
                 self.discover(port);
@@ -926,7 +926,7 @@ impl Worker {
                 (self.hooks.notify)(
                     &self.app,
                     "El server se sigue cayendo",
-                    "Lo relancé 3 veces en 5 minutos. No lo vuelvo a lanzar solo.",
+                    "Se relanzó 3 veces en 5 minutos y la app no lo relanza más. Mirá el log en la app.",
                 );
                 self.show(Screen::too_many_restarts(tail));
             }
@@ -1097,7 +1097,7 @@ impl Worker {
                     (self.hooks.notify)(
                         &self.app,
                         "El server anterior sigue corriendo",
-                        &format!("No pude confirmar que el server del puerto {port} sea el de la app, así que no lo detuve. Detenelo a mano para que arranque el nuevo."),
+                        &format!("No se pudo confirmar que el server del puerto {port} sea el de la app, así que no se detuvo. Detenelo a mano para que arranque el nuevo."),
                     );
                 }
                 self.exit_now();
@@ -1110,7 +1110,7 @@ impl Worker {
                     self.app
                         .dialog()
                         .message(format!(
-                            "No pude confirmar que el server del puerto {port} sea el que lanzó la app, así que no le mandé nada. Si querés detenerlo, hacelo a mano."
+                            "No se pudo confirmar que el server del puerto {port} sea el que lanzó la app, así que no se le mandó nada. Si querés detenerlo, hacelo a mano."
                         ))
                         .title("control-plane")
                         .kind(MessageDialogKind::Warning)
@@ -1158,8 +1158,8 @@ impl Worker {
             let port = self.port.unwrap_or(0);
             (self.hooks.notify)(
                 &self.app,
-                "No reinicié el server",
-                &format!("No pude confirmar que el server del puerto {port} sea el de la app, así que no le mandé nada."),
+                "El server no se reinició",
+                &format!("No se pudo confirmar que el server del puerto {port} sea el de la app, así que no se le mandó nada."),
             );
             self.boot();
         }
@@ -1186,7 +1186,7 @@ impl Worker {
                 eprintln!("El server es v{from} y la app v{to}, sin sesiones trabajando: lo reinicio.");
                 (self.hooks.notify)(
                     &self.app,
-                    "Reinicié el server",
+                    "Server reiniciado",
                     &format!("Era de una versión anterior (v{from}); ahora es el de la app (v{to}). Las sesiones se retoman solas."),
                 );
                 self.restart_server();
@@ -1196,7 +1196,7 @@ impl Worker {
                 (self.hooks.notify)(
                     &self.app,
                     "El server es de una versión anterior",
-                    &format!("Corre v{from} y la app es v{to}: algunas funciones no andan. Reinicialo desde el menú del ícono → Reiniciar el server; las sesiones se retoman solas."),
+                    &format!("Corre v{from} y la app es v{to}: algunas funciones no andan. Reinicialo desde {} → Reiniciar el server; las sesiones se retoman solas.", policy::icon_place()),
                 );
             }
             ServerAge::OlderForeign { from, to } => (self.hooks.notify)(

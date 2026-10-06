@@ -254,7 +254,7 @@ pub fn manual_text(c: &Checked) -> (String, String) {
     match c {
         Checked::Newer(v) => (
             format!("Hay una versión nueva: v{v}"),
-            "Actualizar reinicia la app y el server; las sesiones se retoman solas. También podés hacerlo más tarde desde el menú del ícono.".into(),
+            format!("Actualizar reinicia la app y el server, y las sesiones se retoman solas. También podés actualizar más tarde desde {}.", policy::icon_place()),
         ),
         Checked::UpToDate(v) => (
             "Estás en la última versión".into(),
@@ -467,7 +467,7 @@ fn check<R: Runtime>(app: &AppHandle<R>, status: &Mutex<Status>) {
             Toast {
                 level: "info".into(),
                 title: format!("Hay una versión nueva de control-plane (v{v})"),
-                body: Some(format!("Tocá para actualizar, o más tarde desde el menú del ícono → Actualizar a v{v}. Las sesiones siguen abiertas.")),
+                body: Some(format!("Tocá para actualizar, o más tarde desde {} → Actualizar a v{v}. Las sesiones siguen abiertas.", policy::icon_place())),
                 local: Some(Local::Update),
                 ..Toast::default()
             },
@@ -796,7 +796,7 @@ fn spawn_installer<R: Runtime>(
     let script = script_path(app);
     if !script.is_file() {
         return Err(format!(
-            "No encuentro el instalador ({}).",
+            "No se encontró el instalador ({}).",
             script.display()
         ));
     }
@@ -841,7 +841,7 @@ fn spawn_installer<R: Runtime>(
         }
     }
     cmd.spawn()
-        .map_err(|e| format!("No pude lanzar el instalador: {e}"))
+        .map_err(|e| format!("No se pudo lanzar el instalador: {e}"))
 }
 
 #[cfg(test)]

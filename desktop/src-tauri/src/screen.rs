@@ -168,7 +168,7 @@ impl Tone {
 }
 
 /// Qué hacer si falta Claude Code (la pantalla de antes de arrancar y la del server que no lo encontró).
-const CLAUDE_HELP: &str = "Sin Claude Code el server no arranca. Si ya lo tenés, elegí su ejecutable; si no, instalalo (en una terminal: curl -fsSL https://claude.ai/install.sh | bash) y tocá Reintentar.";
+const CLAUDE_HELP: &str = "Sin Claude Code el server no arranca. Si ya lo tenés, elegí su ejecutable. Si no, instalalo desde una terminal (curl -fsSL https://claude.ai/install.sh | bash) y tocá Reintentar.";
 
 /// Lo que muestra la pantalla local.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,7 +267,7 @@ impl Screen {
         Self::new(
             Tone::Loading,
             "Buscando el server…",
-            format!("Me fijo si ya hay uno en el puerto {port}."),
+            format!("Revisando si ya hay uno en el puerto {port}."),
         )
     }
 
@@ -275,7 +275,7 @@ impl Screen {
         Self::new(
             Tone::Loading,
             "Arrancando el server…",
-            format!("Lo lanzo en el puerto {port}. Tarda unos segundos."),
+            format!("En el puerto {port}. Tarda unos segundos."),
         )
         .actions(&[Action::ShowLog])
     }
@@ -284,7 +284,7 @@ impl Screen {
         Self::new(
             Tone::Warn,
             "El server tarda más de lo normal",
-            format!("Hace 30 segundos que lo lancé en el puerto {port} y todavía no responde."),
+            format!("Se lanzó en el puerto {port} hace 30 segundos y todavía no responde."),
         )
         .actions(&[Action::Wait, Action::ShowLog, Action::Stop])
     }
@@ -292,8 +292,8 @@ impl Screen {
     pub fn bad_port(err: &str) -> Self {
         Self::new(
             Tone::Error,
-            "No puedo usar ese puerto",
-            "Elegí otro y lo pruebo.",
+            "No se puede usar ese puerto",
+            "Elegí otro para probar.",
         )
         .detail(err)
         .actions(&[Action::SetPort])
@@ -302,7 +302,7 @@ impl Screen {
     pub fn bad_home(err: &str) -> Self {
         Self::new(
             Tone::Error,
-            "No puedo usar esa carpeta de datos",
+            "No se puede usar esa carpeta de datos",
             "La app de desarrollo nunca usa la carpeta de datos de todos los días.",
         )
         .detail(err)
@@ -319,7 +319,7 @@ impl Screen {
     }
 
     pub fn no_claude(err: &str) -> Self {
-        Self::new(Tone::Error, "No encontré Claude Code", CLAUDE_HELP)
+        Self::new(Tone::Error, "No se encontró Claude Code", CLAUDE_HELP)
             .detail(err)
             .actions(&[Action::PickClaude, Action::Retry, Action::GetClaude])
     }
@@ -328,7 +328,7 @@ impl Screen {
         Self::new(
             Tone::Error,
             format!("El puerto {port} lo usa otro programa"),
-            "No es un server de control-plane, así que no lo toco. Elegí otro puerto o cerrá ese programa y reintentá.",
+            "No es un server de control-plane, así que la app no lo toca. Elegí otro puerto, o cerrá ese programa y tocá Reintentar.",
         )
         .detail(what)
         .actions(&[Action::SetPort, Action::Retry])
@@ -340,7 +340,7 @@ impl Screen {
             Tone::Warn,
             "Hay un control-plane viejo en este puerto",
             format!(
-                "El server del puerto {port} es de una versión anterior a la app. Reinicialo o actualizalo; si querés, lo abro igual."
+                "El server del puerto {port} es de una versión anterior a la app. Reinicialo o actualizalo, o abrilo igual."
             ),
         )
         .actions(&[Action::OpenAnyway, Action::Cancel])
@@ -396,7 +396,7 @@ impl Screen {
         Self::new(
             Tone::Error,
             "El server se sigue cayendo",
-            "Lo relancé 3 veces en 5 minutos y no aguanta. Mirá el log antes de reintentar.",
+            "Se relanzó 3 veces en 5 minutos y se volvió a caer. Mirá el log antes de reintentar.",
         )
         .log(log)
         .actions(&[Action::Retry, Action::ShowLog])
@@ -405,7 +405,7 @@ impl Screen {
     pub fn restarting() -> Self {
         Self::new(
             Tone::Loading,
-            "El server se cerró: lo vuelvo a lanzar…",
+            "El server se cerró. Relanzándolo…",
             "Las sesiones quedaron detenidas, con su conversación: vuelven a arrancar cuando les escribas.",
         )
         .actions(&[Action::ShowLog])
@@ -416,7 +416,7 @@ impl Screen {
             Tone::Warn,
             "El server se detuvo",
             format!(
-                "El server del puerto {port} no lo había lanzado la app, así que no lo relanzo sola. ¿Lo lanzo yo?"
+                "El server del puerto {port} no lo había lanzado la app, así que no se relanza solo. Podés lanzarlo desde acá."
             ),
         )
         .actions(&[Action::Launch, Action::Retry])
@@ -427,7 +427,7 @@ impl Screen {
             Tone::Error,
             "El server no responde",
             format!(
-                "El server del puerto {port} (pid {pid}) sigue vivo pero no contesta. No lo toco porque no puedo verificar que sea el de la app: si no se recupera, detenelo a mano y reintentá."
+                "El server del puerto {port} (pid {pid}) sigue vivo pero no contesta. La app no lo toca porque no puede verificar que sea suyo: si no se recupera, detenelo a mano y tocá Reintentar."
             ),
         )
         .actions(&[Action::Retry, Action::ShowLog])
@@ -437,21 +437,25 @@ impl Screen {
         Self::new(
             Tone::Loading,
             "Deteniendo el server…",
-            "Cierro las sesiones ordenadamente. Puede tardar unos segundos.",
+            "Las sesiones se cierran en orden. Puede tardar unos segundos.",
         )
     }
 
     pub fn failed(what: &str) -> Self {
-        Self::new(Tone::Error, "Algo salió mal", "No pude lanzar el server.")
-            .detail(what)
-            .actions(&[Action::Retry, Action::ShowLog])
+        Self::new(
+            Tone::Error,
+            "No se pudo lanzar el server",
+            "Esto es lo que pasó:",
+        )
+        .detail(what)
+        .actions(&[Action::Retry, Action::ShowLog])
     }
 }
 
 /// Aviso que no bloquea cuando la shell de login no respondió bien.
 pub fn login_notice(shell: &str, err: &str) -> String {
     format!(
-        "No pude leer el entorno de tu shell ({shell}: {err}). Uso las rutas de siempre; si falta algo (Node, Claude Code), agregalo al PATH en la configuración de tu shell y volvé a abrir la app."
+        "No se pudo leer el entorno de tu shell ({shell}: {err}). Se usan las rutas de siempre: si falta algo (Node, Claude Code), agregalo al PATH en la configuración de tu shell y volvé a abrir la app."
     )
 }
 
@@ -533,6 +537,69 @@ mod tests {
         ] {
             assert_eq!(Action::from_id(id).unwrap().id(), id);
         }
+    }
+
+    /// Para el banco de capturas: con `CP_DESK_SCREENS=<archivo>`, escribe cada pantalla (con sus
+    /// textos y errores reales) como `nombre<TAB>query`. Sin la variable no hace nada.
+    #[test]
+    fn dump_screens_for_the_bench() {
+        let Some(out) = std::env::var_os("CP_DESK_SCREENS") else {
+            return;
+        };
+        use crate::node::{ClaudeError, NodeError};
+        use std::path::PathBuf;
+        let log = |n: usize| -> Vec<String> {
+            (1..=n)
+                .map(|i| format!("[server] línea {i} del log"))
+                .collect()
+        };
+        let node_err = NodeError::NotFound {
+            shell: PathBuf::from("/bin/zsh"),
+            dirs: 14,
+        }
+        .to_string();
+        let claude_err = ClaudeError::NotFound {
+            shell: PathBuf::from("/bin/zsh"),
+            name: "claude".into(),
+        }
+        .to_string();
+        let port_err = crate::window::PortError::Reserved(4700).to_string();
+        let screens = [
+            ("01-cargando", Screen::loading()),
+            ("02-buscando", Screen::looking(4700)),
+            ("03-arrancando", Screen::starting(4700)),
+            ("04-tarda", Screen::slow(4700)),
+            ("05-puerto-invalido", Screen::bad_port(&port_err)),
+            ("06-falta-node", Screen::no_node(&node_err)),
+            ("07-falta-claude", Screen::no_claude(&claude_err)),
+            (
+                "08-puerto-ocupado",
+                Screen::other_program(4700, "Aceptó la conexión pero no respondió en 1,5 s."),
+            ),
+            ("09-server-viejo", Screen::old_server(4700)),
+            ("10-se-cerro", Screen::crashed("con código 1", log(8))),
+            ("11-server-sin-claude", Screen::crashed_claude(log(4))),
+            ("12-carpeta-en-uso", Screen::locked(4711, 4242, log(3))),
+            ("13-se-sigue-cayendo", Screen::too_many_restarts(log(6))),
+            ("14-relanzando", Screen::restarting()),
+            ("15-ajeno-detenido", Screen::foreign_gone(4700)),
+            ("16-no-responde", Screen::not_responding(4700, 4242)),
+            ("17-deteniendo", Screen::stopping()),
+            (
+                "18-no-se-pudo-lanzar",
+                Screen::failed("No se pudo ejecutar /usr/bin/node: permiso denegado"),
+            ),
+            (
+                "19-con-aviso",
+                Screen::starting(4700)
+                    .with_notice(Some(login_notice("/bin/zsh", "no respondió en 5 s"))),
+            ),
+        ];
+        let text: String = screens
+            .iter()
+            .map(|(name, s)| format!("{name}\t{}\n", s.url("t").query().unwrap_or_default()))
+            .collect();
+        std::fs::write(out, text).unwrap();
     }
 
     #[test]

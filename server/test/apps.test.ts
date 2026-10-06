@@ -17,11 +17,17 @@ import { Restart, RESUME_FILE } from "../src/restart.ts"
 import type { SessionManager } from "../src/sessions.ts"
 import type { AppStatus, ServerMessage } from "../src/shared/types.ts"
 
-// Puertos de prueba de esta sesión (TRAY: 4730–4739). El 4730–4732 los usan otros bancos de prueba.
-const PORT_A = 4733
-const PORT_B = 4734
-const PORT_C = 4735
-const PORT_D = 4736
+/** Puertos libres que elige el sistema, distintos entre sí (abiertos a la vez y cerrados juntos). */
+async function freePorts(n: number): Promise<number[]> {
+  const servers = await Promise.all(
+    Array.from({ length: n }, () => new Promise<net.Server>((resolve) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => resolve(s)) }))
+  )
+  const ports = servers.map((s) => (s.address() as net.AddressInfo).port)
+  await Promise.all(servers.map((s) => new Promise((r) => s.close(r))))
+  return ports
+}
+// Así no chocan con lo que tengan levantado otras sesiones o bancos de prueba.
+const [PORT_A, PORT_B, PORT_C, PORT_D] = await freePorts(4)
 
 const until = async (check: () => boolean | Promise<boolean>, what = "no llegó a tiempo", ms = 10_000) => {
   const end = Date.now() + ms
@@ -290,8 +296,8 @@ describe("herramientas MCP de las apps, por proyecto", () => {
     assert.match((await call("tok-1", "list_apps")).text, new RegExp(`puerto ${PORT_C}`))
     const down = await call("tok-1", "stop_app", { app: "backend" })
     assert.match(down.text, /detenida/)
-    assert.match((await call("tok-1", "update_app", { app: "backend", url: "http://127.0.0.1:4735/docs" })).text, /actualizada/)
-    assert.equal(db.listApps("p1")[0]!.url, "http://127.0.0.1:4735/docs")
+    assert.match((await call("tok-1", "update_app", { app: "backend", url: `http://127.0.0.1:${PORT_C}/docs` })).text, /actualizada/)
+    assert.equal(db.listApps("p1")[0]!.url, `http://127.0.0.1:${PORT_C}/docs`)
     const bad = await call("tok-1", "register_app", { name: "otra", command: "npm i && npm run dev" })
     assert.equal(bad.isError, true)
     assert.match(bad.text, /shell: true/)

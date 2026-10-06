@@ -8,7 +8,8 @@
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "build": "tauri build",
     "test": "cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
-    "stage": "npm run build -w @control-plane/web && npm run bundle -w @control-plane/server -- --out server-bundle --web ../web/dist"
+    "stage": "npm run build -w @control-plane/web && npm run bundle -w @control-plane/server -- --out server-bundle --web ../web/dist && node scripts/fonts.mjs",
+    "fonts": "node scripts/fonts.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5"
