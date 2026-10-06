@@ -95,19 +95,27 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * Las acciones del diálogo, con la principal a la derecha. `sticky`: en un diálogo largo que
+ * scrollea, quedan fijas abajo (con el fondo del diálogo detrás) y siempre a la vista.
+ */
 function DialogFooter({
   className,
   showCloseButton = false,
+  sticky = false,
   children,
   ...props
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
+  sticky?: boolean
 }) {
   return (
     <div
       data-slot="dialog-footer"
+      data-sticky={sticky || undefined}
       className={cn(
         "flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end",
+        sticky && "sticky -bottom-5 z-10 -mx-5 -mb-5 border-t bg-popover px-5 pt-3 pb-5",
         className
       )}
       {...props}

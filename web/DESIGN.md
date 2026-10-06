@@ -80,7 +80,7 @@ Todo transiciona en **180 ms** con `--ease-standard`. Es el valor por defecto de
   - `link` va dentro de un texto.
 
   Tamaños: `xs`, `sm`, `default`, `lg` y sus `icon-*`. El foco es un anillo de 2 px.
-- **`Dialog`**: el diálogo es otra hoja, sin bandeja gris abajo. Lleva `DialogTitle` (en Bricolage) y `DialogFooter` con la acción principal a la derecha.
+- **`Dialog`**: el diálogo es otra hoja, sin bandeja gris abajo. Lleva `DialogTitle` (en Bricolage) y `DialogFooter` con la acción principal a la derecha. En un diálogo largo que scrollea, `<DialogFooter sticky>` deja las acciones fijas abajo.
 - **`AlertDialog`**: `AlertDialogAction` acepta `onAction` asíncrono. Muestra el spinner, no se cierra hasta que termina y, si falla, queda abierto. Mientras espera, Cancelar y Esc no lo cierran.
 - **`ConfirmAction`** (nuevo): para **lo irreversible** (borrar un proyecto, quitar una cuenta, detener todas las sesiones).
   ```tsx
