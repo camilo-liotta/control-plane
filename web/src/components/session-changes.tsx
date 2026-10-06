@@ -1,6 +1,5 @@
 import { GitBranch, RotateCw } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { toast } from "sonner"
 
 import type { ChangeGroup, FileChange, Session, SessionChanges } from "@shared/types"
 
@@ -16,6 +15,7 @@ import { EDITOR_NAMES, useEditor } from "@/lib/editor"
 import { useSectionOpen } from "@/lib/panel-sections"
 import { isNotFound, STALE_SERVER } from "@/lib/server-version"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 function Delta({ added, deleted, className }: { added: number; deleted: number; className?: string }) {
   return (
@@ -173,7 +173,7 @@ export function ChangesSection({ session }: { session: Session }) {
     try {
       await api.openFile(session.id, f.path, side)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("abrir el archivo")(err)
     }
   }
 

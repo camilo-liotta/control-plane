@@ -5,16 +5,16 @@ import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
 import { undoable } from "@/lib/undo"
 import { useUi } from "@/lib/ui"
+import { failed } from "@/lib/errors"
 
 /**
  * Lo que se puede hacer con una sesión, en un solo lugar: lo usan los botones de la sesión, la
  * paleta de comandos y los atajos de teclado (así hacen siempre lo mismo).
  */
 
-const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err))
 
 /** Reanuda una sesión detenida. */
-export const startSession = (id: string) => api.start(id).then(() => void toast.success("Sesión reanudada"), fail)
+export const startSession = (id: string) => api.start(id).then(() => void toast.success("Sesión reanudada"), failed("reanudar la sesión"))
 
 /**
  * Detiene el proceso de la sesión (se reanuda al escribirle o con Reanudar). Si está trabajando o
@@ -26,11 +26,11 @@ export const stopSession = async (id: string) => {
     undoable({ message: "Sesión detenida", run: () => api.stop(id), failMessage: "No se pudo detener la sesión" })
     return
   }
-  await api.stop(id).then(() => void toast.success("Sesión detenida"), fail)
+  await api.stop(id).then(() => void toast.success("Sesión detenida"), failed("detener la sesión"))
 }
 
 /** Corta el turno en curso; la sesión sigue viva y espera tu próximo mensaje. */
-export const interruptSession = (id: string) => api.interrupt(id).then(() => void toast("Turno interrumpido"), fail)
+export const interruptSession = (id: string) => api.interrupt(id).then(() => void toast("Turno interrumpido"), failed("interrumpir el turno"))
 
 export const toggleTerminal = (id: string) => useTerminal.getState().toggle(id)
 export const openCompaction = (id: string) => useUi.getState().set({ compactFor: id })

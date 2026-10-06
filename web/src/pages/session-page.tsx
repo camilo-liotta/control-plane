@@ -10,7 +10,7 @@ import { ContextMeter, Ring } from "@/components/context-meter"
 import { ModelPicker, ModelSubmenu, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
-import { SessionLamp, StatusPill } from "@/components/status"
+import { StatusPill } from "@/components/status"
 import { FileRefScope } from "@/components/file-ref"
 import { TerminalTargetProvider } from "@/components/take-to-terminal"
 import { TerminalPanel } from "@/components/terminal-panel"
@@ -83,13 +83,17 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     return () => window.removeEventListener("keydown", onKey, true)
   }, [sessionId, toggleTerminal])
 
+  // Si los mensajes no cargan, se dice en lugar del esqueleto (que si no, queda para siempre).
+  const [eventsError, setEventsError] = useState<unknown>(null)
+  const [eventsTry, setEventsTry] = useState(0)
   useEffect(() => {
     focus(sessionId)
     useNav.getState().visit(sessionId)
-    // Si la sesión no está (archivada o borrada), lo dice la página: sin un toast de error encima.
-    void loadEvents(sessionId).catch((err: Error) => useStore.getState().sessions[sessionId] && toast.error(err.message))
+    setEventsError(null)
+    // Si la sesión no está (archivada o borrada), lo dice la página.
+    void loadEvents(sessionId).catch((err: unknown) => useStore.getState().sessions[sessionId] && setEventsError(err))
     return () => focus(null)
-  }, [sessionId, focus, loadEvents])
+  }, [sessionId, focus, loadEvents, eventsTry])
 
   // Pegado al final mientras llegan mensajes, salvo que hayas scrolleado hacia arriba. La primera
   // vez que hay mensajes, si la dejaste leyendo más arriba, vuelve a esa posición.
@@ -209,7 +213,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        leading={isOrch ? <Compass className="size-4.5 shrink-0" /> : <SessionLamp session={session} quiet className="size-2.5" />}
+        leading={isOrch ? <Compass className="size-4.5 shrink-0" /> : undefined}
         title={
           <span className="flex min-w-0 items-center gap-2">
             <span className="name min-w-0 truncate" title={isOrch ? "Orquestadora" : session.name}>
@@ -345,7 +349,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                     </Button>
                   </div>
                 )}
-                {!events ? (
+                {!events && eventsError ? (
+                  <LoadError what="los mensajes" error={eventsError} onRetry={() => setEventsTry((n) => n + 1)} />
+                ) : !events ? (
                   <div className="space-y-3">
                     <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
                     <Skeleton className="h-4 w-5/6" />

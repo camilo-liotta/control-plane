@@ -63,7 +63,7 @@ export function WorkingIndicator({
   }, [still])
 
   const starting = session.status === "starting"
-  const verb = starting ? "Iniciando" : VERBS[Math.abs(Math.floor((turn?.startedAt ?? 0) / 1000)) % VERBS.length]
+  const verb = starting ? "Arrancando" : VERBS[Math.abs(Math.floor((turn?.startedAt ?? 0) / 1000)) % VERBS.length]
   const glyph = still ? "✻" : GLYPHS[tick % GLYPHS.length]
   const time = turn ? elapsed(Date.now() - turn.startedAt) : null
   // lastActivity queda de turnos anteriores (la usan las tarjetas): acá solo cuenta la de este turno.

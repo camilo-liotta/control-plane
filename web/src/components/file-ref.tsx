@@ -1,11 +1,11 @@
 import { createContext, useContext, useMemo, useState } from "react"
-import { toast } from "sonner"
 
 import { textRefs } from "@shared/file-refs"
 
 import { api } from "@/lib/api"
 import { EDITOR_NAMES, useEditor, useEditorStore } from "@/lib/editor"
 import { useResolvedRef, type RefScope } from "@/lib/file-refs"
+import { failed } from "@/lib/errors"
 
 const ScopeContext = createContext<RefScope | null>(null)
 
@@ -38,7 +38,7 @@ export function FileRefLink({ input, children }: { input: string; children: Reac
       title={`Abrir en ${kind ? EDITOR_NAMES[kind] : "VS Code"}`}
       onClick={(e) => {
         e.preventDefault()
-        api.openPath(scope.projectId, input, scope.sessionId).catch((err: unknown) => toast.error(err instanceof Error ? err.message : String(err)))
+        api.openPath(scope.projectId, input, scope.sessionId).catch(failed("abrir el archivo"))
       }}
     >
       {children}

@@ -169,7 +169,7 @@ export function SubagentSheet() {
               {data.items.length ? (
                 <TimelineItems items={data.items} sessionId={selected.sessionId} root={session?.cwd} live={status === "running"} />
               ) : status === "running" ? null : (
-                <p className="text-sm text-muted-foreground">No hay pasos registrados.</p>
+                <p className="text-sm text-muted-foreground">Este subagente no dejó pasos registrados.</p>
               )}
               {status === "running" && (
                 <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground">

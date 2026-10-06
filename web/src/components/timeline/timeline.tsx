@@ -1,6 +1,5 @@
 import { Brain, ChevronRight, Compass, Info, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
-import { toast } from "sonner"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
@@ -22,6 +21,7 @@ import { reportStatusView } from "@/lib/status"
 import { useStore, type PartialBlock } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 type Ev<K extends TimelineEvent["kind"]> = StoredEvent & { event: Extract<TimelineEvent, { kind: K }> }
 
@@ -367,7 +367,7 @@ function ContextFullBar({ session, events }: { session: Session; events: StoredE
     try {
       await api.compactionResend(session.id)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("compactar y reenviar")(err)
     } finally {
       setBusy(false)
     }
