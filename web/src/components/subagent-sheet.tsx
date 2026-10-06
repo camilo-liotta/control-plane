@@ -46,7 +46,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <div className="eyebrow">{label}</div>
-      <div className="mt-0.5 font-mono text-sm tabular-nums">{value}</div>
+      <div className="mt-0.5 text-sm font-medium">{value}</div>
     </div>
   )
 }
@@ -114,7 +114,9 @@ export function SubagentSheet() {
           )}
           <div className="flex items-center gap-2 pr-8">
             <Bot className={cn("size-5", status === "running" ? "text-status-working" : "text-muted-foreground")} />
-            <SheetTitle className="truncate font-mono text-base">{state?.name || input.name || state?.description || input.description || "Subagente"}</SheetTitle>
+            <SheetTitle className="name truncate text-base" title={state?.name || input.name || state?.description || input.description || undefined}>
+              {state?.name || input.name || state?.description || input.description || "Subagente"}
+            </SheetTitle>
             <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs">
               <Lamp tone={view.tone} pulse={status === "running"} className="size-1.5" />
               {view.label}
@@ -146,13 +148,14 @@ export function SubagentSheet() {
               <button
                 type="button"
                 onClick={() => setShowPrompt((v) => !v)}
-                className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                aria-expanded={showPrompt}
+                className="flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground"
               >
                 <ChevronRight className={cn("size-3.5 transition-transform", showPrompt && "rotate-90")} />
                 Tarea que recibió
               </button>
               {showPrompt ? (
-                <div className="mt-2 rounded-lg border bg-muted/40 p-3">
+                <div className="mt-2 rounded-2xl bg-muted/60 px-4 py-3">
                   <Markdown text={prompt} />
                 </div>
               ) : (
@@ -160,7 +163,7 @@ export function SubagentSheet() {
               )}
             </section>
           )}
-          {state?.startedAt && <p className="text-[0.7rem] text-muted-foreground">Arrancó a las {clock(state.startedAt)}</p>}
+          {state?.startedAt && <p className="text-2xs text-muted-foreground">Arrancó a las {clock(state.startedAt)}</p>}
           <SubagentContext.Provider value={{ sessionId: selected.sessionId, map: data.map }}>
             <div className="flex flex-col gap-3">
               {data.items.length ? (
@@ -171,19 +174,24 @@ export function SubagentSheet() {
               {status === "running" && (
                 <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground">
                   <Spinner className="size-3.5 text-status-working" />
-                  <span className="truncate font-mono">{state?.lastActivity ?? "trabajando…"}</span>
+                  <span className="truncate" title={state?.lastActivity ?? undefined}>
+                    {state?.lastActivity ?? "Trabajando…"}
+                  </span>
                 </div>
               )}
             </div>
           </SubagentContext.Provider>
           {report && status !== "running" && !reportShown && (
-            <section className="rounded-xl border border-status-done/30 bg-status-done/5 p-4">
-              <div className="eyebrow mb-2 text-status-done">Resultado</div>
+            <section className="surface-card px-4 py-3.5">
+              <div className="eyebrow mb-2 flex items-center gap-1.5">
+                <Lamp tone="done" className="size-1.5" />
+                Resultado
+              </div>
               <Markdown text={report} />
             </section>
           )}
           {!report && state?.summary && status !== "running" && (
-            <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">{state.summary}</p>
+            <p className="rounded-xl bg-muted/60 px-3 py-2 text-sm text-muted-foreground">{state.summary}</p>
           )}
         </div>
       </>
@@ -192,7 +200,7 @@ export function SubagentSheet() {
     body = (
       <SheetHeader>
         <SheetTitle>Subagente</SheetTitle>
-        <SheetDescription>No encontré sus eventos: puede ser de una parte de la conversación que no está cargada.</SheetDescription>
+        <SheetDescription>No están sus pasos: pueden ser de una parte de la conversación que todavía no se cargó.</SheetDescription>
       </SheetHeader>
     )
   }

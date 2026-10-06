@@ -8,6 +8,7 @@ import { deliver } from "@shared/deliver"
 import type { ScheduledItem, Session } from "@shared/types"
 
 import { Section } from "@/components/panel-section"
+import { TonePill } from "@/components/status"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +25,7 @@ import { useNow } from "@/hooks/use-now"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
+import { toneSoft, type Tone } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -42,22 +44,26 @@ export function untilText(t: number, now: number): string {
   return `el ${d.getDate()}/${d.getMonth() + 1} a las ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
-const STATUS: Record<ScheduledItem["status"], { label: string; className: string }> = {
-  active: { label: "activa", className: "bg-status-done/12 text-status-done" },
-  done: { label: "ya corrió", className: "bg-muted text-muted-foreground" },
-  cancelled: { label: "cancelada", className: "bg-muted text-muted-foreground" },
-  expired: { label: "venció (7 días)", className: "bg-muted text-muted-foreground" },
-  lost: { label: "se perdió", className: "bg-status-error/10 text-status-error" },
-  missed: { label: "no corrió", className: "bg-status-attention/12 text-status-attention" },
+const STATUS: Record<ScheduledItem["status"], { label: string; tone: Tone }> = {
+  active: { label: "Activa", tone: "idle" },
+  done: { label: "Ya corrió", tone: "idle" },
+  cancelled: { label: "Cancelada", tone: "idle" },
+  expired: { label: "Venció (7 días)", tone: "idle" },
+  lost: { label: "Se perdió", tone: "error" },
+  missed: { label: "No corrió", tone: "pending" },
 }
 
 function StatusChip({ item, pending }: { item: ScheduledItem; pending: boolean }) {
   const s = pending
-    ? { label: "cancelación pedida", className: "bg-status-working/12 text-status-working" }
+    ? { label: "Cancelación pedida", tone: "pending" as Tone }
     : item.paused
-      ? { label: "en pausa", className: "bg-status-attention/12 text-status-attention" }
+      ? { label: "En pausa", tone: "attention" as Tone }
       : STATUS[item.status]
-  return <span className={cn("shrink-0 rounded px-1.5 py-px text-[0.66rem] font-medium", s.className)}>{s.label}</span>
+  return (
+    <TonePill tone={s.tone} className="shrink-0">
+      {s.label}
+    </TonePill>
+  )
 }
 
 function KindIcon({ item }: { item: ScheduledItem }) {
@@ -112,16 +118,26 @@ function CancelControl({ item, session, state }: { item: ScheduledItem; session:
   }
 
   if (state === "pending")
-    return <p className="text-[0.68rem] text-status-working">Le pedimos a {session.name} que la cancele: se actualiza sola cuando lo haga.</p>
+    return (
+      <p className="text-2xs text-status-pending">
+        Cancelación pedida a <span className="name">{session.name}</span>: se actualiza sola cuando la cancele.
+      </p>
+    )
 
   return (
     <div className="pt-0.5">
-      {state === "failed" && <p className="text-[0.68rem] font-medium text-status-attention">No la canceló: mirá el chat.</p>}
+      {state === "failed" && (
+        <p className="text-2xs font-medium text-status-attention">
+          <span className="name">{session.name}</span> no la canceló: mirá el chat.
+        </p>
+      )}
       {confirming && !warning ? (
-        <div className="flex items-center gap-1.5 text-[0.7rem]">
-          <span className="text-muted-foreground">¿Le pedís a {session.name} que la cancele?</span>
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-muted-foreground">
+            ¿Pedirle a <span className="name">{session.name}</span> que la cancele?
+          </span>
           <Button size="xs" variant="destructive" onClick={() => void send()}>
-            Pedir
+            Pedírselo
           </Button>
           <Button size="xs" variant="ghost" onClick={() => setConfirming(false)}>
             No
@@ -132,10 +148,10 @@ function CancelControl({ item, session, state }: { item: ScheduledItem; session:
           type="button"
           disabled={sending}
           onClick={() => setConfirming(true)}
-          className="inline-flex items-center gap-1 rounded text-[0.7rem] text-muted-foreground hover:text-status-error disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-md text-xs text-muted-foreground hover:text-status-error disabled:opacity-50"
         >
           <CircleX className="size-3" />
-          {state === "failed" ? "Pedírselo de nuevo" : "Pedir que la cancele"}
+          {state === "failed" ? "Pedírselo de nuevo" : "Cancelar lo programado"}
         </button>
       )}
       <AlertDialog open={confirming && warning !== null} onOpenChange={setConfirming}>
@@ -143,13 +159,13 @@ function CancelControl({ item, session, state }: { item: ScheduledItem; session:
           <AlertDialogHeader>
             <AlertDialogTitle>¿Pedirle a {session.name} que la cancele?</AlertDialogTitle>
             <AlertDialogDescription>
-              {warning} Solo la sesión puede cancelar lo que programó, así que se lo pedimos con un mensaje en el chat.
+              {warning} Solo la sesión puede cancelar lo que programó: el pedido le llega como un mensaje en el chat.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>No</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void send()}>
-              Pedir que la cancele
+              Pedírselo
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -171,14 +187,14 @@ function ScheduledRow({ item, now, session, showSession }: { item: ScheduledItem
   ].filter(Boolean)
   const prompt = item.prompt.trim()
   return (
-    <li className={cn("rounded-md border bg-background px-2.5 py-2", done && "opacity-70")}>
+    <li className={cn("py-2.5", done && "opacity-70")}>
       <div className="flex items-start gap-2">
         <KindIcon item={item} />
         <div className="min-w-0 flex-1 space-y-0.5">
           <div className="flex items-start gap-2">
             <p className="min-w-0 flex-1">
               {showSession && (
-                <Link href={`/p/${session.projectId}/s/${session.id}`} className="mr-1.5 font-mono text-xs font-medium hover:underline">
+                <Link href={`/p/${session.projectId}/s/${session.id}`} className="name mr-1.5 text-xs hover:underline">
                   {session.name}
                 </Link>
               )}
@@ -197,7 +213,7 @@ function ScheduledRow({ item, now, session, showSession }: { item: ScheduledItem
               {prompt}
             </button>
           )}
-          {facts.length > 0 && <p className="text-[0.68rem] text-muted-foreground/80">{facts.join(" · ")}</p>}
+          {facts.length > 0 && <p className="text-2xs text-muted-foreground">{facts.join(" · ")}</p>}
           {item.status === "active" && <CancelControl item={item} session={session} state={cancel} />}
         </div>
       </div>
@@ -214,7 +230,15 @@ export function SessionScheduled({ session }: { session: Session }) {
   const active = items.filter((i) => i.status === "active")
   const paused = active.filter((i) => i.paused)
   const next = active.filter((i) => i.nextAt).sort((a, b) => a.nextAt! - b.nextAt!)[0]
-  if (!items.length) return null
+  if (!items.length)
+    return (
+      <Section id="scheduled" title="Programado" summary="nada">
+        <p className="text-xs text-muted-foreground">
+          Lo que la sesión programe (un <code className="font-mono">/loop</code>, un recordatorio o una tarea que se repite) aparece
+          acá, con cuándo corre.
+        </p>
+      </Section>
+    )
   const summary = paused.length
     ? `${paused.length} en pausa: la sesión está detenida`
     : active.length
@@ -224,13 +248,13 @@ export function SessionScheduled({ session }: { session: Session }) {
     <Section id="scheduled" title="Programado" count={active.length || undefined} attention={paused.length > 0} summary={summary}>
       <div className="space-y-2">
         {paused.length > 0 && (
-          <p className="rounded-md border border-status-attention/40 bg-status-attention/5 px-2.5 py-1.5 text-xs leading-snug">
+          <p role="note" className={cn("rounded-xl px-3 py-2 text-xs leading-snug", toneSoft.attention, "text-foreground")}>
             La sesión está detenida: lo programado no corre hasta que la reanudes. Si al volver ya pasó la hora de algo de una vez,
             Claude Code te pregunta antes de correrlo.
           </p>
         )}
-        {items.some((i) => i.status === "lost") && <p className="text-[0.7rem] leading-snug text-muted-foreground">{LOST_HINT}</p>}
-        <ul className="space-y-1.5">
+        {items.some((i) => i.status === "lost") && <p className="text-2xs leading-snug text-muted-foreground">{LOST_HINT}</p>}
+        <ul className="divide-y">
           {items.map((i) => (
             <ScheduledRow key={i.id} item={i} now={now} session={session} />
           ))}
@@ -257,7 +281,7 @@ export function ProjectScheduled({ sessions }: { sessions: Session[] }) {
   const next = rows.find((r) => r.item.nextAt)
   return (
     <Collapsible open={open} onOpenChange={(v) => toggle("project-scheduled", v)} className="border-b">
-      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
+      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
         <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
         <CalendarClock className="size-4 shrink-0 text-muted-foreground" />
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm">
@@ -268,7 +292,7 @@ export function ProjectScheduled({ sessions }: { sessions: Session[] }) {
             {next && (
               <>
                 {" · la próxima "}
-                <span className="text-foreground/80">{untilText(next.item.nextAt!, now)}</span> <span className="font-mono">({next.session.name})</span>
+                <span className="text-foreground/80">{untilText(next.item.nextAt!, now)}</span> <span className="name">({next.session.name})</span>
               </>
             )}
             {paused > 0 && (
@@ -281,7 +305,7 @@ export function ProjectScheduled({ sessions }: { sessions: Session[] }) {
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent className="px-4 pb-4 pl-10">
-        <ul className="grid gap-1.5 lg:grid-cols-2">
+        <ul className="grid gap-x-6 lg:grid-cols-2">
           {rows.map(({ item, session }) => (
             <ScheduledRow key={`${session.id}-${item.id}`} item={item} now={now} session={session} showSession />
           ))}

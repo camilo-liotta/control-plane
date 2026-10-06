@@ -1,11 +1,13 @@
-import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, Square, SquareTerminal } from "lucide-react"
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, RotateCcw, Square, SquareTerminal } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Link } from "wouter"
+import { Link, useLocation } from "wouter"
+
+import type { Session } from "@shared/types"
 
 import { Composer } from "@/components/composer"
-import { ContextMeter } from "@/components/context-meter"
-import { ModelPicker, SubagentsChip } from "@/components/model-picker"
+import { ContextMeter, Ring } from "@/components/context-meter"
+import { ModelPicker, ModelSubmenu, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
 import { SessionLamp, StatusPill } from "@/components/status"
@@ -18,13 +20,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { LoadError } from "@/components/ui/load-error"
+import { Shortcut } from "@/components/ui/kbd"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { api } from "@/lib/api"
 import { tokens, usd } from "@/lib/format"
 import { usePanelSections } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
@@ -35,7 +42,6 @@ import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
-import { cn } from "@/lib/utils"
 
 export function SessionPage({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const session = useStore((s) => s.sessions[sessionId])
@@ -80,7 +86,8 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   useEffect(() => {
     focus(sessionId)
     useNav.getState().visit(sessionId)
-    void loadEvents(sessionId).catch((err: Error) => toast.error(err.message))
+    // Si la sesión no está (archivada o borrada), lo dice la página: sin un toast de error encima.
+    void loadEvents(sessionId).catch((err: Error) => useStore.getState().sessions[sessionId] && toast.error(err.message))
     return () => focus(null)
   }, [sessionId, focus, loadEvents])
 
@@ -182,22 +189,21 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     }
   }
 
-  if (!session || !project) {
-    return (
-      <Empty className="h-full">
-        <EmptyHeader>
-          <EmptyTitle>Esta sesión no existe</EmptyTitle>
-          <EmptyDescription>Puede que la hayas archivado.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
+  if (!session || !project) return <MissingSession projectId={projectId} sessionId={sessionId} />
 
   const isOrch = session.kind === "orchestrator"
   const running = session.status !== "stopped" && session.status !== "error"
   const act = (key: string, fn: () => Promise<unknown>) => action.run(key, fn)
 
   const panel = <SessionPanel session={session} project={project} />
+  const subtitle = [
+    project.name,
+    isOrch ? session.name : session.role,
+    session.costUsd > 0 ? usd(session.costUsd) : null,
+    session.tokens && session.tokens.total > 0 ? `${tokens(session.tokens.total)} tokens` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ")
   const terminalTarget = { sessionId: session.id, projectId: project.id }
 
   return (
@@ -205,55 +211,104 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
       <PageHeader
         leading={isOrch ? <Compass className="size-4.5 shrink-0" /> : <SessionLamp session={session} quiet className="size-2.5" />}
         title={
-          <span className="flex items-center gap-2">
-            <span className="name">{isOrch ? "Orquestadora" : session.name}</span>
-            <StatusPill session={session} />
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="name min-w-0 truncate" title={isOrch ? "Orquestadora" : session.name}>
+              {isOrch ? "Orquestadora" : session.name}
+            </span>
+            <StatusPill session={session} className="shrink-0" />
           </span>
         }
         subtitle={
-          <>
+          <span title={subtitle}>
             <Link href={`/p/${project.id}`} className="hover:text-foreground hover:underline">
               {project.name}
             </Link>
-            {isOrch ? ` · ${session.name}` : session.role ? ` · ${session.role}` : ""}
-            {session.costUsd > 0 && ` · ${usd(session.costUsd)}`}
-            {session.tokens && session.tokens.total > 0 && ` · ${tokens(session.tokens.total)} tokens`}
-          </>
+            {subtitle.slice(project.name.length)}
+          </span>
         }
         actions={
           <>
-            {events && <SubagentsChip session={session} events={events} />}
-            <ContextMeter session={session} />
-            <ModelPicker session={session} />
+            {/* En pantallas chicas, modelo, contexto y terminal van al menú ⋯. */}
+            <div className="hidden items-center gap-1.5 sm:flex">
+              {events && (
+                <span className="hidden lg:contents">
+                  <SubagentsChip session={session} events={events} />
+                </span>
+              )}
+              <ContextMeter session={session} />
+              <ModelPicker session={session} />
+            </div>
             {running ? (
-              <Button size="sm" variant="ghost" disabled={action.busy("run")} onClick={() => act("run", () => stopSession(session.id))}>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={action.busy("run")}
+                onClick={() => act("run", () => stopSession(session.id))}
+                aria-label="Detener la sesión"
+                title="Detener la sesión"
+              >
                 <Square />
                 <span className="hidden sm:inline">Detener</span>
               </Button>
             ) : (
-              <Button size="sm" variant="outline" disabled={action.busy("run")} onClick={() => act("run", () => startSession(session.id))}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={action.busy("run")}
+                onClick={() => act("run", () => startSession(session.id))}
+                aria-label="Reanudar la sesión"
+                title="Reanudar la sesión"
+              >
                 <Play />
-                Reanudar
+                <span className="hidden sm:inline">Reanudar</span>
               </Button>
             )}
-            <Button size="icon-sm" variant={terminalOpen ? "secondary" : "ghost"} onClick={() => toggleTerminal(session.id)} aria-label="Terminal" title="Terminal (Ctrl+`)">
-              <SquareTerminal />
-            </Button>
-            <Button size="icon-sm" variant="ghost" className="lg:hidden" onClick={() => setPanelOpen(true)} aria-label="Ver detalles">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant={terminalOpen ? "secondary" : "ghost"}
+                  className="hidden sm:inline-flex"
+                  onClick={() => toggleTerminal(session.id)}
+                  aria-label={terminalOpen ? "Esconder la terminal" : "Abrir la terminal"}
+                  aria-pressed={terminalOpen}
+                >
+                  <SquareTerminal />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Terminal <Shortcut keys="ctrl+backtick" />
+              </TooltipContent>
+            </Tooltip>
+            <Button size="icon-sm" variant="ghost" className="lg:hidden" onClick={() => setPanelOpen(true)} aria-label="Ver el panel de la sesión" title="Panel de la sesión">
               <PanelRight />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" aria-label="Más acciones">
+                <Button size="icon-sm" variant="ghost" aria-label="Más acciones" title="Más acciones">
                   <EllipsisVertical />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-auto min-w-56">
+              <DropdownMenuContent align="end" className="w-auto max-w-[calc(100vw-1.5rem)] min-w-56">
+                <div className="sm:hidden">
+                  {session.context && (
+                    <DropdownMenuLabel className="flex items-center gap-2 font-normal text-muted-foreground">
+                      <Ring value={session.context.tokens / session.context.max} />
+                      Contexto: {Math.round((session.context.tokens / session.context.max) * 100)} % usado
+                    </DropdownMenuLabel>
+                  )}
+                  <ModelSubmenu session={session} />
+                  <DropdownMenuItem onClick={() => toggleTerminal(session.id)}>
+                    <SquareTerminal />
+                    {terminalOpen ? "Esconder la terminal" : "Abrir la terminal"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </div>
                 <DropdownMenuItem onClick={() => renameSession(session.id)}>
                   <Pencil />
                   Renombrar
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => openCompaction(session.id)}>
+                <DropdownMenuItem onClick={() => openCompaction(session.id)} title="Compactar eligiendo qué queda…">
                   <Layers />
                   Compactar eligiendo qué queda…
                 </DropdownMenuItem>
@@ -264,9 +319,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 {!isOrch && (
                   <>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => archiveSession(session.id)}>
+                    <DropdownMenuItem onClick={() => archiveSession(session.id)}>
                       <Archive />
-                      Archivar sesión
+                      Archivar sesión…
                     </DropdownMenuItem>
                   </>
                 )}
@@ -279,6 +334,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
         <FileRefScope projectId={session.projectId} sessionId={session.id}>
           <div className="flex min-h-0 flex-1">
           <div ref={column} className="relative flex min-w-0 flex-1 flex-col">
+            <div className="relative flex min-h-0 flex-1 flex-col">
             <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
               <div ref={content} className="mx-auto max-w-3xl px-4 py-6">
                 {hasMore && (
@@ -315,31 +371,91 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
               <button
                 type="button"
                 onClick={jump}
-                className={cn(
-                  "absolute bottom-32 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-xs font-medium shadow-md hover:bg-muted"
-                )}
+                className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-popover px-3 py-1.5 text-xs font-medium shadow-overlay hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
                 <ArrowDown className="size-3.5" />
                 Ir a lo último
               </button>
             )}
+            </div>
             <Composer session={session} dropTarget={column} />
             <TerminalPanel session={session} />
           </div>
-          <aside className="session-panel hidden w-[22rem] shrink-0 overflow-y-auto border-l bg-sidebar/40 lg:block">{panel}</aside>
+          <aside aria-label="Panel de la sesión" className="session-panel hidden w-[22rem] shrink-0 overflow-y-auto lg:block">
+            {panel}
+          </aside>
           </div>
         </FileRefScope>
       </TerminalTargetProvider>
 
       <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
-        <SheetContent className="w-[22rem] overflow-y-auto p-0 sm:max-w-sm">
+        <SheetContent className="session-panel gap-0 overflow-y-auto p-0 data-[side=right]:w-full data-[side=right]:sm:w-[22rem] data-[side=right]:sm:max-w-none">
           <SheetHeader className="border-b">
-            <SheetTitle>{isOrch ? "Orquestadora" : session.name}</SheetTitle>
+            <SheetTitle className="name truncate pr-8">{isOrch ? "Orquestadora" : session.name}</SheetTitle>
+            <SheetDescription className="sr-only">El panel de la sesión: tarea, resultados, cambios y detalles.</SheetDescription>
           </SheetHeader>
           {panel}
         </SheetContent>
       </Sheet>
 
     </div>
+  )
+}
+
+/**
+ * La sesión no está entre las abiertas: si está archivada, se puede restaurar desde acá mismo;
+ * si no, no existe (o se borró del dashboard).
+ */
+function MissingSession({ projectId, sessionId }: { projectId: string; sessionId: string }) {
+  const [archived, setArchived] = useState<Session | null | undefined>(undefined)
+  const [error, setError] = useState<unknown>(null)
+  const action = useAction()
+  const [, navigate] = useLocation()
+  const load = useCallback(() => {
+    setError(null)
+    api.archivedSessions(projectId).then(
+      (list) => setArchived(list.find((s) => s.id === sessionId) ?? null),
+      (err: unknown) => setError(err)
+    )
+  }, [projectId, sessionId])
+  useEffect(load, [load])
+  const restore = (s: Session) =>
+    action.run("restore", async () => {
+      try {
+        await api.restoreSession(s.id)
+        toast.success("Sesión restaurada")
+      } catch (err) {
+        toast.error("No se pudo restaurar la sesión", { description: err instanceof Error ? err.message : String(err) })
+      }
+    })
+  if (error) return <LoadError what="la sesión" error={error} onRetry={load} className="m-auto" />
+  if (archived === undefined)
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Spinner className="size-5 text-muted-foreground" />
+      </div>
+    )
+  return (
+    <Empty className="h-full">
+      <EmptyHeader>
+        <EmptyTitle>{archived ? <><span className="name">{archived.name}</span> está archivada</> : "Esta sesión no existe"}</EmptyTitle>
+        <EmptyDescription>
+          {archived
+            ? "Restaurala para volver a verla en el tablero y seguir la conversación."
+            : "Puede que se haya borrado del dashboard."}
+        </EmptyDescription>
+      </EmptyHeader>
+      <div className="flex gap-2">
+        {archived && (
+          <Button size="sm" disabled={action.busy("restore")} onClick={() => void restore(archived)}>
+            {action.busy("restore") ? <Spinner /> : <RotateCcw />}
+            Restaurar
+          </Button>
+        )}
+        <Button size="sm" variant={archived ? "ghost" : "outline"} onClick={() => navigate(`/p/${projectId}`)}>
+          Ir al proyecto
+        </Button>
+      </div>
+    </Empty>
   )
 }

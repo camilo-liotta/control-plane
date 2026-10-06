@@ -78,22 +78,24 @@ export function WorkingIndicator({
   void tick
 
   return (
-    <div className="px-1 font-mono text-[0.78rem] leading-relaxed" role="status" aria-live="polite">
+    <div className="px-2 text-ui leading-relaxed" role="status" aria-live="polite">
       <div className="flex items-baseline gap-2">
-        <span className="inline-block w-3 text-center text-claude" aria-hidden>
+        <span className="inline-block w-3.5 text-center text-claude" aria-hidden>
           {glyph}
         </span>
-        <span className="text-claude">{verb}…</span>
+        <span className="font-medium text-claude">{verb}…</span>
         {(time || turn?.tokens) && (
-          <span className="text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             ({[time, turn?.tokens ? `↓ ${tokens(turn.tokens)} tokens` : null].filter(Boolean).join(" · ")})
           </span>
         )}
       </div>
       {detail && (
-        <div className="flex gap-2 pl-5 text-muted-foreground">
+        <div className="flex gap-2 pl-5.5 text-xs text-muted-foreground">
           <span aria-hidden>⎿</span>
-          <span className="min-w-0 truncate">{detail}</span>
+          <span className="min-w-0 truncate" title={detail}>
+            {detail}
+          </span>
         </div>
       )}
     </div>
