@@ -89,11 +89,12 @@ export function sameTask(a: string, b: string): boolean {
   return common / Math.min(x.size, y.size) >= 0.75
 }
 
-function clean(input: TaskInput) {
+/** `needSteps`: las sesiones tienen que contar los pasos; una tarea que te anotás vos puede no tenerlos. */
+function clean(input: TaskInput, needSteps = true) {
   const title = oneLine(input.title, 140).trim()
   if (!title) throw new Error("La tarea necesita un título")
   const steps = input.steps.map((s) => s.trim()).filter(Boolean).slice(0, 12)
-  if (!steps.length) throw new Error("Contá los pasos: una lista corta de lo que el usuario tiene que hacer")
+  if (needSteps && !steps.length) throw new Error("Contá los pasos: una lista corta de lo que el usuario tiene que hacer")
   return { title, steps, why: input.why?.trim() ? oneLine(input.why, 300) : null }
 }
 
@@ -158,7 +159,7 @@ export class UserTasks {
    */
   create(projectId: string, input: TaskInput, from: SessionRecord | null): { task: UserTask; existing: boolean } {
     const p = this.project(projectId)
-    const { title, steps, why } = clean(input)
+    const { title, steps, why } = clean(input, from !== null)
     const cli = this.cliOf(input.cli)
     const priority = cleanPriority(input.priority)
     const tags = normalizeTags(input.tags ?? [])
@@ -237,7 +238,10 @@ export class UserTasks {
     if (by !== "user" && by.projectId !== t.projectId) throw new Error(`La tarea ${id} es de otro proyecto`)
     const change: Partial<UserTask> = { updatedAt: now() }
     if (patch.title !== undefined || patch.steps !== undefined) {
-      const c = clean({ title: patch.title ?? t.title, steps: patch.steps ?? t.steps, why: patch.why !== undefined ? patch.why : t.why })
+      const c = clean({ title: patch.title ?? t.title, steps: patch.steps ?? t.steps, why: patch.why !== undefined ? patch.why : t.why },
+        // Una sesión no le saca los pasos a una tarea; si la anotaste vos sin pasos, igual la puede retitular.
+        by !== "user" && (t.steps.length > 0 || patch.steps !== undefined)
+      )
       Object.assign(change, c)
     } else if (patch.why !== undefined) change.why = patch.why?.trim() || null
     if (patch.blocking !== undefined) change.blocking = patch.blocking

@@ -1,5 +1,5 @@
 import { Boxes, ChevronRight, ExternalLink, Pencil, Play, Plus, RotateCw, ScrollText, Sparkles, Square, Trash2 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { AppHealth, AppInput, AppStatus, AppSuggestion, AppView, Project } from "@shared/types"
@@ -8,15 +8,17 @@ import { Lamp } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { LoadError } from "@/components/ui/load-error"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
-import type { Tone } from "@/lib/status"
+import { toneSoft, toneText, type Tone } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
@@ -25,49 +27,55 @@ export const APP_STATUS: Record<AppStatus, { label: string; tone: Tone; pulse?: 
   stopped: { label: "detenida", tone: "idle" },
   starting: { label: "arrancando", tone: "working", pulse: true },
   up: { label: "levantada", tone: "done" },
-  unresponsive: { label: "sin responder", tone: "attention" },
+  unresponsive: { label: "sin responder", tone: "error" },
   crashed: { label: "se cayó", tone: "error" },
   external: { label: "levantada afuera", tone: "done" },
-}
-const TEXT: Record<Tone, string> = {
-  idle: "text-muted-foreground",
-  working: "text-status-working",
-  done: "text-status-done",
-  attention: "text-status-attention",
-  pending: "text-status-pending",
-  error: "text-status-error",
 }
 
 const isUp = (a: AppView) => a.state.status === "up" || a.state.status === "external"
 const isOurs = (a: AppView) => a.state.status === "starting" || a.state.status === "up" || a.state.status === "unresponsive"
-const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err))
+const errText = (err: unknown) => (err instanceof Error ? err.message : String(err))
+/** Un error en la voz del glosario: "No se pudo …" y el motivo en la descripción. */
+const fail = (what: string) => (err: unknown) => toast.error(`No se pudo ${what}`, { description: errText(err) })
 
 /** Levantar, bajar o reiniciar una app: lo usan su fila y la paleta de comandos. */
-export function appAction(id: string, what: "start" | "stop" | "restart") {
-  return (what === "start" ? api.startApp(id) : what === "stop" ? api.stopApp(id) : api.restartApp(id)).then(() => {}, fail)
+export function appAction(id: string, what: "start" | "stop" | "restart", name?: string) {
+  const verb = { start: "levantar", stop: "bajar", restart: "reiniciar" }[what]
+  return (what === "start" ? api.startApp(id) : what === "stop" ? api.stopApp(id) : api.restartApp(id)).then(() => {}, fail(`${verb} ${name ?? "la app"}`))
 }
 export { isOurs as appIsRunning }
 
 /**
  * Las apps del proyecto: se piden una vez al entrar y, solo con la sección abierta, cada 20 s con
  * `watch` (así el server mira la salud de las que no corren solo mientras alguien las mira). Plegada,
- * el resumen se mantiene con los avisos del server.
+ * el resumen se mantiene con los avisos del server. Si no se pudieron pedir, lo dice (`error`), salvo
+ * que ya haya datos del server.
  */
 function useWatchApps(projectId: string, open: boolean) {
-  useEffect(() => {
-    let alive = true
-    const load = () =>
+  const [error, setError] = useState<unknown>(null)
+  const alive = useRef(true)
+  const load = useCallback(
+    () =>
       api.apps(projectId, open).then(
-        (apps) => alive && useStore.setState((s) => ({ apps: { ...s.apps, [projectId]: apps } })),
-        () => {}
-      )
+        (apps) => {
+          if (!alive.current) return
+          useStore.setState((s) => ({ apps: { ...s.apps, [projectId]: apps } }))
+          setError(null)
+        },
+        (err: unknown) => alive.current && setError(err)
+      ),
+    [projectId, open]
+  )
+  useEffect(() => {
+    alive.current = true
     void load()
     const t = open ? setInterval(load, 20_000) : null
     return () => {
-      alive = false
+      alive.current = false
       if (t) clearInterval(t)
     }
-  }, [projectId, open])
+  }, [load, open])
+  return { error, retry: load }
 }
 
 function healthText(h: AppHealth | null) {
@@ -81,7 +89,7 @@ function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLo
   const run = (what: "start" | "stop" | "restart") => async () => {
     setBusy(what)
     try {
-      await appAction(app.id, what)
+      await appAction(app.id, what, app.name)
     } finally {
       setBusy(null)
     }
@@ -89,23 +97,23 @@ function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLo
   const crashed = app.state.status === "crashed"
   const exit = app.state.error ?? (app.state.exitCode !== null ? `código ${app.state.exitCode}` : app.state.signal ? `por ${app.state.signal}` : null)
   return (
-    <li className="rounded-lg border bg-background/60 px-3 py-2.5">
+    <li className="py-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-60">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="font-medium">{app.name}</span>
-            <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", TEXT[st.tone])}>
-              <Lamp tone={st.tone} pulse={st.pulse} className={cn("size-1.5", app.state.status === "external" && "ring-2 ring-status-done/30")} />
+            <span className="name">{app.name}</span>
+            <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", st.tone === "idle" ? "text-muted-foreground" : toneText[st.tone])}>
+              <Lamp tone={st.tone} pulse={st.pulse} className={cn("size-1.5", app.state.status === "external" && "ring-2 ring-status-done-lamp/30")} />
               {st.label}
               {crashed && exit ? ` (${exit})` : ""}
             </span>
           </div>
-          <p className="mt-0.5 truncate font-mono text-[0.72rem] text-muted-foreground" title={app.command}>
+          <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground" title={app.cwd ? `${app.command} · en ${app.cwd}` : app.command}>
             {app.command}
-            {app.cwd ? <span className="text-muted-foreground/70"> · en {app.cwd}</span> : null}
+            {app.cwd ? <span> · en {app.cwd}</span> : null}
           </p>
           {app.state.status === "external" && <p className="mt-0.5 text-xs text-muted-foreground">Responde, pero no la levantó el dashboard: no la toca.</p>}
-          {app.state.status === "unresponsive" && <p className="mt-0.5 text-xs text-status-attention">El proceso sigue vivo pero {healthText(app.health)} no contesta.</p>}
+          {app.state.status === "unresponsive" && <p className="mt-0.5 text-xs text-status-error">El proceso sigue vivo pero {healthText(app.health)} no contesta.</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {isOurs(app) ? (
@@ -114,7 +122,7 @@ function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLo
                 {busy === "stop" ? <Spinner /> : <Square />}
                 Bajar
               </Button>
-              <Button size="icon-sm" variant="ghost" onClick={run("restart")} disabled={busy !== null} aria-label="Reiniciar" title="Reiniciar">
+              <Button size="icon-sm" variant="ghost" onClick={run("restart")} disabled={busy !== null} aria-label={`Reiniciar ${app.name}`} title="Reiniciar">
                 {busy === "restart" ? <Spinner /> : <RotateCw />}
               </Button>
             </>
@@ -125,22 +133,22 @@ function AppRow({ app, onEdit, onLog }: { app: AppView; onEdit: () => void; onLo
             </Button>
           )}
           {app.url && (isUp(app) || app.state.status === "unresponsive") && (
-            <Button size="icon-sm" variant="ghost" asChild aria-label="Abrir en el navegador" title={`Abrir ${app.url}`}>
+            <Button size="icon-sm" variant="ghost" asChild aria-label={`Abrir ${app.name} en el navegador`} title={`Abrir ${app.url}`}>
               <a href={app.url} target="_blank" rel="noreferrer">
                 <ExternalLink />
               </a>
             </Button>
           )}
-          <Button size="icon-sm" variant="ghost" onClick={onLog} aria-label="Ver el log" title="Ver el log">
+          <Button size="icon-sm" variant="ghost" onClick={onLog} aria-label={`Ver el log de ${app.name}`} title="Ver el log">
             <ScrollText />
           </Button>
-          <Button size="icon-sm" variant="ghost" onClick={onEdit} aria-label="Editar" title="Editar">
+          <Button size="icon-sm" variant="ghost" onClick={onEdit} aria-label={`Editar ${app.name}`} title="Editar">
             <Pencil />
           </Button>
         </div>
       </div>
       {crashed && app.state.tail.length > 0 && (
-        <pre className="mt-2 max-h-28 overflow-auto rounded-md bg-status-error/5 p-2 font-mono text-[0.7rem] leading-relaxed whitespace-pre-wrap wrap-anywhere text-foreground/80">
+        <pre className={cn("mt-2 max-h-28 overflow-auto rounded-xl p-2 font-mono text-2xs leading-relaxed whitespace-pre-wrap wrap-anywhere", toneSoft.error)}>
           {app.state.tail.slice(-6).join("\n")}
         </pre>
       )}
@@ -186,9 +194,9 @@ function LogDialog({ app, onClose }: { app: AppView | null; onClose: () => void 
           <DialogTitle>Log de {app?.name}</DialogTitle>
           <DialogDescription>Las últimas líneas de lo que escribió la app. Se actualiza solo.</DialogDescription>
         </DialogHeader>
-        <pre ref={box} className="h-[60svh] overflow-auto rounded-lg border bg-muted/50 p-3 font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap wrap-anywhere">
+        <pre ref={box} className="h-[60svh] overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
           {lines === null ? (error ? "" : "Cargando…") : lines.length ? lines.join("\n") : "Todavía no escribió nada."}
-          {error && <span className="block text-status-error">{`${lines?.length ? "\n" : ""}No se pudo leer el log: ${error}. Lo vuelvo a intentar…`}</span>}
+          {error && <span className="block text-status-error">{`${lines?.length ? "\n" : ""}No se pudo leer el log: ${error}. Se reintenta solo…`}</span>}
         </pre>
       </DialogContent>
     </Dialog>
@@ -264,25 +272,20 @@ function AppDialog({
       const input = fromForm(f)
       if (editing) await api.updateApp(editing.id, input)
       else await api.createApp(projectId, input)
-      toast.success(editing ? `Guardé ${input.name}` : `Agregué ${input.name}`)
+      toast.success(editing ? "App guardada" : "App agregada", { description: input.name })
       onClose()
     } catch (err) {
-      fail(err)
+      fail(editing ? "guardar la app" : "agregar la app")(err)
     } finally {
       setSaving(false)
     }
   }
-  const action = useAction()
-  const remove = () => action.run("remove", async () => {
+  const remove = async () => {
     if (!editing) return
-    try {
-      await api.removeApp(editing.id)
-      toast.success(`Quité ${editing.name}`)
-      onClose()
-    } catch (err) {
-      fail(err)
-    }
-  })
+    await api.removeApp(editing.id)
+    toast.success("App quitada", { description: editing.name })
+    onClose()
+  }
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-lg">
@@ -297,7 +300,7 @@ function AppDialog({
           }}
         >
           <FieldGroup className="gap-4">
-            <div className="grid grid-cols-[1fr_1.4fr] gap-3">
+            <div className="grid gap-3 sm:grid-cols-[1fr_1.4fr]">
               <Field>
                 <FieldLabel htmlFor="app-name">Nombre</FieldLabel>
                 <Input id="app-name" value={f.name} onChange={(e) => set("name")(e.target.value)} placeholder="backend" autoFocus />
@@ -317,9 +320,9 @@ function AppDialog({
             </Field>
             <Field>
               <FieldLabel>Cómo saber que está levantada</FieldLabel>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Select value={f.healthKind} onValueChange={(v) => set("healthKind")(v as HealthKind)}>
-                  <SelectTrigger className="w-36">
+                  <SelectTrigger className="w-36" aria-label="Cómo saber que está levantada">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -329,15 +332,15 @@ function AppDialog({
                   </SelectContent>
                 </Select>
                 {f.healthKind === "http" && (
-                  <Input value={f.healthUrl} onChange={(e) => set("healthUrl")(e.target.value)} placeholder="http://127.0.0.1:3000/health" className="font-mono text-sm" />
+                  <Input value={f.healthUrl} onChange={(e) => set("healthUrl")(e.target.value)} placeholder="http://127.0.0.1:3000/health" aria-label="URL de salud" className="min-w-48 flex-1 font-mono text-sm" />
                 )}
                 {f.healthKind === "tcp" && (
-                  <Input value={f.healthPort} onChange={(e) => set("healthPort")(e.target.value)} placeholder="5173" inputMode="numeric" className="w-28 font-mono text-sm" />
+                  <Input value={f.healthPort} onChange={(e) => set("healthPort")(e.target.value)} placeholder="5173" inputMode="numeric" aria-label="Puerto" className="w-28 font-mono text-sm" />
                 )}
               </div>
               {f.healthKind === "none" && <FieldDescription>Cuenta como levantada mientras el proceso siga vivo.</FieldDescription>}
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="app-url">URL para abrir (opcional)</FieldLabel>
                 <Input id="app-url" value={f.url} onChange={(e) => set("url")(e.target.value)} placeholder="la de salud" className="font-mono text-sm" />
@@ -354,10 +357,17 @@ function AppDialog({
           </FieldGroup>
           <DialogFooter className="mt-5">
             {editing && (
-              <Button type="button" variant="ghost" className="mr-auto text-status-error" disabled={action.busy("remove")} onClick={() => void remove()}>
-                <Trash2 />
-                Quitar
-              </Button>
+              <ConfirmAction
+                title={`¿Quitar ${editing.name}?`}
+                description="Sale de Apps y, si la levantó el dashboard, se baja. El repo no se toca: la podés volver a agregar."
+                confirmLabel="Quitar app"
+                onConfirm={remove}
+              >
+                <Button type="button" variant="ghost" className="mr-auto text-status-error">
+                  <Trash2 />
+                  Quitar…
+                </Button>
+              </ConfirmAction>
             )}
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancelar
@@ -388,14 +398,14 @@ function Suggestions({ projectId, onPick }: { projectId: string; onPick: (s: App
     <div className="mt-3">
       <p className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
         <Sparkles className="size-3.5" />
-        Encontré esto en el repo. Revisalo antes de agregarlo:
+        Esto parece levantable en el repo. Revisalo antes de agregarlo:
       </p>
       <ul className="space-y-1">
         {list.map((s) => (
-          <li key={`${s.source}-${s.command}`} className="flex items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50">
+          <li key={`${s.source}-${s.command}`} className="flex items-center gap-3 rounded-lg px-2 py-1.5 text-sm hover:bg-muted/50">
             <span className="min-w-0 flex-1">
-              <span className="font-medium">{s.name}</span> <span className="font-mono text-[0.72rem] text-muted-foreground">{s.command}</span>
-              <span className="block text-[0.7rem] text-muted-foreground">de {s.source}</span>
+              <span className="name">{s.name}</span> <span className="font-mono text-xs text-muted-foreground">{s.command}</span>
+              <span className="block text-2xs text-muted-foreground">de <span className="font-mono">{s.source}</span></span>
             </span>
             <Button size="xs" variant="outline" onClick={() => onPick(s)}>
               <Plus />
@@ -411,83 +421,94 @@ function Suggestions({ projectId, onPick }: { projectId: string; onPick: (s: App
 /** "Apps" en el resumen del proyecto: lo que se levanta localmente, su estado y los botones. */
 export function ProjectApps({ project }: { project: Project }) {
   const open = useSectionOpen("project-apps")
-  useWatchApps(project.id, open)
-  const apps = useStore((s) => s.apps[project.id]) ?? []
+  const { error, retry } = useWatchApps(project.id, open)
+  const stored = useStore((s) => s.apps[project.id])
+  const apps = stored ?? NO_APPS
   const toggle = usePanelSections((s) => s.toggle)
   const [dialog, setDialog] = useState<{ editing: AppView | null; initial: AppInput | null } | null>(null)
   const [logOf, setLogOf] = useState<string | null>(null)
-  const [busyAll, setBusyAll] = useState<"start" | "stop" | null>(null)
+  const action = useAction()
   const up = apps.filter(isUp).length
   const crashed = apps.filter((a) => a.state.status === "crashed").length
-  const summaryTone: Tone = !apps.length ? "idle" : crashed ? "error" : up === apps.length ? "done" : up ? "attention" : "idle"
+  const summaryTone: Tone = crashed ? "error" : apps.length && up === apps.length ? "done" : "idle"
   const logApp = useMemo(() => apps.find((a) => a.id === logOf) ?? null, [apps, logOf])
-  const all = (what: "start" | "stop") => async () => {
-    setBusyAll(what)
-    try {
-      if (what === "start") {
-        const r = await api.startAllApps(project.id)
-        for (const f of r.failed) toast.error(`No pude levantar ${f.name}`, { description: f.error })
-      } else await api.stopAllApps(project.id)
-    } catch (err) {
-      fail(err)
-    } finally {
-      setBusyAll(null)
-    }
-  }
+  // Sin datos y con error: no es "ninguna registrada", es que no se pudo saber.
+  const failed = Boolean(error) && !apps.length
+  const all = (what: "start" | "stop") => () =>
+    action.run(what, async () => {
+      try {
+        if (what === "start") {
+          const r = await api.startAllApps(project.id)
+          for (const f of r.failed) toast.error(`No se pudo levantar ${f.name}`, { description: f.error })
+        } else await api.stopAllApps(project.id)
+      } catch (err) {
+        fail(what === "start" ? "levantar las apps" : "bajar las apps")(err)
+      }
+    })
 
   return (
     <Collapsible open={open} onOpenChange={(v) => toggle("project-apps", v)} className="border-b">
-      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
+      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
         <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
         <Boxes className="size-4 shrink-0 text-muted-foreground" />
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm">
           <span className="font-medium">Apps</span>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             {" · "}
-            {apps.length ? (
+            {failed ? (
+              <span className="font-medium text-status-error">no se pudieron cargar</span>
+            ) : apps.length ? (
               <>
                 <Lamp tone={summaryTone} className="size-1.5" />
-                {apps.length === 1 ? (up ? "levantada" : APP_STATUS[apps[0]!.state.status].label) : `${up} de ${apps.length} levantadas`}
+                {apps.length === 1 ? APP_STATUS[apps[0]!.state.status].label : `${up} de ${apps.length} levantadas`}
                 {crashed > 0 && apps.length > 1 && <span className="font-medium text-status-error">· {crashed === 1 ? "1 se cayó" : `${crashed} se cayeron`}</span>}
               </>
             ) : (
-              "ninguna registrada"
+              "ninguna todavía"
             )}
           </span>
+          <span className="hidden text-xs text-muted-foreground sm:group-data-[state=closed]:inline">· lo que se levanta localmente: backend, frontend, workers</span>
         </span>
       </CollapsibleTrigger>
-      <CollapsibleContent className="px-4 pb-4 pl-10">
-        {apps.length > 1 && (
-          <div className="mb-2 flex items-center gap-1.5">
-            <Button size="xs" variant="outline" onClick={all("start")} disabled={busyAll !== null || up === apps.length}>
-              {busyAll === "start" ? <Spinner /> : <Play />}
-              Levantar todas
-            </Button>
-            <Button size="xs" variant="outline" onClick={all("stop")} disabled={busyAll !== null || !apps.some(isOurs)}>
-              {busyAll === "stop" ? <Spinner /> : <Square />}
-              Bajar todas
-            </Button>
-          </div>
-        )}
-        {apps.length > 0 ? (
-          <ul className="grid gap-2 lg:grid-cols-2">
-            {apps.map((a) => (
-              <AppRow key={a.id} app={a} onEdit={() => setDialog({ editing: a, initial: null })} onLog={() => setLogOf(a.id)} />
-            ))}
-          </ul>
+      <CollapsibleContent className="px-4 pb-4 sm:pl-10">
+        {failed ? (
+          <LoadError what="las apps" error={error} onRetry={retry} />
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Lo que se levanta localmente (un backend, un frontend, un worker). Las sesiones las registran solas cuando arman una; también podés agregarlas vos.
-          </p>
+          <>
+            {apps.length > 1 && (
+              <div className="mb-1 flex items-center gap-1.5">
+                <Button size="xs" variant="outline" onClick={all("start")} disabled={action.busy() || up === apps.length}>
+                  {action.busy("start") ? <Spinner /> : <Play />}
+                  Levantar todas
+                </Button>
+                <Button size="xs" variant="outline" onClick={all("stop")} disabled={action.busy() || !apps.some(isOurs)}>
+                  {action.busy("stop") ? <Spinner /> : <Square />}
+                  Bajar todas
+                </Button>
+              </div>
+            )}
+            {apps.length > 0 ? (
+              <ul className="divide-y">
+                {apps.map((a) => (
+                  <AppRow key={a.id} app={a} onEdit={() => setDialog({ editing: a, initial: null })} onLog={() => setLogOf(a.id)} />
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Lo que se levanta localmente (un backend, un frontend, un worker). Las sesiones las registran solas cuando arman una; también podés agregarlas vos.
+              </p>
+            )}
+            <Button size="xs" variant="ghost" className="mt-2 text-muted-foreground" onClick={() => setDialog({ editing: null, initial: null })}>
+              <Plus />
+              Agregar una app
+            </Button>
+            {apps.length === 0 && open && <Suggestions projectId={project.id} onPick={(s) => setDialog({ editing: null, initial: s })} />}
+          </>
         )}
-        <Button size="xs" variant="ghost" className="mt-2 text-muted-foreground" onClick={() => setDialog({ editing: null, initial: null })}>
-          <Plus />
-          Agregar una app
-        </Button>
-        {apps.length === 0 && open && <Suggestions projectId={project.id} onPick={(s) => setDialog({ editing: null, initial: s })} />}
       </CollapsibleContent>
       <AppDialog projectId={project.id} open={!!dialog} editing={dialog?.editing ?? null} initial={dialog?.initial ?? null} onClose={() => setDialog(null)} />
       <LogDialog app={logApp} onClose={() => setLogOf(null)} />
     </Collapsible>
   )
 }
+const NO_APPS: AppView[] = []

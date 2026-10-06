@@ -63,7 +63,7 @@ const SCREENS = {
     ["33-terminal", sess("PAGOS"), { act: (t) => t.press('button[aria-label="Abrir la terminal"], button[aria-label="Terminal"]'), wait: 2500 }],
     ["34-subagente", sess("WEB"), { sections: ALL, act: (t) => t.clickText("revisar") }],
     ["35-toast", portal, { sections: ALL, act: (t) => t.press('button[aria-label="Copiar usuario"]'), wait: 400 }],
-    ["36-app-log", portal, { sections: ALL, act: (t) => t.press('button[aria-label="Ver el log"]') }],
+    ["36-app-log", portal, { sections: ALL, act: (t) => t.press('button[aria-label^="Ver el log"]') }],
     ["37-archivadas", portal, { act: (t) => t.ev(`[...document.querySelectorAll("main section, main div")].reverse().find((e) => /archivad/i.test(e.firstElementChild?.textContent ?? ""))?.scrollIntoView({ block: "center" }); 1`) }],
   ],
   claves: [

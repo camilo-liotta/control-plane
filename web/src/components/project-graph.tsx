@@ -41,20 +41,20 @@ interface GLink extends SimulationLinkDatum<GNode> {
 }
 
 const TONE_FILL: Record<Tone, string> = {
-  working: "fill-status-working",
-  attention: "fill-status-attention",
-  pending: "fill-status-pending",
-  done: "fill-status-done",
-  error: "fill-status-error",
-  idle: "fill-status-idle",
+  working: "fill-status-working-lamp",
+  attention: "fill-status-attention-lamp",
+  pending: "fill-status-pending-lamp",
+  done: "fill-status-done-lamp",
+  error: "fill-status-error-lamp",
+  idle: "fill-status-idle-lamp",
 }
 const TONE_STROKE: Record<Tone, string> = {
-  working: "stroke-status-working",
-  attention: "stroke-status-attention",
-  pending: "stroke-status-pending",
-  done: "stroke-status-done",
-  error: "stroke-status-error",
-  idle: "stroke-status-idle",
+  working: "stroke-status-working-lamp",
+  attention: "stroke-status-attention-lamp",
+  pending: "stroke-status-pending-lamp",
+  done: "stroke-status-done-lamp",
+  error: "stroke-status-error-lamp",
+  idle: "stroke-status-idle-lamp",
 }
 
 const STALE_MS = 24 * 60 * 60 * 1000
@@ -298,8 +298,8 @@ export function ProjectGraph({ project, orchestrator, workers, drafts, reports }
                 }}
               >
                 <line className={cn("stroke-border", l.kind === "sub" && "stroke-border/80")} strokeWidth={l.kind === "core" ? 1.5 : 1} />
-                {working && <line className="link-flow stroke-status-working/70" strokeWidth={l.kind === "core" ? 1.8 : 1.2} />}
-                {queued > 0 && <circle r={4.5} className="node-dot fill-status-attention" />}
+                {working && <line className="link-flow stroke-status-working-lamp/70" strokeWidth={l.kind === "core" ? 1.8 : 1.2} />}
+                {queued > 0 && <circle r={4.5} className="node-dot fill-status-pending-lamp" />}
               </g>
             )
           })}
@@ -354,7 +354,7 @@ export function ProjectGraph({ project, orchestrator, workers, drafts, reports }
                   />
                 )}
                 {reviewing && (
-                  <circle r={n.r + 7} fill="none" strokeWidth={1.5} strokeDasharray="3 5" className="ring-spin stroke-status-working" />
+                  <circle r={n.r + 7} fill="none" strokeWidth={1.5} strokeDasharray="3 5" className="ring-spin stroke-status-working-lamp" />
                 )}
                 <circle
                   r={n.r}
@@ -371,7 +371,7 @@ export function ProjectGraph({ project, orchestrator, workers, drafts, reports }
                 {n.kind === "worker" && !stopped && <circle r={4.5} className={TONE_FILL[tone]} />}
                 {ready > 0 && (
                   <g transform={`translate(${n.r * 0.75},${-n.r * 0.75})`}>
-                    <circle r={5.5} className="fill-status-attention stroke-background" strokeWidth={1.5} />
+                    <circle r={5.5} className="fill-status-pending-lamp stroke-background" strokeWidth={1.5} />
                   </g>
                 )}
                 {label && (
@@ -379,7 +379,7 @@ export function ProjectGraph({ project, orchestrator, workers, drafts, reports }
                     y={n.r + 14}
                     textAnchor="middle"
                     className={cn(
-                      "pointer-events-none font-mono text-[10.5px] font-medium",
+                      "name pointer-events-none text-2xs",
                       n.kind === "orchestrator" ? "fill-foreground" : "fill-muted-foreground",
                       hover === n.id && "fill-foreground"
                     )}
@@ -438,7 +438,7 @@ function GraphTooltip({
   const below = y < 150
   return (
     <div
-      className="pointer-events-none absolute z-10 w-64 rounded-xl border bg-popover p-3 text-xs shadow-lg"
+      className="pointer-events-none absolute z-10 w-64 rounded-xl bg-popover p-3 text-xs text-popover-foreground shadow-overlay"
       style={{
         left,
         top: below ? y + node.r + 12 : y - node.r - 12,
@@ -448,17 +448,17 @@ function GraphTooltip({
       {node.kind === "subagent" && sub ? (
         <>
           <div className="flex items-center gap-2">
-            <span className="truncate font-mono text-[0.8rem] font-semibold">{sub.sub.name ?? sub.sub.description}</span>
+            <span className="line-clamp-2 text-ui font-medium">{sub.sub.name ?? sub.sub.description}</span>
             <TonePill tone={STATUS_VIEW[sub.sub.status].tone} className="ml-auto">
               {STATUS_VIEW[sub.sub.status].label}
             </TonePill>
           </div>
           <p className="mt-1 text-muted-foreground">
-            Subagente de <span className="font-mono text-foreground">{sub.owner.name}</span>
+            Subagente de <span className="name text-foreground">{sub.owner.name}</span>
             {[sub.sub.subagentType, sub.sub.model].filter(Boolean).length ? ` · ${[sub.sub.subagentType, sub.sub.model].filter(Boolean).join(" · ")}` : ""}
           </p>
-          {sub.sub.lastActivity && <p className="mt-1.5 truncate font-mono text-muted-foreground">{sub.sub.lastActivity}</p>}
-          <p className="mt-1.5 font-mono text-muted-foreground">
+          {sub.sub.lastActivity && <p className="mt-1.5 line-clamp-2 wrap-anywhere text-muted-foreground">{sub.sub.lastActivity}</p>}
+          <p className="mt-1.5 text-muted-foreground">
             {duration((sub.sub.endedAt ?? now) - sub.sub.startedAt)}
             {sub.sub.tokens ? ` · ${tokens(sub.sub.tokens)} tokens` : ""}
           </p>
@@ -466,7 +466,7 @@ function GraphTooltip({
       ) : session ? (
         <>
           <div className="flex items-center gap-2">
-            <span className="truncate font-mono text-[0.8rem] font-semibold">
+            <span className="name min-w-0 wrap-anywhere text-ui">
               {node.kind === "orchestrator" ? "Orquestadora" : session.name}
             </span>
             <StatusPill session={session} className="ml-auto" />
@@ -477,7 +477,7 @@ function GraphTooltip({
               {project.review.paused ? " · en pausa" : ""}
             </p>
           ) : (
-            session.role && <p className="mt-0.5 truncate text-muted-foreground">{session.role}</p>
+            session.role && <p className="mt-0.5 line-clamp-2 text-muted-foreground">{session.role}</p>
           )}
           {node.kind === "worker" && (
             <p className="mt-1.5 line-clamp-2">
@@ -487,11 +487,11 @@ function GraphTooltip({
           )}
           {node.kind === "orchestrator" && session.lastText && <p className="mt-1.5 line-clamp-2 text-muted-foreground">{session.lastText}</p>}
           {session.lastActivity && (
-            <p className="mt-1.5 truncate font-mono text-muted-foreground">
+            <p className="mt-1.5 line-clamp-2 wrap-anywhere text-muted-foreground">
               {session.lastActivity} · {timeAgo(session.lastActivityAt, now)}
             </p>
           )}
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 border-t pt-2 font-mono text-[0.7rem] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 border-t pt-2 text-2xs text-muted-foreground">
             {session.tokens?.total ? <span>{tokens(session.tokens.total)} tokens</span> : null}
             {session.costUsd > 0 && <span>{usd(session.costUsd)}</span>}
             {session.subagentsRunning > 0 && (
@@ -499,10 +499,10 @@ function GraphTooltip({
                 {session.subagentsRunning === 1 ? "1 subagente" : `${session.subagentsRunning} subagentes`}
               </span>
             )}
-            {queued > 0 && <span className="text-status-attention">{queued === 1 ? "1 resultado en cola" : `${queued} resultados en cola`}</span>}
-            {ready > 0 && <span className="text-status-attention">{ready === 1 ? "1 propuesta lista" : `${ready} propuestas listas`}</span>}
+            {queued > 0 && <span className="text-status-pending">{queued === 1 ? "1 resultado en cola" : `${queued} resultados en cola`}</span>}
+            {ready > 0 && <span className="text-status-pending">{ready === 1 ? "1 propuesta lista" : `${ready} propuestas listas`}</span>}
           </div>
-          <p className="mt-1.5 text-[0.7rem] text-muted-foreground">Clic para abrir{node.kind !== "orchestrator" ? " · arrastrá para acomodar" : ""}</p>
+          <p className="mt-1.5 text-2xs text-muted-foreground">Clic para abrir{node.kind !== "orchestrator" ? " · arrastrá para acomodar" : ""}</p>
         </>
       ) : (
         <p className="text-muted-foreground">La orquestadora todavía no arrancó.</p>
@@ -520,7 +520,7 @@ export function GraphLegend() {
     { tone: "error", label: "Error" },
   ]
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.7rem] text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
       {items.map((i) => (
         <span key={i.tone} className="inline-flex items-center gap-1.5">
           <svg width="10" height="10" aria-hidden>
@@ -531,12 +531,12 @@ export function GraphLegend() {
       ))}
       <span className="inline-flex items-center gap-1.5">
         <svg width="10" height="10" aria-hidden>
-          <circle cx="5" cy="5" r="4" fill="none" strokeWidth={1.5} strokeDasharray="2 2" className="stroke-status-idle" />
+          <circle cx="5" cy="5" r="4" fill="none" strokeWidth={1.5} strokeDasharray="2 2" className="stroke-status-idle-lamp" />
         </svg>
         Detenida
       </span>
       <span className="inline-flex items-center gap-1.5">
-        <span className="size-2 rounded-full bg-status-attention" />
+        <span className="size-2 rounded-full bg-status-pending-lamp" />
         Resultado en cola / propuesta lista
       </span>
     </div>

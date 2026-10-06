@@ -1,5 +1,5 @@
 import { CalendarClock, Check, ChevronRight, ClipboardList, Hourglass, Plus, TriangleAlert, Undo2, X } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
@@ -18,12 +18,20 @@ import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
+import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
+import { useUi } from "@/lib/ui"
+import { undoable } from "@/lib/undo"
 import { useAction } from "@/lib/use-action"
 import { cn } from "@/lib/utils"
 
-const when = (ms: number) =>
-  new Date(ms).toLocaleString("es-AR", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })
+/** "mié 7/10 20:53": fecha corta y hora (la completa va en el title). */
+const when = (ms: number) => {
+  const d = new Date(ms)
+  const day = d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "")
+  const time = d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+  return `${day} ${d.getDate()}/${d.getMonth() + 1} ${time}`
+}
 
 /** Un color por etiqueta, para el borde que une las tareas que van juntas. */
 export function tagHue(tag: string) {
@@ -31,14 +39,17 @@ export function tagHue(tag: string) {
   for (const c of tag) h = (h * 31 + c.charCodeAt(0)) % 360
   return h
 }
+/** El tono de la etiqueta: la barra y el borde con la luz, el texto más oscuro en claro y más claro en oscuro (AA). */
 const tagColor = (tag: string) => `oklch(0.66 0.13 ${tagHue(tag)})`
+const tagVars = (tag: string) => ({ "--tag-h": tagHue(tag) }) as React.CSSProperties
+const TAG_TEXT = "[color:oklch(0.48_0.14_var(--tag-h))] dark:[color:oklch(0.8_0.11_var(--tag-h))]"
 
 /** El número de prioridad, chico, al lado del título. */
 export function PriorityBadge({ priority, className }: { priority: number | null; className?: string }) {
   if (priority === null) return null
   return (
     <span
-      className={cn("inline-grid h-4.5 min-w-4.5 shrink-0 place-items-center rounded border px-1 font-mono text-[0.65rem] leading-none text-muted-foreground tabular-nums", className)}
+      className={cn("inline-grid h-4.5 min-w-4.5 shrink-0 place-items-center rounded-md bg-muted px-1 text-2xs leading-none font-semibold text-muted-foreground", className)}
       title={`Prioridad ${priority} (1 va primero)`}
     >
       {priority}
@@ -52,6 +63,10 @@ export function UserTasksCard({ project }: { project: Project }) {
   const [adding, setAdding] = useState(false)
   const [showClosed, setShowClosed] = useState(false)
   const [tag, setTag] = useState<string | null>(null)
+  // Las que cerraste y todavía se pueden deshacer: se esconden sin desmontarse (no se pierde la nota).
+  const [closing, setClosing] = useState<ReadonlySet<string>>(new Set())
+  const [revealItem, setRevealItem] = useState<string | null>(null)
+  const section = useRef<HTMLElement>(null)
   const tasks = useMemo(() => Object.values(all).filter((t) => t.projectId === project.id), [all, project.id])
   const groups = useMemo(() => tagGroups(tasks), [tasks])
   const filter = tag && groups.has(tag) ? tag : null
@@ -59,18 +74,50 @@ export function UserTasksCard({ project }: { project: Project }) {
   const allOpen = tasks.filter((t) => t.status === "open")
   const open = orderTasks(allOpen).filter(mine)
   const closed = tasks.filter((t) => t.status !== "open" && mine(t)).sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
-  const waiting = allOpen.filter((t) => t.blocking).length
+  const shownOpen = allOpen.filter((t) => !closing.has(t.id))
+  const waiting = shownOpen.filter((t) => t.blocking).length
+  const visible = open.filter((t) => !closing.has(t.id))
+  const count = visible.length
   // Si el grupo se deshizo (quedó una sola abierta), se saca el filtro.
   useEffect(() => {
     if (tag && !groups.has(tag)) setTag(null)
   }, [tag, groups])
 
+  const hide = (id: string, hidden: boolean) =>
+    setClosing((prev) => {
+      const next = new Set(prev)
+      if (hidden) next.add(id)
+      else next.delete(id)
+      return next
+    })
+
+  // Llegaste desde la Bandeja o un aviso: la tarea misma (abierta y a la vista) o, sin tarea, la sección.
+  const pendingReveal = useUi((s) => s.reveal)
+  const setUi = useUi((s) => s.set)
+  useEffect(() => {
+    if (pendingReveal?.kind !== "tasks" || pendingReveal.id !== project.id) return
+    setUi({ reveal: null })
+    const item = pendingReveal.item ? all[pendingReveal.item] : undefined
+    if (item) {
+      setTag(null)
+      if (item.status !== "open") setShowClosed(true)
+      setRevealItem(item.id)
+    }
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = (item && section.current?.querySelector<HTMLElement>(`[data-task-id="${item.id}"]`)) || section.current
+        if (el) reveal(el)
+      })
+    )
+    return () => cancelAnimationFrame(raf)
+  }, [pendingReveal, project.id, setUi, all])
+
   return (
-    <section id="tareas-para-vos" className="surface-card scroll-mt-4 p-4 sm:p-5">
+    <section ref={section} id="tareas-para-vos" className="surface-card scroll-mt-4 p-4 sm:p-5">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <ClipboardList className="size-4.5 shrink-0" />
         <h2 className="font-medium">Tareas para vos</h2>
-        <span className="font-mono text-sm text-muted-foreground">{open.length}</span>
+        <span className="text-sm text-muted-foreground">{count}</span>
         {waiting > 0 && <TonePill tone="attention">{waiting === 1 ? "1 frena a una sesión" : `${waiting} frenan a sesiones`}</TonePill>}
         <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setAdding((v) => !v)}>
           <Plus />
@@ -85,15 +132,23 @@ export function UserTasksCard({ project }: { project: Project }) {
 
       {filter && <TagFilter group={groups.get(filter)!} onClear={() => setTag(null)} />}
 
-      {open.length > 0 ? (
-        <ul className="mt-3 divide-y rounded-xl border">
-          {open.map((t, i) => (
-            <TaskRow key={t.id} task={t} groups={groups} onTag={setTag} joined={joinedWith(open, i, groups)} />
+      {open.length > 0 && (
+        <ul className="mt-3 -mx-4 divide-y border-t sm:-mx-5" hidden={count === 0}>
+          {open.map((t) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              groups={groups}
+              onTag={setTag}
+              joined={closing.has(t.id) ? null : joinedWith(visible, visible.indexOf(t), groups)}
+              hidden={closing.has(t.id)}
+              onHide={(v) => hide(t.id, v)}
+              revealed={revealItem === t.id}
+            />
           ))}
         </ul>
-      ) : (
-        !adding && <p className="mt-3 rounded-xl border border-dashed px-4 py-3 text-sm text-muted-foreground">Nada pendiente de tu lado.</p>
       )}
+      {count === 0 && !adding && <p className="mt-3 text-sm text-muted-foreground">Nada pendiente de tu lado.</p>}
 
       {closed.length > 0 && (
         <div className="mt-3">
@@ -102,7 +157,7 @@ export function UserTasksCard({ project }: { project: Project }) {
             Cerradas en la última semana · {closed.length}
           </button>
           {showClosed && (
-            <ul className="mt-2 divide-y rounded-xl border">
+            <ul className="mt-2 -mx-4 divide-y border-t sm:-mx-5">
               {closed.map((t) => (
                 <ClosedRow key={t.id} task={t} />
               ))}
@@ -124,7 +179,7 @@ function joinedWith(list: UserTask[], i: number, groups: Map<string, TagGroup>) 
 /** Arriba de la lista, con una etiqueta elegida: cuántas son y cuántas están hechas. */
 function TagFilter({ group, onClear }: { group: TagGroup; onClear: () => void }) {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: tagColor(group.tag) }}>
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm">
       <TagChip tag={group.tag} />
       <span className="text-muted-foreground">
         {group.done} de {group.total} {group.total === 1 ? "hecha" : "hechas"} · {group.open} {group.open === 1 ? "abierta" : "abiertas"}
@@ -138,14 +193,14 @@ function TagFilter({ group, onClear }: { group: TagGroup; onClear: () => void })
 }
 
 function TagChip({ tag, count, onClick }: { tag: string; count?: string; onClick?: () => void }) {
-  const style = { borderColor: tagColor(tag), color: tagColor(tag) }
+  const style = { ...tagVars(tag), borderColor: tagColor(tag) }
   const body = (
     <>
-      <span className="font-mono">{tag}</span>
+      <span>{tag}</span>
       {count && <span className="text-muted-foreground">· {count}</span>}
     </>
   )
-  const cls = "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.68rem] leading-tight"
+  const cls = cn("inline-flex items-center gap-1 rounded-full border px-1.5 text-2xs", TAG_TEXT)
   return onClick ? (
     <button
       type="button"
@@ -171,7 +226,7 @@ function Asker({ id }: { id: string | null }) {
   if (!id) return <span>vos</span>
   if (!s) return <span>una sesión</span>
   return (
-    <Link href={`/p/${s.projectId}/s/${s.id}`} className="font-mono text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>
+    <Link href={`/p/${s.projectId}/s/${s.id}`} className="name text-foreground hover:underline" onClick={(e) => e.stopPropagation()}>
       {s.name}
     </Link>
   )
@@ -193,38 +248,48 @@ function TaskRow({
   groups,
   onTag,
   joined,
+  hidden,
+  onHide,
+  revealed,
 }: {
   task: UserTask
   groups: Map<string, TagGroup>
   onTag: (tag: string) => void
   joined: { tag: string; first: boolean; last: boolean } | null
+  hidden: boolean
+  onHide: (hidden: boolean) => void
+  revealed: boolean
 }) {
-  const [open, setOpen] = useState(task.blocking || task.cli !== null)
+  const [open, setOpen] = useState(task.blocking || task.cli !== null || revealed)
   const [note, setNote] = useState("")
   const [notify, setNotify] = useState(task.blocking)
-  const [busy, setBusy] = useState<null | "done" | "dismissed">(null)
   const overdue = task.due !== null && task.due < Date.now()
   const askers = [task.createdBy, ...task.alsoBy].filter(Boolean).length
   const target = useTaskTerminal(task)
+  useEffect(() => {
+    if (revealed) setOpen(true)
+  }, [revealed])
 
-  const close = async (status: "done" | "dismissed") => {
-    setBusy(status)
-    try {
-      await api.updateTask(task.id, { status, note: note.trim() || undefined, notify })
-      toast.success(status === "done" ? "Tarea hecha" : "Tarea descartada", {
-        description: notify && askers ? "Le avisé a la sesión que la pidió." : undefined,
-      })
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
-    }
-  }
+  // No pregunta: se esconde, y la sesión recién se entera (si corresponde) cuando vencen los 5 s del Deshacer.
+  const close = (status: "done" | "dismissed") =>
+    undoable({
+      message: status === "done" ? "Tarea hecha" : "Tarea cerrada: no hace falta",
+      failMessage: "No se pudo cerrar la tarea",
+      run: () =>
+        api.updateTask(task.id, { status, note: note.trim() || undefined, notify }).then(() => {
+          // Ya llegó cerrada (o llega enseguida por el WS): se suelta el escondite para cuando se reabra.
+          window.setTimeout(() => onHide(false), 1500)
+        }),
+      onHide: () => onHide(true),
+      onRestore: () => onHide(false),
+    })
 
   return (
     <li
-      className={cn("relative px-4 py-3", task.blocking && "bg-status-attention/5")}
+      hidden={hidden}
+      className={cn("relative px-4 py-3 sm:px-5", task.blocking && "bg-status-attention-lamp/8")}
       data-task-tag={joined?.tag}
+      data-task-id={task.id}
     >
       {joined && (
         <span
@@ -234,19 +299,22 @@ function TaskRow({
         />
       )}
       <div className="flex items-start gap-3">
+        {/* El check cierra al toque, pero con Deshacer: un clic de más no le avisa nada a nadie. */}
         <button
           type="button"
-          onClick={() => void close("done")}
-          disabled={busy !== null}
-          className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-md border hover:border-status-done hover:bg-status-done/10"
+          onClick={(e) => {
+            e.stopPropagation()
+            close("done")
+          }}
+          className="group/check mt-0.5 grid size-5 shrink-0 place-items-center rounded-md border outline-none hover:border-status-done-lamp hover:bg-status-done-lamp/14 focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Marcar hecha: ${task.title}`}
           title="Marcar hecha"
         >
-          {busy === "done" ? <Spinner className="size-3" /> : <Check className="size-3 opacity-0 hover:opacity-60" />}
+          <Check className="size-3 opacity-0 group-hover/check:opacity-60" />
         </button>
         {/* El título despliega la tarea; la línea de abajo también, salvo sus links y etiquetas. */}
         <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setOpen((v) => !v)}>
-          <button type="button" className="flex items-baseline gap-2 text-left" aria-expanded={open}>
+          <button type="button" className="flex items-baseline gap-2 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={open}>
             <PriorityBadge priority={task.priority} className="self-center" />
             <span className="font-medium">{task.title}</span>
           </button>
@@ -259,11 +327,11 @@ function TaskRow({
               })}
             {task.blocking && (
               <span className="inline-flex items-center gap-1 font-medium text-status-attention">
-                <Hourglass className="size-3" /> te está esperando
+                <Hourglass className="size-3" /> te espera
               </span>
             )}
             {task.due && (
-              <span className={cn("inline-flex items-center gap-1", overdue && "font-medium text-status-error")}>
+              <span className={cn("inline-flex items-center gap-1", overdue && "font-medium text-status-error")} title={new Date(task.due).toLocaleString("es-AR")}>
                 <CalendarClock className="size-3" /> {overdue ? "venció " : "para el "}
                 {when(task.due)}
               </span>
@@ -294,30 +362,38 @@ function TaskRow({
               ) : (
                 <p className="text-sm text-muted-foreground">Nota: {task.note}</p>
               ))}
-            <TerminalTargetProvider value={target}>
-              <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
-                {task.steps.map((s, i) => (
-                  <li key={i}>
-                    <Markdown text={s} className="[&_p]:my-0" inlineCommands />
-                  </li>
-                ))}
-              </ol>
-            </TerminalTargetProvider>
+            {task.steps.length > 0 && (
+              <TerminalTargetProvider value={target}>
+                <ol className="list-decimal space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
+                  {task.steps.map((s, i) => (
+                    <li key={i}>
+                      <Markdown text={s} className="[&_p]:my-0" inlineCommands />
+                    </li>
+                  ))}
+                </ol>
+              </TerminalTargetProvider>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <PriorityInput task={task} />
-              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Nota para la sesión (opcional)" className="h-8 min-w-48 flex-1 text-sm" />
+              <Input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder={askers ? "Nota para la sesión (opcional)" : "Nota (opcional)"}
+                aria-label="Nota al cerrarla"
+                className="h-8 min-w-40 flex-1 text-sm"
+              />
               {askers > 0 && (
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} aria-label="Avisarle a la sesión" />
                   Avisarle a la sesión
                 </label>
               )}
-              <Button size="sm" onClick={() => void close("done")} disabled={busy !== null}>
-                {busy === "done" ? <Spinner /> : <Check />}
+              <Button size="sm" variant="outline" onClick={() => close("done")}>
+                <Check />
                 Hecha
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => void close("dismissed")} disabled={busy !== null}>
-                {busy === "dismissed" ? <Spinner /> : <X />}
+              <Button size="sm" variant="ghost" onClick={() => close("dismissed")}>
+                <X />
                 No hace falta
               </Button>
             </div>
@@ -336,22 +412,24 @@ function PriorityInput({ task }: { task: UserTask }) {
     const n = value.trim() === "" ? null : Math.max(1, Math.round(Number(value)))
     if (n !== null && !Number.isFinite(n)) return setValue(task.priority === null ? "" : String(task.priority))
     if (n === task.priority) return
-    void api.updateTask(task.id, { priority: n }).catch((err: Error) => toast.error(err.message))
+    void api.updateTask(task.id, { priority: n }).then(
+      () => toast.success(n === null ? "Prioridad quitada" : "Prioridad guardada"),
+      (err: Error) => toast.error("No se pudo guardar la prioridad", { description: err.message })
+    )
   }
   return (
     <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title="En qué orden hacerla: 1 va primero. Vacío: sin prioridad.">
       Prioridad
       <Input
-        type="number"
-        min={1}
         inputMode="numeric"
+        pattern="[0-9]*"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={save}
         onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
         placeholder="–"
         aria-label={`Prioridad de ${task.title}`}
-        className="h-8 w-14 text-center font-mono text-sm"
+        className="h-8 w-14 text-center text-sm"
       />
     </label>
   )
@@ -386,7 +464,7 @@ function TaskCliLogin({ task }: { task: UserTask }) {
     try {
       setJob(await api.taskCliLogin(task.id))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo ${verb.toLowerCase()} ${task.cli!.id}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setStarting(false)
     }
@@ -401,12 +479,28 @@ function TaskCliLogin({ task }: { task: UserTask }) {
     )
   }
   if (!cli || !cli.installed) {
-    return <p className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">{cli ? `${cli.name} no está instalado: instalalo en Herramientas → CLIs.` : `No conozco el CLI ${name}.`}</p>
+    return (
+      <p className="rounded-xl bg-muted px-3 py-2 text-sm text-muted-foreground">
+        {cli ? (
+          <>
+            {cli.name} no está instalado. Instalalo en{" "}
+            <Link href="/tools?tab=clis" className="font-medium text-foreground underline-offset-2 hover:underline">
+              Herramientas → CLIs
+            </Link>
+            .
+          </>
+        ) : (
+          <>
+            El CLI <span className="font-mono">{name}</span> no está en el catálogo de Herramientas.
+          </>
+        )}
+      </p>
+    )
   }
   const state = credential?.state ?? "unknown"
   const verb = state === "logged_out" || state === "unknown" ? "Loguear" : "Reautenticar"
   return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2" data-task-cli={name}>
+    <div className="rounded-xl bg-muted px-3 py-2" data-task-cli={name}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span className="font-medium">{cli.name}</span>
         {credential?.label && <span className="text-muted-foreground">{credential.label}</span>}
@@ -434,14 +528,20 @@ function TaskCliLogin({ task }: { task: UserTask }) {
 
 function ClosedRow({ task }: { task: UserTask }) {
   const action = useAction()
-  const reopen = () => action.run("reopen", () => api.updateTask(task.id, { status: "open" }).catch((err: Error) => toast.error(err.message)))
+  const reopen = () =>
+    action.run("reopen", () =>
+      api.updateTask(task.id, { status: "open" }).then(
+        () => toast.success("Tarea reabierta", { description: task.title }),
+        (err: Error) => toast.error("No se pudo reabrir la tarea", { description: err.message })
+      )
+    )
   return (
-    <li className="flex items-start gap-3 px-4 py-2 text-sm">
+    <li className="flex items-start gap-3 px-4 py-2 text-sm sm:px-5" data-task-id={task.id}>
       {task.status === "done" ? <Check className="mt-0.5 size-4 shrink-0 text-status-done" /> : <X className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
       <span className="min-w-0 flex-1">
         <span className="text-muted-foreground line-through decoration-muted-foreground/40">{task.title}</span>
         <span className="block text-xs text-muted-foreground">
-          {task.status === "done" ? "hecha" : "descartada"} por {task.closedBy === "user" ? "vos" : <Asker id={task.closedBy} />}
+          {task.status === "done" ? "hecha" : "cerrada (no hacía falta)"} por {task.closedBy === "user" ? "vos" : <Asker id={task.closedBy} />}
           {task.closedAt ? ` · ${timeAgo(task.closedAt)}` : ""}
           {task.note ? ` · ${task.note}` : ""}
         </span>
@@ -457,37 +557,73 @@ function ClosedRow({ task }: { task: UserTask }) {
 function NewTask({ projectId, onDone }: { projectId: string; onDone: () => void }) {
   const [title, setTitle] = useState("")
   const [steps, setSteps] = useState("")
+  const [priority, setPriority] = useState("")
+  const [tags, setTags] = useState("")
   const [saving, setSaving] = useState(false)
   const save = async () => {
     setSaving(true)
     try {
-      await api.createTask(projectId, { title, steps: steps.split("\n").map((s) => s.replace(/^\s*(\d+[.)]|[-*])\s*/, "")).filter((s) => s.trim()) })
-      toast.success("Tarea creada")
+      const n = Number(priority)
+      await api.createTask(projectId, {
+        title,
+        steps: steps.split("\n").map((s) => s.replace(/^\s*(\d+[.)]|[-*])\s*/, "")).filter((s) => s.trim()),
+        priority: priority.trim() && Number.isFinite(n) ? Math.max(1, Math.round(n)) : null,
+        tags: tags.split(/[,\s]+/).filter(Boolean),
+      })
+      toast.success("Tarea creada", { description: title.trim() })
       onDone()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo crear la tarea", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setSaving(false)
     }
   }
   return (
     <form
-      className="mt-3 space-y-2 rounded-xl border p-3"
+      className="mt-3 space-y-2 rounded-xl bg-muted/50 p-3"
       onSubmit={(e) => {
         e.preventDefault()
         void save()
       }}
     >
       <Input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Qué hay que hacer" aria-label="Título de la tarea" autoFocus />
-      <Textarea id="task-steps" value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={"Un paso por línea"} aria-label="Pasos de la tarea, uno por línea" className="min-h-20 text-sm" />
-      <div className="flex justify-end gap-2">
-        <Button type="button" size="sm" variant="ghost" onClick={onDone}>
-          Cancelar
-        </Button>
-        <Button type="submit" size="sm" disabled={saving || !title.trim() || !steps.trim()}>
-          {saving && <Spinner />}
-          Crear
-        </Button>
+      <Textarea
+        id="task-steps"
+        value={steps}
+        onChange={(e) => setSteps(e.target.value)}
+        placeholder="Pasos, uno por línea (opcional)"
+        aria-label="Pasos de la tarea, uno por línea (opcional)"
+        className="min-h-16 text-sm"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title="En qué orden hacerla: 1 va primero. Vacío: sin prioridad.">
+          Prioridad
+          <Input
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={priority}
+            onChange={(e) => setPriority(e.target.value)}
+            placeholder="–"
+            aria-label="Prioridad de la tarea nueva"
+            className="h-8 w-14 text-center text-sm"
+          />
+        </label>
+        <Input
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+          placeholder="Etiquetas para agruparla con otras (opcional)"
+          aria-label="Etiquetas, separadas por coma"
+          className="h-8 min-w-48 flex-1 text-sm"
+        />
+        <div className="ml-auto flex gap-2">
+          <Button type="button" size="sm" variant="ghost" onClick={onDone}>
+            Cancelar
+          </Button>
+          <Button type="submit" size="sm" disabled={saving || !title.trim()}>
+            {saving && <Spinner />}
+            Crear tarea
+          </Button>
+        </div>
       </div>
     </form>
   )
