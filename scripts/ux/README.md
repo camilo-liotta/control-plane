@@ -18,6 +18,25 @@ Todo vive en **`~/.cache/cp-ux`** (o en `CP_UX_HOME`), nunca en `/tmp`:
 
 Los datos son inventados: no sumes nombres, emails ni rutas reales, que el repo es público.
 
+## Vista previa (para ver la web entera antes de una versión)
+
+Un solo comando, desde cualquier checkout del repo:
+
+```bash
+node scripts/ux/ux.mjs preview
+```
+
+- Trae `origin/main`, lo compila en un checkout propio (`~/.cache/cp-ux/preview/src`) y lo levanta con datos inventados en **http://127.0.0.1:4729**. No compila el `web/dist` del checkout donde lo corrés, que puede ser el que sirve tu dashboard.
+- Tiene sus propios datos, HOME y PATH en `~/.cache/cp-ux/preview`: no toca el :4700, `~/.control-plane` ni `~/.claude`, ni el sembrado del :4720 de las capturas.
+- Cada vez arranca con los datos de cero. `--keep` conserva lo que tocaste la última vez; `--port <n>` usa otro puerto.
+- Enviar, interrumpir, la terminal y las apps de ejemplo andan contra el Claude falso. Lo que abriría algo en tu escritorio (el editor, el navegador) está escondido del PATH: falla con un aviso y no abre nada.
+
+Para apagarla (por pid):
+
+```bash
+node scripts/ux/ux.mjs preview stop
+```
+
 ## Levantarlo
 
 ```bash

@@ -12,5 +12,6 @@ export const REPOS = path.join(CACHE, "repos") // repos de mentira de los proyec
 export const PIDS = path.join(CACHE, "pids")
 export const LOGS = path.join(CACHE, "logs")
 export const FAKE_CLAUDE = path.join(CACHE, "claude.mjs")
-export const SERVER_PORT = 4720
+// El puerto del server sembrado. La vista previa (ux.mjs preview) usa otro, con sus propios datos.
+export const SERVER_PORT = Number(process.env.CP_UX_PORT ?? 4720)
 export const CDP_PORT = 9340

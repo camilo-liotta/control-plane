@@ -4,6 +4,7 @@
 import { execFileSync, spawn } from "node:child_process"
 import fs from "node:fs"
 import net from "node:net"
+import os from "node:os"
 import path from "node:path"
 
 import { BIN, CACHE, CDP_PORT, FAKE_CLAUDE, FAKE_HOME, LOGS, PIDS, REPO, REPOS, SERVER_PORT, SRV } from "./paths.mjs"
@@ -38,6 +39,8 @@ function prepareBin() {
   const catalog = fs.readFileSync(path.join(REPO, "server/src/clis.ts"), "utf8")
   const hidden = new Set([...catalog.matchAll(/bins:\s*\[([^\]]*)\]/g)].flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1])))
   hidden.add("claude")
+  // La vista previa esconde además lo que abriría algo en el escritorio de verdad (el editor, el navegador).
+  for (const b of (process.env.CP_UX_HIDE ?? "").split(",").filter(Boolean)) hidden.add(b)
   for (const dir of ["/usr/local/bin", "/usr/bin", "/bin", "/usr/local/sbin", "/usr/sbin", "/sbin"]) {
     let names = []
     try { names = fs.readdirSync(dir) } catch { continue }
@@ -125,6 +128,67 @@ function status() {
   console.log(`datos: ${CACHE}`)
 }
 
+/**
+ * La vista previa para el usuario: la web y el server de origin/main, con datos inventados, en el
+ * :4729 (o --port). Todo aparte del banco y del dashboard de verdad:
+ * - el código es un checkout propio de origin/main en ~/.cache/cp-ux/preview/src (no compila el
+ *   web/dist de este checkout, que puede ser el que sirve el dashboard del :4700);
+ * - los datos, el HOME, el PATH y el Claude falso viven en ~/.cache/cp-ux/preview (nunca
+ *   ~/.control-plane ni ~/.claude), con su propio server sembrado: lo que se toque ahí no cambia el
+ *   sembrado del :4720 que usan las capturas.
+ * `preview stop` lo apaga (por pid). `preview --keep` no vuelve a sembrar si ya hay datos.
+ */
+async function preview() {
+  const home = path.join(os.homedir(), ".cache", "cp-ux", "preview")
+  const port = Number(opt("port", 4729))
+  const sub = (argv, extra = {}) =>
+    execFileSync(process.execPath, [path.join(REPO, "scripts/ux/ux.mjs"), ...argv], {
+      stdio: "inherit",
+      env: { ...process.env, CP_UX_HOME: home, CP_UX_PORT: String(port), CP_UX_HIDE: "code,cursor,codium,xdg-open,gio,open,gnome-open,kde-open", ...extra },
+    })
+  const src = path.join(home, "src")
+  if (args[0] === "stop") {
+    if (!fs.existsSync(src)) return console.log("La vista previa no está levantada")
+    sub(["stop", "server"])
+    for (let i = 0; i < 40 && (await portBusy(port)); i++) await new Promise((r) => setTimeout(r, 250))
+    return console.log((await portBusy(port)) ? `El :${port} sigue ocupado: mirá con ss -ltnp qué lo usa` : "Vista previa apagada")
+  }
+  if (await portBusy(port)) throw new Error(`El :${port} está ocupado. Si es la vista previa, apagala antes: node scripts/ux/ux.mjs preview stop`)
+  if ([4700, SERVER_PORT].includes(port)) throw new Error(`El :${port} no se usa para la vista previa`)
+
+  // El código: origin/main en un checkout aparte, al día.
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm"
+  const env = { ...process.env }
+  delete env.NODE_ENV // con NODE_ENV=production, npm no instala las devDependencies (vite, tsc)
+  const git = (...a) => execFileSync("git", a, { cwd: REPO, stdio: ["ignore", "pipe", "inherit"] }).toString().trim()
+  console.log("Trayendo origin/main…")
+  git("fetch", "-q", "origin", "main")
+  if (!fs.existsSync(path.join(src, ".git"))) {
+    fs.mkdirSync(home, { recursive: true })
+    git("worktree", "add", "-q", "--detach", src, "origin/main")
+  } else execFileSync("git", ["checkout", "-q", "--detach", "origin/main"], { cwd: src, stdio: "inherit" })
+  console.log(`Código: ${execFileSync("git", ["log", "--oneline", "-1"], { cwd: src }).toString().trim()}`)
+  const lock = fs.readFileSync(path.join(src, "package-lock.json"), "utf8")
+  const stamp = path.join(home, "lock.json")
+  if (!fs.existsSync(path.join(src, "node_modules")) || !fs.existsSync(stamp) || fs.readFileSync(stamp, "utf8") !== lock) {
+    console.log("Instalando dependencias (la primera vez tarda un poco)…")
+    execFileSync(npm, ["ci", "--no-audit", "--no-fund"], { cwd: src, env, stdio: ["ignore", "ignore", "inherit"] })
+    fs.writeFileSync(stamp, lock)
+  }
+  console.log("Compilando la web…")
+  execFileSync(npm, ["run", "build", "-w", "web"], { cwd: src, env, stdio: ["ignore", "ignore", "inherit"] })
+
+  // El server, con datos inventados y de cero (salvo --keep).
+  const seeded = fs.existsSync(path.join(home, "srv", "control-plane.db"))
+  sub(["server", "--from", src, ...(has("keep") && seeded ? [] : ["--reset"])])
+  if (!(has("keep") && seeded)) {
+    console.log("Sembrando los datos de ejemplo (≈ 30 s)…")
+    sub(["seed"])
+  }
+  console.log(`\nVista previa: http://127.0.0.1:${port}`)
+  console.log("Para apagarla: node scripts/ux/ux.mjs preview stop")
+}
+
 const run = {
   server,
   seed: () => import("./seed.mjs"),
@@ -134,9 +198,10 @@ const run = {
   webkit: () => execFileSync("bash", [path.join(REPO, "scripts/ux/webkit/run.sh"), ...args], { stdio: "inherit" }),
   stop: () => stop(args[0]),
   status,
+  preview,
 }[cmd]
 if (!run) {
-  console.log("Uso: node scripts/ux/ux.mjs <server [--from <checkout>] [--reset] | seed | proxy <puerto> [dist] | browser | shots … | webkit … | status | stop [nombre|all]>")
+  console.log("Uso: node scripts/ux/ux.mjs <server [--from <checkout>] [--reset] | seed | proxy <puerto> [dist] | browser | shots … | webkit … | status | stop [nombre|all] | preview [stop] [--port 4729] [--keep]>")
   process.exit(cmd ? 1 : 0)
 }
 try {
