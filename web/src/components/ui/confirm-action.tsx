@@ -13,6 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
+import { failed, reason } from "@/lib/errors"
 
 /**
  * Confirmar algo que no se puede deshacer (borrar un proyecto, quitar una cuenta, detener todas las
@@ -97,9 +98,8 @@ export function ConfirmAction({
               try {
                 await onConfirm()
               } catch (err) {
-                toast.error(failMessage ?? `No se pudo ${confirmLabel.charAt(0).toLowerCase()}${confirmLabel.slice(1)}`, {
-                  description: err instanceof Error ? err.message : String(err),
-                })
+                if (failMessage) toast.error(failMessage, { description: reason(err) })
+                else failed(`${confirmLabel.charAt(0).toLowerCase()}${confirmLabel.slice(1)}`)(err)
                 throw err
               }
             }}
