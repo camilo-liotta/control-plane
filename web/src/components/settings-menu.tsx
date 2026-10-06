@@ -21,9 +21,9 @@ export function SettingsMenu() {
   const apply = async (patch: { kind?: EditorKind; command?: string }) => {
     try {
       await save(patch)
-      if (patch.command !== undefined) toast.success("Guardé el comando del editor")
+      if (patch.command !== undefined) toast.success("Comando del editor guardado")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo guardar el editor", { description: err instanceof Error ? err.message : String(err) })
     }
   }
 
@@ -32,14 +32,14 @@ export function SettingsMenu() {
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" aria-label="Ajustes">
+            <button type="button" className="rounded-md p-1.5 text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring" aria-label="Ajustes">
               <Settings className="size-4" />
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent>Ajustes</TooltipContent>
       </Tooltip>
-      <PopoverContent side="top" align="start" className="w-96 gap-3 p-3.5">
+      <PopoverContent side="top" align="start" className="w-96 max-w-[calc(100vw-1.5rem)] gap-3 p-3.5">
         <div>
           <p className="text-sm font-medium">Ajustes</p>
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">Valen para todo el dashboard y se guardan en esta máquina.</p>
@@ -48,7 +48,7 @@ export function SettingsMenu() {
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
               Editor
-              <span className="block text-[0.7rem] text-muted-foreground">Para "Cambios", "Abrir en el editor" y las rutas a archivos</span>
+              <span className="block text-2xs text-muted-foreground">Para "Cambios", "Abrir en el editor" y las rutas a archivos</span>
             </span>
             <Select
               value={settings?.kind ?? "code"}
@@ -58,7 +58,7 @@ export function SettingsMenu() {
                 else useEditorStore.setState({ settings: { kind: "custom", command: "" } })
               }}
             >
-              <SelectTrigger size="sm" className="w-40 text-xs">
+              <SelectTrigger size="sm" className="w-36 text-xs sm:w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -88,7 +88,7 @@ export function SettingsMenu() {
                   Guardar
                 </Button>
               </div>
-              <p className="text-[0.7rem] leading-snug text-muted-foreground">
+              <p className="text-2xs leading-snug text-muted-foreground">
                 Se corre sin shell. <code>{"{file}"}</code> es el archivo, <code>{"{base}"}</code> la versión anterior (para el diff) y{" "}
                 <code>{"{dir}"}</code> la carpeta de la sesión y <code>{"{line}"}</code> la línea (al abrir una ruta que nombra una sesión; si
                 no tiene, 1). Sin <code>{"{file}"}</code>, el archivo va al final. Al abrir un

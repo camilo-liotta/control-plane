@@ -8,11 +8,14 @@ import { TonePill } from "@/components/status"
 import { Markdown } from "@/components/timeline/markdown"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { LoadError } from "@/components/ui/load-error"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api, type AiSearchResult } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
+import { undoable } from "@/lib/undo"
 import { cn } from "@/lib/utils"
 
 const WHERE = { user: "tu cuenta", project: "este proyecto" }
@@ -28,7 +31,7 @@ function InstallButtons({ skill, view, onInstalled }: { skill: CatalogSkill; vie
       toast.success(`${skill.name} instalada en ${WHERE[scope]}`, { description: "Las sesiones abiertas la cargan al instante." })
       onInstalled()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo instalar ${skill.name}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(null)
     }
@@ -51,20 +54,21 @@ function InstallButtons({ skill, view, onInstalled }: { skill: CatalogSkill; vie
 
 function PreviewSheet({ skill, view, onClose, onInstalled }: { skill: CatalogSkill | null; view: ToolsView; onClose: () => void; onInstalled: () => void }) {
   const [data, setData] = useState<{ content: string; files: string[] } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     setData(null)
     setError(null)
     if (!skill) return
-    api.previewMarketSkill(view.accountId, skill.id).then(setData, (err: Error) => setError(err.message))
-  }, [skill?.id, view.accountId])
+    api.previewMarketSkill(view.accountId, skill.id).then(setData, setError)
+  }, [skill?.id, view.accountId, attempt])
   const body = data?.content.replace(/^---\n[\s\S]*?\n---\n?/, "") ?? ""
   const scripts = (data?.files ?? []).filter((f) => /\.(sh|py|js|mjs|ts|rb|pl|ps1|bat)$/i.test(f))
   return (
     <Sheet open={Boolean(skill)} onOpenChange={(v) => !v && onClose()}>
       <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         <SheetHeader className="border-b">
-          <SheetTitle className="font-mono">{skill?.name}</SheetTitle>
+          <SheetTitle className="name">{skill?.name}</SheetTitle>
           <SheetDescription>
             {skill?.description}
             <span className="mt-1 block text-xs">
@@ -74,20 +78,20 @@ function PreviewSheet({ skill, view, onClose, onInstalled }: { skill: CatalogSki
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {error && <p className="text-sm text-status-error">{error}</p>}
+          {Boolean(error) && <LoadError what="la skill" error={error} onRetry={() => setAttempt((n) => n + 1)} />}
           {!data && !error && <Skeleton className="h-40 w-full" />}
           {data && (
             <div className="space-y-4">
               {scripts.length > 0 && (
-                <p className="rounded-md border border-status-attention/40 bg-status-attention/10 px-3 py-2 text-xs leading-snug">
+                <p className="rounded-xl bg-muted px-3 py-2 text-xs leading-snug">
                   Trae {scripts.length === 1 ? "un script" : `${scripts.length} scripts`} ({scripts.slice(0, 4).join(", ")}
                   {scripts.length > 4 ? "…" : ""}) que Claude puede ejecutar. Instalala solo si confiás en la fuente.
                 </p>
               )}
               <Markdown text={body || "_(vacía)_"} />
               <div>
-                <p className="eyebrow mb-1">Archivos ({data.files.length})</p>
-                <p className="font-mono text-[0.7rem] break-all text-muted-foreground">{data.files.join(" · ")}</p>
+                <p className="eyebrow mb-1">Archivos · {data.files.length}</p>
+                <p className="font-mono text-2xs break-all text-muted-foreground">{data.files.join(" · ")}</p>
               </div>
             </div>
           )}
@@ -115,7 +119,7 @@ export function AiSkillSearch({ view, onChanged, onOpenSkill }: { view: ToolsVie
     try {
       setResult(await api.aiSearchSkills(view.accountId, query, view.projectId))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo buscar", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(false)
     }
@@ -131,14 +135,14 @@ export function AiSkillSearch({ view, onChanged, onOpenSkill }: { view: ToolsVie
         onChanged()
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo instalar ${name}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setInstalling(null)
     }
   }
 
   return (
-    <section className="rounded-xl border bg-card p-4">
+    <section className="surface-card p-4">
       <div className="mb-2 flex items-center gap-2">
         <Sparkles className="size-4 text-claude" />
         <h3 className="text-sm font-medium">Buscar con IA</h3>
@@ -157,19 +161,19 @@ export function AiSkillSearch({ view, onChanged, onOpenSkill }: { view: ToolsVie
           Buscar
         </Button>
       </form>
-      <p className="mt-1.5 text-[0.7rem] text-muted-foreground">Usa tu plan: es una consulta a Claude con el catálogo.</p>
+      <p className="mt-1.5 text-2xs text-muted-foreground">Usa tu plan: es una consulta a Claude con el catálogo.</p>
       {result && (
         <div className="mt-3 space-y-2">
           {result.note && <p className="text-xs text-muted-foreground">{result.note}</p>}
           {!result.results.length && <p className="text-sm text-muted-foreground">No encontró nada que sirva para eso.</p>}
-          <ul className="divide-y rounded-lg border">
+          <ul className="divide-y rounded-xl bg-muted/50">
             {result.results.map((r, i) => (
               <li key={i} className="flex items-start gap-3 px-3 py-2.5">
                 <div className="min-w-0 flex-1">
                   {r.kind === "skill" ? (
-                    <button type="button" onClick={() => onOpenSkill(r.skill)} className="text-left">
-                      <span className="font-mono text-sm hover:underline">{r.skill.name}</span>
-                      <span className="ml-2 text-[0.7rem] text-muted-foreground">
+                    <button type="button" onClick={() => onOpenSkill(r.skill)} className="rounded-md text-left outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className="name text-sm hover:underline">{r.skill.name}</span>
+                      <span className="ml-2 text-2xs text-muted-foreground">
                         skill · {r.skill.sourceName}
                         {r.skill.plugin ? ` · plugin ${r.skill.plugin}` : ""}
                       </span>
@@ -177,12 +181,12 @@ export function AiSkillSearch({ view, onChanged, onOpenSkill }: { view: ToolsVie
                   ) : r.kind === "plugin" ? (
                     <p>
                       <span className="text-sm font-medium">{r.plugin.name}</span>
-                      <span className="ml-2 text-[0.7rem] text-muted-foreground">plugin · {r.plugin.marketplace}</span>
+                      <span className="ml-2 text-2xs text-muted-foreground">plugin · {r.plugin.marketplace}</span>
                     </p>
                   ) : (
                     <p>
-                      <span className="font-mono text-sm">{r.installed.name}</span>
-                      <span className="ml-2 text-[0.7rem] text-muted-foreground">ya la tenés en {WHERE[r.installed.scope]}</span>
+                      <span className="name text-sm">{r.installed.name}</span>
+                      <span className="ml-2 text-2xs text-muted-foreground">ya la tenés en {WHERE[r.installed.scope]}</span>
                     </p>
                   )}
                   <p className="text-xs text-foreground/80">{r.why}</p>
@@ -216,7 +220,8 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
 }) {
   const [open, setOpen] = useState(false)
   const [data, setData] = useState<SkillMarketView | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
   const [source, setSource] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
   const [q, setQ] = useState("")
@@ -227,7 +232,7 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
         setData(d)
         setError(null)
       },
-      (err: Error) => setError(err.message)
+      (err: unknown) => setError(err)
     )
   useEffect(() => {
     if (open) void load()
@@ -241,7 +246,7 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
       toast.success(ok)
       await load()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo hacer el cambio", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(null)
     }
@@ -254,39 +259,86 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
 
   return (
     <section>
-      <button type="button" onClick={() => setOpen((v) => !v)} className="mb-2 flex items-center gap-2 text-muted-foreground hover:text-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="mb-2 flex items-center gap-2 rounded-md text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
         <Store className="size-3.5" />
-        <span className="eyebrow text-current">Marketplaces de skills</span>
-        {data && <span className="font-mono text-xs">{data.skills.length}</span>}
+        <span className="eyebrow text-current">
+          Marketplaces de skills {data && <span className="font-normal">· {data.skills.length}</span>}
+        </span>
       </button>
       {open && (
         <div className="space-y-4">
-          {error && <p className="text-sm text-status-error">{error}</p>}
+          {Boolean(error) && !data && <LoadError what="los marketplaces de skills" error={error} onRetry={load} />}
           {!data && !error && <Skeleton className="h-24 w-full" />}
           {data && (
             <>
-              <ul className="divide-y rounded-xl border bg-card">
-                {data.sources.map((s) => (
+              <ul className="surface-card divide-y overflow-hidden">
+                {data.sources.filter((s) => !hidden.has(s.id)).map((s) => (
                   <li key={s.id} className="flex items-center gap-3 px-4 py-2">
                     <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">
-                        {s.name} <span className="font-mono text-xs font-normal text-muted-foreground">{s.skills} skills</span>
+                      <span className="flex min-w-0 items-baseline gap-2 text-sm font-medium">
+                        <span className="truncate" title={s.name}>{s.name}</span>
+                        <span className="shrink-0 text-xs font-normal text-muted-foreground">{s.skills} skills</span>
                       </span>
-                      <span className="block truncate font-mono text-[0.7rem] text-muted-foreground">
+                      <span className="block truncate font-mono text-2xs text-muted-foreground" title={s.url ?? s.path ?? undefined}>
                         {s.kind === "plugin-marketplace" ? "marketplace de plugins (se administra en Plugins)" : (s.url ?? s.path)}
                         {s.updatedAt ? ` · actualizada ${timeAgo(s.updatedAt)}` : ""}
                       </span>
                     </span>
                     {s.removable && (
                       <>
-                        <Button size="icon-xs" variant="ghost" title="Actualizar" disabled={busy !== null} onClick={() => act(`u:${s.id}`, () => api.updateSkillSource(view.accountId, s.id), `${s.name} actualizada`)}>
-                          {busy === `u:${s.id}` ? <Spinner /> : <RefreshCw />}
-                        </Button>
-                        <Button size="icon-xs" variant="ghost" title="Quitar" className="text-muted-foreground" disabled={busy !== null} onClick={() => act(`r:${s.id}`, () => api.removeSkillSource(view.accountId, s.id), `${s.name} quitada`)}>
-                          <Trash2 />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label={`Actualizar ${s.name}`}
+                              disabled={busy !== null}
+                              onClick={() => act(`u:${s.id}`, () => api.updateSkillSource(view.accountId, s.id), `${s.name} actualizada`)}
+                            >
+                              {busy === `u:${s.id}` ? <Spinner /> : <RefreshCw />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Actualizar</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label={`Quitar ${s.name}`}
+                              className="text-muted-foreground"
+                              disabled={busy !== null}
+                              onClick={() =>
+                                // Se puede deshacer: la fuente desaparece ya y se quita de verdad a los 5 s.
+                                undoable({
+                                  message: `Fuente ${s.name} quitada`,
+                                  failMessage: `No se pudo quitar ${s.name}`,
+                                  onHide: () => setHidden((h) => new Set(h).add(s.id)),
+                                  onRestore: () =>
+                                    setHidden((h) => {
+                                      const next = new Set(h)
+                                      next.delete(s.id)
+                                      return next
+                                    }),
+                                  run: async () => {
+                                    await api.removeSkillSource(view.accountId, s.id)
+                                    await load()
+                                  },
+                                })
+                              }
+                            >
+                              <Trash2 />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Quitar</TooltipContent>
+                        </Tooltip>
                       </>
                     )}
                   </li>
@@ -301,12 +353,12 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
                       type="button"
                       disabled={busy !== null}
                       onClick={() => act(`a:${s.url}`, () => api.addSkillSource(view.accountId, s.url), `${s.name} agregada`)}
-                      className="flex items-start gap-2 rounded-lg border bg-background px-3 py-2 text-left text-xs hover:bg-muted disabled:opacity-60"
+                      className="surface-card flex max-w-full items-start gap-2 px-3 py-2 text-left text-xs outline-hidden transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                     >
                       {busy === `a:${s.url}` ? <Spinner className="mt-0.5 size-3.5" /> : <Plus className="mt-0.5 size-3.5" />}
-                      <span>
-                        <span className="block font-medium">
-                          {s.name} <span className="font-mono font-normal text-muted-foreground">{s.url}</span>
+                      <span className="min-w-0">
+                        <span className="flex min-w-0 items-baseline gap-1.5 font-medium">
+                          {s.name} <span className="truncate font-mono font-normal text-muted-foreground" title={s.url}>{s.url}</span>
                         </span>
                         <span className="block text-muted-foreground">{s.description}</span>
                       </span>
@@ -321,25 +373,35 @@ export function SkillMarketplaces({ view, onChanged, openSkill, setOpenSkill }: 
                   if (source.trim()) void act("add", () => api.addSkillSource(view.accountId, source), "Fuente agregada").then(() => setSource(""))
                 }}
               >
-                <Input value={source} onChange={(e) => setSource(e.target.value)} placeholder="usuario/repo de GitHub, URL https o carpeta local" className="font-mono text-xs" />
+                <Input
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  placeholder="usuario/repo de GitHub, URL https o carpeta local"
+                  aria-label="Fuente de skills para agregar"
+                  className="font-mono text-xs"
+                />
                 <Button type="submit" size="sm" variant="outline" disabled={busy !== null || !source.trim()}>
                   {busy === "add" ? <Spinner /> : <Plus />}
                   Agregar fuente
                 </Button>
               </form>
-              <p className="text-[0.7rem] text-muted-foreground">Los repos se clonan en ~/.control-plane/skill-sources. Instalar una skill copia su carpeta: no se actualiza sola.</p>
+              <p className="text-2xs text-muted-foreground">Los repos se clonan en ~/.control-plane/skill-sources. Instalar una skill copia su carpeta: no se actualiza sola.</p>
               {data.skills.length > 0 && (
                 <div>
                   <div className="relative mb-2">
                     <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filtrar por nombre o descripción…" className="pl-8" />
                   </div>
-                  <ul className="divide-y rounded-xl border bg-card">
+                  <ul className="surface-card divide-y overflow-hidden">
                     {shown.map((s) => (
                       <li key={s.id} className="flex items-start gap-3 px-4 py-2.5">
-                        <button type="button" onClick={() => setOpenSkill(s)} className="min-w-0 flex-1 text-left">
-                          <span className="font-mono text-sm hover:underline">{s.name}</span>
-                          <span className="ml-2 text-[0.7rem] text-muted-foreground">
+                        <button
+                          type="button"
+                          onClick={() => setOpenSkill(s)}
+                          className="min-w-0 flex-1 rounded-md text-left outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <span className="name text-sm hover:underline">{s.name}</span>
+                          <span className="ml-2 text-2xs text-muted-foreground">
                             {s.sourceName}
                             {s.plugin ? ` · plugin ${s.plugin}` : ""}
                           </span>

@@ -28,7 +28,7 @@ export const STATE: Record<CliCredential["state"], { label: string; tone: Tone }
 export function copy(text: string) {
   void navigator.clipboard.writeText(text).then(
     () => toast.success("Copiado"),
-    () => toast.error("No pude copiar")
+    () => toast.error("No se pudo copiar")
   )
 }
 
@@ -106,7 +106,7 @@ export function TerminalLoginButton({ command, className }: { command: string; c
   return (
     <button
       type="button"
-      className={cn("inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 font-mono text-[0.7rem] hover:bg-muted/70", className)}
+      className={cn("inline-flex max-w-full min-w-0 items-center gap-1 truncate rounded-md bg-muted px-2 py-0.5 font-mono text-2xs outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring", className)}
       title="El login pide pegar una credencial: corrélo en una terminal"
       onClick={() => copy(command)}
     >
@@ -126,7 +126,7 @@ export function JobPanel({ job }: { job: CliJob }) {
       await api.cliAnswer(job.id, answer)
       setAnswer("")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo mandar la respuesta", { description: err instanceof Error ? err.message : String(err) })
     }
   }
   const head = running
@@ -139,18 +139,25 @@ export function JobPanel({ job }: { job: CliJob }) {
         : "Instalado"
       : `Terminó con error${job.exitCode !== null ? ` (código ${job.exitCode})` : ""}`
   return (
-    <div className={cn("mt-3 rounded-lg border p-3 text-sm", running ? "border-claude/40 bg-claude/5" : job.status === "failed" ? "border-status-error/30" : "")}>
-      <div className="flex items-center gap-2">
+    <div className="mt-3 rounded-xl bg-muted/60 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
         {running ? <Spinner className="size-3.5" /> : job.status === "done" ? <Check className="size-3.5 text-status-done" /> : <TerminalSquare className="size-3.5 text-status-error" />}
-        <span className="font-medium">{head}</span>
-        <code className="min-w-0 truncate font-mono text-[0.7rem] text-muted-foreground">{job.command}</code>
+        <span className={cn("font-medium", job.status === "failed" && "text-status-error")}>{head}</span>
+        <code className="min-w-0 flex-1 truncate font-mono text-2xs text-muted-foreground" title={job.command}>
+          {job.command}
+        </code>
         {running ? (
-          <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => void api.cliCancel(job.id)}>
+          <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => api.cliCancel(job.id).catch((err: unknown) => toast.error("No se pudo cancelar", { description: err instanceof Error ? err.message : String(err) }))}>
             <Square />
             Cancelar
           </Button>
         ) : (
-          <button type="button" className="ml-auto text-xs text-muted-foreground hover:text-foreground" onClick={() => setOpen((v) => !v)}>
+          <button
+            type="button"
+            aria-expanded={open}
+            className="rounded-md text-xs text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setOpen((v) => !v)}
+          >
             {open ? "Ocultar" : "Ver salida"}
           </button>
         )}
@@ -158,7 +165,7 @@ export function JobPanel({ job }: { job: CliJob }) {
       {running && job.code && (
         <div className="mt-2 flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Código:</span>
-          <code className="rounded bg-muted px-2 py-0.5 font-mono text-base font-semibold tracking-widest">{job.code}</code>
+          <code className="rounded-md bg-background px-2 py-0.5 font-mono text-base font-semibold tracking-widest">{job.code}</code>
           <Button size="xs" variant="outline" onClick={() => copy(job.code!)}>
             <Copy />
             Copiar
@@ -176,7 +183,7 @@ export function JobPanel({ job }: { job: CliJob }) {
         </div>
       )}
       {open && job.output.trim() && (
-        <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-2 font-mono text-[0.7rem] whitespace-pre-wrap">{job.output.trim()}</pre>
+        <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-background p-2 font-mono text-2xs whitespace-pre-wrap">{job.output.trim()}</pre>
       )}
       {running && (
         <form
@@ -186,7 +193,7 @@ export function JobPanel({ job }: { job: CliJob }) {
             void send()
           }}
         >
-          <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Si pregunta algo (Y/n, una opción), contestale acá" className="h-8 text-xs" />
+          <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Si pregunta algo (Y/n, una opción), contestale acá" aria-label="Respuesta para el comando" className="h-8 text-xs" />
           <Button size="xs" variant="outline" type="submit">
             Enviar
           </Button>

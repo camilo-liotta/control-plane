@@ -7,6 +7,7 @@ import type { CliCredential, CliInfo, CliJob, CliView } from "@shared/types"
 import { copy, CredentialState, JobPanel, LoginButton, TerminalLoginButton } from "@/components/tools/cli-login"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
@@ -20,7 +21,7 @@ import { useStore } from "@/lib/store"
  */
 export function CliSection() {
   const [view, setView] = useState<CliView | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [q, setQ] = useState("")
   const tick = useStore((s) => s.clisTick)
@@ -31,7 +32,7 @@ export function CliSection() {
       setView(await api.clis(refresh))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(err)
     } finally {
       setRefreshing(false)
     }
@@ -63,14 +64,7 @@ export function CliSection() {
   }, [view, q])
   const pending = installed.filter((c) => c.credentials.some((k) => k.state === "expired" || k.state === "logged_out")).length
 
-  if (error) {
-    return (
-      <div className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-sm">
-        <p className="font-medium">No pude leer los CLIs</p>
-        <p className="text-muted-foreground">{error}</p>
-      </div>
-    )
-  }
+  if (error && !view) return <LoadError what="los CLIs" error={error} onRetry={() => load(true)} />
   if (!view) {
     return (
       <div className="space-y-3">
@@ -87,40 +81,49 @@ export function CliSection() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+      <div className="flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-3">
         <span className="min-w-0 flex-1">
-          Los CLIs de esta máquina: los usan todas las cuentas y todos los proyectos, y las sesiones los consultan con list_clis.
+          Los CLIs de esta máquina: los usan todas las cuentas y todos los proyectos, y las sesiones los consultan con{" "}
+          <code className="font-mono text-xs">list_clis</code>.
           {pending > 0 && <span className="text-status-attention"> {pending === 1 ? "Uno necesita" : `${pending} necesitan`} login.</span>}
         </span>
-        <span className="text-xs">revisado {timeAgo(view.at)}</span>
+        <span className="flex items-center gap-2">
+        <span className="text-xs">Revisado {timeAgo(view.at)}</span>
         <Button size="sm" variant="ghost" onClick={() => void load(true)} disabled={refreshing}>
           {refreshing ? <Spinner /> : <RefreshCw />}
           Volver a revisar
         </Button>
+        </span>
       </div>
 
       <section>
-        <h3 className="eyebrow mb-2">Instalados {installed.length}</h3>
-        <ul className="divide-y rounded-xl border bg-card">
+        <h3 className="eyebrow mb-2">
+          Instalados <span className="font-normal">· {installed.length}</span>
+        </h3>
+        <ul className="surface-card divide-y overflow-hidden">
           {installed.map((c) => (
             <InstalledCli key={c.id} cli={c} job={jobFor(c.id)} />
           ))}
-          {!installed.length && <li className="px-4 py-3 text-sm text-muted-foreground">No encontré ninguno del catálogo.</li>}
+          {!installed.length && <li className="px-4 py-3 text-sm text-muted-foreground">Ninguno del catálogo está instalado en esta máquina.</li>}
         </ul>
       </section>
 
       <section>
-        <h3 className="eyebrow mb-1">Usados por tus sesiones {view.used.length || ""}</h3>
+        <h3 className="eyebrow mb-1">
+          Usados por tus sesiones {view.used.length > 0 && <span className="font-normal">· {view.used.length}</span>}
+        </h3>
         <p className="mb-2 text-xs text-muted-foreground">
-          Otros programas que corrieron tus sesiones en los últimos 30 días y no están en el catálogo. Sin login desde acá: no sé cómo se chequea.
+          Otros programas que corrieron tus sesiones en los últimos 30 días y no están en el catálogo. Su login no se revisa desde acá.
           {view.usageScanning && " Leyendo los transcripts…"}
         </p>
         {view.used.length > 0 ? (
-          <ul className="divide-y rounded-xl border bg-card">
+          <ul className="surface-card divide-y overflow-hidden">
             {view.used.map((u) => (
               <li key={u.name} className="flex flex-wrap items-baseline gap-x-3 px-4 py-2 text-sm">
                 <span className="font-mono font-medium">{u.name}</span>
-                <span className="min-w-0 truncate font-mono text-[0.7rem] text-muted-foreground">{u.path}</span>
+                <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground" title={u.path}>
+                  {u.path}
+                </span>
                 <span className="text-xs text-muted-foreground" title={u.projects.join(", ")}>
                   en {u.projects.length === 1 ? u.projects[0] : `${u.projects.length} proyectos`}
                 </span>
@@ -136,11 +139,13 @@ export function CliSection() {
       </section>
 
       <section>
-        <div className="mb-2 flex items-center gap-3">
-          <h3 className="eyebrow">Para instalar {available.length}</h3>
-          <div className="relative ml-auto w-64">
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h3 className="eyebrow">
+            Para instalar <span className="font-normal">· {available.length}</span>
+          </h3>
+          <div className="relative w-full sm:ml-auto sm:w-64">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar un CLI…" className="h-8 pl-8 text-sm" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar un CLI…" aria-label="Buscar un CLI" className="h-8 pl-8 text-sm" />
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -160,7 +165,7 @@ function InstalledCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
     try {
       await api.cliLogin(cli.id, k.index)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo iniciar el login de ${cli.name}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setStarting(null)
     }
@@ -169,14 +174,14 @@ function InstalledCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
   return (
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="font-medium">{cli.name}</span>
+        <span className="name">{cli.name}</span>
         <span className="font-mono text-xs text-muted-foreground">
           {cli.id}
           {cli.version ? ` ${cli.version}` : ""}
         </span>
         <span className="text-xs text-muted-foreground">· {cli.description}</span>
         {cli.usage && (
-          <span className="ml-auto text-[0.7rem] text-muted-foreground" title={`Última vez: ${timeAgo(cli.usage.lastAt)}`}>
+          <span className="ml-auto text-2xs text-muted-foreground" title={`Última vez: ${timeAgo(cli.usage.lastAt)}`}>
             tus sesiones lo usaron {cli.usage.count.toLocaleString("es-AR")} {cli.usage.count === 1 ? "vez" : "veces"}
           </span>
         )}
@@ -185,7 +190,11 @@ function InstalledCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
         <div key={k.index} className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           {k.label && <span className="text-muted-foreground">{k.label}</span>}
           <CredentialState credential={k} />
-          {k.detail && <span className="min-w-0 truncate text-xs text-muted-foreground">{k.detail}</span>}
+          {k.detail && (
+            <span className="min-w-0 truncate text-xs text-muted-foreground" title={k.detail}>
+              {k.detail}
+            </span>
+          )}
           {k.state !== "ok" && k.terminalLogin && <TerminalLoginButton command={k.terminalLogin} className="ml-auto" />}
           {k.state !== "ok" && !k.terminalLogin && (
             <LoginButton state={k.state} disabled={busy || starting !== null} starting={starting === k.index} className="ml-auto" onClick={() => void login(k)} />
@@ -204,47 +213,47 @@ function AvailableCli({ cli, job }: { cli: CliInfo; job?: CliJob }) {
     try {
       await api.cliInstall(cli.id)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo instalar ${cli.name}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setStarting(false)
     }
   }
   return (
-    <div className="flex flex-col rounded-xl border bg-card p-3">
-      <div className="flex items-baseline gap-2">
-        <span className="font-medium">{cli.name}</span>
+    <div className="flex flex-col surface-card p-3">
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span className="name truncate" title={cli.name}>{cli.name}</span>
         <span className="font-mono text-xs text-muted-foreground">{cli.id}</span>
-        <span className="ml-auto text-[0.7rem] text-muted-foreground">{cli.category}</span>
+        <span className="ml-auto text-2xs text-muted-foreground">{cli.category}</span>
       </div>
       <p className="mt-0.5 text-xs text-muted-foreground">{cli.description}</p>
       {cli.wanted > 0 && (
-        <p className="mt-1 text-[0.7rem] font-medium text-status-attention">
+        <p className="mt-1 text-2xs font-medium text-status-pending">
           Tus sesiones lo quisieron usar {cli.wanted === 1 ? "una vez" : `${cli.wanted} veces`} y no estaba instalado.
         </p>
       )}
       {cli.install ? (
         <div className="mt-2 flex items-center gap-2">
-          <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-[0.7rem]" title={cli.install.command}>
+          <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1 font-mono text-2xs" title={cli.install.command}>
             {cli.install.command}
           </code>
           {cli.install.runnable ? (
-            <Button size="xs" onClick={() => void install()} disabled={starting || job?.status === "running"}>
+            <Button size="xs" variant="outline" onClick={() => void install()} disabled={starting || job?.status === "running"}>
               {starting ? <Spinner /> : <Download />}
               Instalar
             </Button>
           ) : (
-            <Button size="xs" variant="outline" onClick={() => copy(cli.install!.command)} title="Pide sudo: corrélo en una terminal">
+            <Button size="xs" variant="outline" onClick={() => copy(cli.install!.command)}>
               <Copy />
               Copiar
             </Button>
           )}
         </div>
       ) : (
-        <a href={cli.docs} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+        <a href={cli.docs} target="_blank" rel="noreferrer" className="mt-2 inline-flex w-fit items-center gap-1 rounded-md text-xs text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
           <ExternalLink className="size-3" /> Cómo instalarlo
         </a>
       )}
-      {cli.install && !cli.install.runnable && <p className="mt-1 text-[0.7rem] text-muted-foreground">Pide sudo: copialo y corrélo en una terminal.</p>}
+      {cli.install && !cli.install.runnable && <p className="mt-1 text-2xs text-muted-foreground">Pide sudo: copialo y corrélo en una terminal.</p>}
       {job && <JobPanel job={job} />}
     </div>
   )

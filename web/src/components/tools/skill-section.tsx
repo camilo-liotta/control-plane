@@ -7,20 +7,12 @@ import type { CatalogSkill, SkillInfo, SkillState, ToolsView } from "@shared/typ
 import { DiffView } from "@/components/timeline/diff-view"
 import { Markdown } from "@/components/timeline/markdown"
 import { AiSkillSearch, SkillMarketplaces } from "@/components/tools/skill-market"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { LoadError } from "@/components/ui/load-error"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -28,6 +20,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { shortPath, tokens } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
 export const SKILL_STATE: Record<SkillState, { label: string; description: string }> = {
   on: { label: "Activa", description: "Claude la ve y la usa cuando hace falta." },
@@ -63,7 +56,7 @@ function StateSelect({ skill, view, onChanged }: { skill: SkillInfo; view: Tools
       })
       onChanged()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo cambiar ${skill.name}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(false)
     }
@@ -86,11 +79,11 @@ function StateSelect({ skill, view, onChanged }: { skill: SkillInfo; view: Tools
 
 function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | null; view: ToolsView; onClose: () => void; onChanged: () => void }) {
   const [file, setFile] = useState<{ path: string; content: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
   const [busy, setBusy] = useState(false)
-  const [removing, setRemoving] = useState(false)
   const [instruction, setInstruction] = useState("")
   const [proposal, setProposal] = useState<string | null>(null)
   const [proposing, setProposing] = useState(false)
@@ -107,9 +100,9 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
         setFile(f)
         setDraft(f.content)
       },
-      (err: Error) => setError(err.message)
+      (err: unknown) => setError(err)
     )
-  }, [skill?.name, skill?.path, view.accountId, view.projectId])
+  }, [skill?.name, skill?.path, view.accountId, view.projectId, attempt])
 
   const save = async () => {
     if (!skill) return
@@ -121,7 +114,7 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
       toast.success("Skill guardada", { description: "Las sesiones abiertas la recargan." })
       onChanged()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo guardar la skill", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(false)
     }
@@ -134,7 +127,7 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
       const r = await api.aiEditSkill(view.accountId, skill.name, instruction, view.projectId)
       setProposal(r.content)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo proponer el cambio", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setProposing(false)
     }
@@ -152,22 +145,19 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
       toast.success("Cambio aplicado", { description: "Las sesiones abiertas recargan la skill." })
       onChanged()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo aplicar el cambio", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(false)
     }
   }
 
+  // Si falla, ConfirmAction muestra el error y queda abierto.
   const remove = async () => {
     if (!skill) return
-    try {
-      const r = await api.deleteSkill(view.accountId, skill.name, view.projectId)
-      toast.success(`${skill.name} quitada`, { description: `Quedó en la papelera del dashboard: ${shortPath(r.movedTo)}` })
-      onClose()
-      onChanged()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
+    const r = await api.deleteSkill(view.accountId, skill.name, view.projectId)
+    toast.success(`${skill.name} quitada`, { description: `Quedó en la papelera del dashboard: ${shortPath(r.movedTo)}` })
+    onClose()
+    onChanged()
   }
 
   const body = file?.content.replace(/^---\n[\s\S]*?\n---\n?/, "") ?? ""
@@ -175,9 +165,9 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
     <Sheet open={Boolean(skill)} onOpenChange={(v) => !v && onClose()}>
       <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         <SheetHeader className="border-b">
-          <SheetTitle className="font-mono">{skill?.name}</SheetTitle>
+          <SheetTitle className="name">{skill?.name}</SheetTitle>
           <SheetDescription>{skill?.description}</SheetDescription>
-          {file && <p className="font-mono text-[0.7rem] text-muted-foreground">{shortPath(file.path)}</p>}
+          {file && <p className="font-mono text-2xs text-muted-foreground">{shortPath(file.path)}</p>}
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           {!skill?.path && (
@@ -187,7 +177,7 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
                 : "Viene incluida en Claude Code: podés cambiar su estado, pero no su contenido."}
             </p>
           )}
-          {error && <p className="text-sm text-status-error">{error}</p>}
+          {Boolean(error) && <LoadError what="la skill" error={error} onRetry={() => setAttempt((n) => n + 1)} />}
           {skill?.path && !file && !error && (
             <div className="space-y-2">
               <Skeleton className="h-4 w-2/3" />
@@ -196,7 +186,7 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
             </div>
           )}
           {file && skill?.editable && !editing && (
-            <div className="mb-4 space-y-2 rounded-lg border bg-muted/30 p-3">
+            <div className="mb-4 space-y-2 rounded-xl bg-muted p-3">
               <p className="flex items-center gap-1.5 text-xs font-medium">
                 <Sparkles className="size-3.5 text-claude" />
                 Modificar con IA
@@ -237,10 +227,17 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
         </div>
         {file && skill?.editable && (
           <SheetFooter className="flex-row items-center gap-2 border-t">
-            <Button variant="ghost" size="sm" className="mr-auto text-muted-foreground" onClick={() => setRemoving(true)}>
-              <Trash2 />
-              Quitar
-            </Button>
+            <ConfirmAction
+              title={`¿Quitar ${skill.name}?`}
+              description="La carpeta de la skill se mueve a la papelera del dashboard (~/.control-plane/trash): no se borra, la podés recuperar de ahí."
+              confirmLabel="Quitar"
+              onConfirm={remove}
+            >
+              <Button variant="ghost" size="sm" className="mr-auto text-muted-foreground">
+                <Trash2 />
+                Quitar
+              </Button>
+            </ConfirmAction>
             {editing ? (
               <>
                 <Button variant="ghost" size="sm" onClick={() => (setEditing(false), setDraft(file.content))}>
@@ -259,20 +256,6 @@ function SkillSheet({ skill, view, onClose, onChanged }: { skill: SkillInfo | nu
             )}
           </SheetFooter>
         )}
-        <AlertDialog open={removing} onOpenChange={setRemoving}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>¿Quitar {skill?.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                La carpeta de la skill se mueve a la papelera del dashboard (~/.control-plane/trash): no se borra, la podés recuperar de ahí.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction onClick={() => void remove()}>Quitar</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </SheetContent>
     </Sheet>
   )
@@ -295,7 +278,7 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
       setGenerated(r.content)
       setName(r.name)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo escribir la skill", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setGenerating(false)
     }
@@ -320,7 +303,7 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
       setGenerated(null)
       onCreated()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo crear la skill", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setSaving(false)
     }
@@ -338,7 +321,8 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={mode === m ? "flex-1 rounded-md bg-background px-3 py-1 font-medium shadow-xs" : "flex-1 rounded-md px-3 py-1 text-muted-foreground"}
+              aria-pressed={mode === m}
+              className={mode === m ? "flex-1 rounded-md bg-background px-3 py-1 font-medium shadow-raised" : "flex-1 rounded-md px-3 py-1 text-muted-foreground hover:text-foreground"}
             >
               {m === "ai" ? "Que la escriba Claude" : "Escribirla yo"}
             </button>
@@ -413,7 +397,7 @@ function NewSkillDialog({ view, open, onOpenChange, onCreated }: { view: ToolsVi
             </>
           )}
         </FieldGroup>
-        <DialogFooter>
+        <DialogFooter className="sticky -bottom-5 z-10 -mx-5 -mb-5 bg-popover px-5 pt-3 pb-5">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
@@ -456,16 +440,22 @@ export function SkillSection({ view, onChanged, readOnly = false }: { view: Tool
         return (
           <section key={g.source}>
             <h3 className="eyebrow mb-2">
-              {g.title} <span className="font-mono text-muted-foreground">{list.length}</span>
+              {g.title} <span className="font-normal">· {list.length}</span>
             </h3>
-            <ul className="divide-y rounded-xl border bg-card">
+            <ul className="surface-card divide-y overflow-hidden">
               {list.map((s) => (
                 <li key={s.name} className="flex items-center gap-3 px-4 py-2.5">
-                  <button type="button" onClick={() => setOpen(s)} className="min-w-0 flex-1 text-left">
-                    <span className="flex items-center gap-2">
-                      <span className={s.state === "off" ? "font-mono text-sm text-muted-foreground line-through" : "font-mono text-sm"}>{s.name}</span>
-                      {s.tokens ? <span className="font-mono text-[0.68rem] text-muted-foreground">~{s.tokens} tok</span> : null}
-                      {s.stateScope && <span className="text-[0.68rem] text-muted-foreground">{SCOPE_NOTE[s.stateScope]}</span>}
+                  <button
+                    type="button"
+                    onClick={() => setOpen(s)}
+                    className="min-w-0 flex-1 rounded-md text-left outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className={cn("name truncate text-sm", s.state === "off" && "text-muted-foreground line-through")} title={s.name}>
+                        {s.name}
+                      </span>
+                      {s.tokens ? <span className="shrink-0 text-2xs text-muted-foreground">~{s.tokens} tok</span> : null}
+                      {s.stateScope && <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">{SCOPE_NOTE[s.stateScope]}</span>}
                     </span>
                     {s.description && <span className="line-clamp-1 text-xs text-muted-foreground">{s.description}</span>}
                   </button>

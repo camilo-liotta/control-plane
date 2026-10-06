@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import type { ClaudeSetting, ClaudeSettingValue } from "@shared/types"
@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { LoadError } from "@/components/ui/load-error"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -17,18 +18,21 @@ import { api } from "@/lib/api"
 import { shortPath } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
-import { cn } from "@/lib/utils"
 
 function Row({ item, onChange }: { item: ClaudeSetting; onChange: (v: ClaudeSettingValue) => void }) {
   const changed = item.isSet && item.value !== item.defaultValue
   return (
-    <div className="flex items-start gap-4 py-3">
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{item.label}</span>
-          {changed && <span className="size-1.5 rounded-full bg-status-working" title="Cambiado respecto del valor por defecto" />}
+          {changed && (
+            <span className="size-1.5 rounded-full bg-foreground/60" title="Cambiado respecto del valor por defecto">
+              <span className="sr-only">(cambiado)</span>
+            </span>
+          )}
           {item.terminalOnly && (
-            <span className="rounded-full bg-muted px-1.5 py-px text-[0.65rem] text-muted-foreground">en la terminal</span>
+            <span className="rounded-full bg-muted px-1.5 py-px text-2xs text-muted-foreground">en la terminal</span>
           )}
         </div>
         <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{item.description}</p>
@@ -38,7 +42,7 @@ function Row({ item, onChange }: { item: ClaudeSetting; onChange: (v: ClaudeSett
           <Switch checked={item.value === true} onCheckedChange={(v) => onChange(v)} aria-label={item.label} />
         ) : (
           <Select value={String(item.value ?? "")} onValueChange={(v) => onChange(v)}>
-            <SelectTrigger size="sm" className="w-52 text-xs">
+            <SelectTrigger size="sm" className="w-full text-xs sm:w-52" aria-label={item.label}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -61,12 +65,17 @@ export function ClaudeSettingsDialog() {
   const setUi = useUi((s) => s.set)
   const account = useStore((s) => (accountId ? s.accounts[accountId] : undefined))
   const [data, setData] = useState<{ files: { user: string; global: string }; items: ClaudeSetting[] } | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!accountId) return
     setData(null)
-    api.claudeSettings(accountId).then(setData, (err: Error) => toast.error(err.message))
+    setError(null)
+    return api.claudeSettings(accountId).then(setData, setError)
   }, [accountId])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const groups = useMemo(() => {
     const map = new Map<string, ClaudeSetting[]>()
@@ -86,7 +95,7 @@ export function ClaudeSettingsDialog() {
       })
     } catch (err) {
       setData(prev)
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo guardar ${item.label}`, { description: err instanceof Error ? err.message : String(err) })
     }
   }
 
@@ -97,17 +106,19 @@ export function ClaudeSettingsDialog() {
           <DialogTitle>Configuración de Claude Code{account ? ` · ${account.name}` : ""}</DialogTitle>
           <DialogDescription>
             Las opciones del menú <code className="font-mono">/config</code>. Se guardan en{" "}
-            <code className="font-mono break-all">{data ? shortPath(data.files.user) : "settings.json"}</code>
+            <code className="font-mono break-words">{data ? shortPath(data.files.user) : "settings.json"}</code>
             {data ? (
               <>
                 {" "}
-                (las de IDE, en <code className="font-mono break-all">{shortPath(data.files.global)}</code>)
+                (las de IDE, en <code className="font-mono break-words">{shortPath(data.files.global)}</code>)
               </>
             ) : null}
             , igual que desde la terminal.
           </DialogDescription>
         </DialogHeader>
-        {!data ? (
+        {error ? (
+          <LoadError what="la configuración" error={error} onRetry={load} className="my-2" />
+        ) : !data ? (
           <div className="space-y-3 py-4">
             {Array.from({ length: 6 }, (_, i) => (
               <Skeleton key={i} className="h-10 w-full" />
@@ -117,7 +128,7 @@ export function ClaudeSettingsDialog() {
           groups.map(([group, items]) => (
             <section key={group} className="pt-3">
               <h3 className="eyebrow">{group}</h3>
-              <div className={cn("divide-y")}>
+              <div className="divide-y">
                 {items.map((item) => (
                   <Row key={item.key} item={item} onChange={(v) => void change(item, v)} />
                 ))}

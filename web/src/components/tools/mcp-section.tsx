@@ -5,17 +5,8 @@ import { toast } from "sonner"
 import type { McpServerInfo, ToolsView } from "@shared/types"
 
 import { TonePill } from "@/components/status"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -23,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api, type McpInput } from "@/lib/api"
 import type { Tone } from "@/lib/status"
 import { cn } from "@/lib/utils"
@@ -67,7 +59,6 @@ function ServerRow({
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [removing, setRemoving] = useState(false)
   const status = STATUS[server.status] ?? { label: server.status, tone: "idle" as Tone }
   const removable = ["user", "local", "project"].includes(server.scope ?? "") && !server.internal
   const act = async (fn: () => Promise<unknown>, ok: string, description?: string) => {
@@ -77,7 +68,7 @@ function ServerRow({
       toast.success(ok, { description })
       onChanged()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(`No se pudo cambiar ${server.name}`, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(false)
     }
@@ -86,11 +77,18 @@ function ServerRow({
   return (
     <li className="px-4 py-2.5">
       <div className="flex items-center gap-3">
-        <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        >
           <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
           <span className="min-w-0">
-            <span className="block truncate text-sm font-medium">{server.name}</span>
-            <span className="block truncate font-mono text-[0.7rem] text-muted-foreground">
+            <span className="block truncate text-sm font-medium" title={server.name}>
+              {server.name}
+            </span>
+            <span className="block truncate text-2xs text-muted-foreground">
               {mcpOrigin(server)}
               {server.tools.length ? ` · ${server.tools.length} herramientas` : ""}
             </span>
@@ -111,9 +109,20 @@ function ServerRow({
           </Button>
         )}
         {sessionId && (server.status === "failed" || server.status === "needs-auth") && (
-          <Button size="icon-xs" variant="ghost" disabled={busy} title="Reconectar" onClick={() => act(() => api.reconnectMcp(sessionId, server.name), "Reconectando")}>
-            <RefreshCw />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                disabled={busy}
+                aria-label={`Reconectar ${server.name}`}
+                onClick={() => act(() => api.reconnectMcp(sessionId, server.name), `Reconectando ${server.name}`)}
+              >
+                <RefreshCw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reconectar</TooltipContent>
+          </Tooltip>
         )}
         {view.projectId && !server.internal && (
           <Switch
@@ -132,9 +141,20 @@ function ServerRow({
           />
         )}
         {removable && (
-          <Button size="icon-xs" variant="ghost" className="text-muted-foreground" title="Quitar" onClick={() => setRemoving(true)}>
-            <Trash2 />
-          </Button>
+          <ConfirmAction
+            title={`¿Quitar ${server.name}?`}
+            description={`Se borra de la configuración de Claude Code (${mcpOrigin(server).toLowerCase()}). Las sesiones que lo usan lo pierden al reanudarse.`}
+            confirmLabel="Quitar"
+            onConfirm={async () => {
+              await api.removeMcp(view.accountId, server.name, server.scope ?? "user", view.projectId)
+              toast.success(`${server.name} quitado`)
+              onChanged()
+            }}
+          >
+            <Button size="icon-xs" variant="ghost" className="text-muted-foreground" aria-label={`Quitar ${server.name}`} title="Quitar">
+              <Trash2 />
+            </Button>
+          </ConfirmAction>
         )}
       </div>
       {open && (
@@ -146,7 +166,7 @@ function ServerRow({
               {server.tools.map((t) => (
                 <span
                   key={t.name}
-                  className={cn("rounded-md border px-1.5 py-0.5 font-mono text-[0.68rem]", t.destructive && "border-status-error/40 text-status-error")}
+                  className={cn("rounded-md bg-muted px-1.5 py-0.5 font-mono text-2xs", t.destructive && "underline decoration-dotted underline-offset-2")}
                   title={t.readOnly ? "Solo lee" : t.destructive ? "Puede borrar o cambiar datos" : undefined}
                 >
                   {t.name}
@@ -167,24 +187,6 @@ function ServerRow({
           )}
         </div>
       )}
-      <AlertDialog open={removing} onOpenChange={setRemoving}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Quitar {server.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Se borra de la configuración de Claude Code ({mcpOrigin(server).toLowerCase()}). Las sesiones que lo usan lo pierden al reanudarse.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => act(() => api.removeMcp(view.accountId, server.name, server.scope ?? "user", view.projectId), `${server.name} quitado`)}
-            >
-              Quitar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </li>
   )
 }
@@ -238,7 +240,7 @@ function AddServerDialog({ view, open, onOpenChange, onAdded }: { view: ToolsVie
       setPairs("")
       onAdded()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo agregar el servidor", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setSaving(false)
     }
@@ -344,10 +346,16 @@ export function McpSection({ view, sessionId, onChanged }: { view: ToolsView; se
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="flex-1 text-sm text-muted-foreground">
-          {connected} de {view.mcp.filter((s) => !s.internal).length} conectados
-          {view.projectId ? ". El interruptor los activa o desactiva solo en este proyecto." : "."}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+          {view.mcp.some((s) => !s.internal) ? (
+            <>
+              {connected} de {view.mcp.filter((s) => !s.internal).length} conectados
+              {view.projectId ? ". El interruptor los activa o desactiva solo en este proyecto." : "."}
+            </>
+          ) : (
+            "Los servidores MCP le dan a Claude acceso a otras herramientas y datos. Los que agregues aparecen acá."
+          )}
         </p>
         {!sessionId && (
           <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
@@ -359,16 +367,15 @@ export function McpSection({ view, sessionId, onChanged }: { view: ToolsView; se
       {groups.map((g) => (
         <section key={g.title}>
           <h3 className="eyebrow mb-2">
-            {g.title} <span className="font-mono text-muted-foreground">{g.list.length}</span>
+            {g.title} <span className="font-normal">· {g.list.length}</span>
           </h3>
-          <ul className="divide-y rounded-xl border bg-card">
+          <ul className="surface-card divide-y overflow-hidden">
             {g.list.map((s) => (
               <ServerRow key={s.name} server={s} view={view} sessionId={sessionId} onChanged={onChanged} />
             ))}
           </ul>
         </section>
       ))}
-      {!view.mcp.length && <p className="text-sm text-muted-foreground">No hay servidores MCP configurados.</p>}
       <AddServerDialog view={view} open={adding} onOpenChange={setAdding} onAdded={onChanged} />
     </div>
   )

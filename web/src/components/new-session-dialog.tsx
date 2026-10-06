@@ -118,7 +118,7 @@ export function NewSessionDialog({
       onOpenChange(false)
       navigate(`/p/${project.id}/s/${s.id}`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo crear la sesión", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setCreating(false)
     }
@@ -151,7 +151,7 @@ export function NewSessionDialog({
                 value={name}
                 onChange={(e) => setName(e.target.value.toUpperCase())}
                 placeholder="BACKEND"
-                className="font-mono"
+                className="name"
                 autoFocus
               />
             </Field>
