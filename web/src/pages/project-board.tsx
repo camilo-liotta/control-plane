@@ -1,5 +1,5 @@
 import { Blocks, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Trash2, Users } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { useLocation } from "wouter"
 
@@ -12,6 +12,7 @@ import { GraphLegend, ProjectGraph } from "@/components/project-graph"
 import { ReportCard } from "@/components/report-card"
 import { OrchestratorCard, WorkerCard } from "@/components/session-cards"
 import { Button } from "@/components/ui/button"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,15 +25,14 @@ import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { shortPath, tokens, totals, usd } from "@/lib/format"
 import { openDrafts, projectReports, projectSessions, useStore } from "@/lib/store"
-import { reveal } from "@/lib/reveal"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
 
 function SectionTitle({ children, count, action }: { children: React.ReactNode; count?: number; action?: React.ReactNode }) {
   return (
     <div className="mb-3 flex items-center gap-2">
-      <h2 className="eyebrow text-foreground/80">{children}</h2>
-      {count !== undefined && <span className="font-mono text-xs text-muted-foreground">{count}</span>}
+      <h2 className="eyebrow">{children}</h2>
+      {count !== undefined && <span className="text-xs text-muted-foreground">{count}</span>}
       <div className="ml-auto">{action}</div>
     </div>
   )
@@ -46,19 +46,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const allReports = useStore((s) => s.reports)
   const setUi = useUi((s) => s.set)
   const [sendingAll, setSendingAll] = useState(false)
-  const pendingReveal = useUi((s) => s.reveal)
-
-  // Llegaste desde el aviso de una tarea: la vista va hasta "Tareas para vos".
-  const shown = Boolean(project)
-  useEffect(() => {
-    if (pendingReveal?.kind !== "tasks" || pendingReveal.id !== projectId || !shown) return
-    const raf = requestAnimationFrame(() => {
-      const el = document.getElementById("tareas-para-vos")
-      if (el) reveal(el)
-      setUi({ reveal: null })
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [pendingReveal, projectId, shown, setUi])
+  const [stopping, setStopping] = useState(false)
 
   const { orchestrator, workers } = projectSessions(sessions, projectId)
   const drafts = useMemo(() => openDrafts(allDrafts, projectId), [allDrafts, projectId])
@@ -94,18 +82,18 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         await api.sendDraft(d.id)
         ok++
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
+        toast.error(`No se pudo enviar "${d.title}"`, { description: err instanceof Error ? err.message : String(err) })
       }
     }
-    if (ok) toast.success(`${ok === 1 ? "Se envió 1 propuesta" : `Se enviaron ${ok} propuestas`}`)
+    if (ok) toast.success(ok === 1 ? "1 propuesta enviada" : `${ok} propuestas enviadas`)
     setSendingAll(false)
   }
 
-  const run = (key: string, fn: () => Promise<unknown>, ok: string) =>
+  const run = (key: string, fn: () => Promise<unknown>, ok: string, failed: string) =>
     action.run(key, () =>
       fn().then(
         () => toast.success(ok),
-        (err: Error) => toast.error(err.message)
+        (err: Error) => toast.error(failed, { description: err.message })
       )
     )
 
@@ -115,7 +103,9 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         title={project.name}
         subtitle={
           <>
-            <span className="font-mono">{shortPath(project.repoPath)}</span>
+            <span className="inline-block max-w-full truncate align-bottom font-mono" title={project.repoPath}>
+              {shortPath(project.repoPath)}
+            </span>
             {(() => {
               const t = totals([orchestrator, ...workers].filter((s) => s !== null))
               return t.cost > 0 || t.tokens > 0 ? (
@@ -140,13 +130,13 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto min-w-56">
-                <DropdownMenuItem disabled={action.busy("all")} onClick={() => run("all", () => api.startAll(project.id), "Sesiones iniciadas")}>
+                <DropdownMenuItem disabled={action.busy("all")} onClick={() => run("all", () => api.startAll(project.id), "Sesiones reanudadas", "No se pudieron reanudar las sesiones")}>
                   <Play />
-                  Iniciar todas las sesiones
+                  Reanudar todas las sesiones
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={action.busy("all")} onClick={() => run("all", () => api.stopAll(project.id), "Sesiones detenidas")}>
+                <DropdownMenuItem disabled={action.busy("all")} onClick={() => setStopping(true)}>
                   <Square />
-                  Detener todas las sesiones
+                  Detener todas las sesiones…
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setUi({ importFor: project.id })}>
                   <History />
@@ -168,6 +158,17 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <ConfirmAction
+              open={stopping}
+              onOpenChange={setStopping}
+              title="¿Detener todas las sesiones?"
+              description="Se corta el turno de las que están trabajando. Cada una retoma su conversación cuando la reanudes."
+              confirmLabel="Detener todas"
+              onConfirm={async () => {
+                await api.stopAll(project.id)
+                toast.success("Sesiones detenidas")
+              }}
+            />
           </>
         }
       />
@@ -177,9 +178,9 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
           <UserTasksCard project={project} />
           <OrchestratorCard project={project} orchestrator={orchestrator} drafts={drafts} />
 
-          <section className="overflow-hidden rounded-2xl border bg-card shadow-xs">
+          <section className="surface-card overflow-hidden">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-5 py-3">
-              <h2 className="eyebrow text-foreground/80">Mapa en vivo</h2>
+              <h2 className="eyebrow">Mapa en vivo</h2>
               <div className="ml-auto">
                 <GraphLegend />
               </div>
@@ -219,19 +220,19 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 ))}
               </div>
             ) : (
-              <Empty className="rounded-2xl border border-dashed">
+              <Empty className="rounded-2xl bg-muted/50">
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
                     <Users />
                   </EmptyMedia>
-                  <EmptyTitle>Todavía no hay sesiones worker</EmptyTitle>
+                  <EmptyTitle>Todavía no hay sesiones</EmptyTitle>
                   <EmptyDescription>
                     Creá la primera vos, o pedile a la orquestadora que proponga el equipo: las sesiones que proponga
                     aparecen arriba para que las apruebes.
                   </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent className="flex-row justify-center">
-                  <Button size="sm" onClick={() => setUi({ newSessionFor: project.id })}>
+                  <Button size="sm" variant="outline" onClick={() => setUi({ newSessionFor: project.id })}>
                     <Plus />
                     Nueva sesión
                   </Button>
@@ -255,7 +256,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
             </section>
           )}
 
-          <ArchivedSessions projectId={project.id} refreshKey={workers.length} />
+          <ArchivedSessions projectId={project.id} />
         </div>
       </div>
     </div>

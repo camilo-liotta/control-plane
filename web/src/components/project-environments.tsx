@@ -10,7 +10,9 @@ import { TonePill } from "@/components/status"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -21,9 +23,12 @@ import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
+import { cn } from "@/lib/utils"
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
-const fail = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err))
+const errText = (err: unknown) => (err instanceof Error ? err.message : String(err))
+/** Un error en la voz del glosario: "No se pudo …" y el motivo en la descripción. */
+const fail = (what: string) => (err: unknown) => toast.error(`No se pudo ${what}`, { description: errText(err) })
 /** Cuánto queda a la vista un secreto que mostraste. */
 const SHOWN_MS = 30_000
 
@@ -37,12 +42,12 @@ export function useProjectEnvironments(projectId: string): Environment[] {
 function Author({ projectId, by, at }: { projectId: string; by: string | null; at: number }) {
   const session = useStore((s) => (by ? s.sessions[by] : undefined))
   return (
-    <span className="text-[0.7rem] text-muted-foreground" title={new Date(at).toLocaleString("es-AR")}>
+    <span className="text-2xs text-muted-foreground" title={new Date(at).toLocaleString("es-AR")}>
       {by ? (
         <>
           por{" "}
           {session ? (
-            <Link href={`/p/${projectId}/s/${session.id}`} className="font-mono hover:text-foreground hover:underline">
+            <Link href={`/p/${projectId}/s/${session.id}`} className="name hover:text-foreground hover:underline">
               {session.name}
             </Link>
           ) : (
@@ -66,7 +71,7 @@ function IconButton({ label, onClick, children, disabled }: { label: string; onC
           onClick={onClick}
           disabled={disabled}
           aria-label={label}
-          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+          className="shrink-0 rounded-md p-1 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           {children}
         </button>
@@ -76,34 +81,28 @@ function IconButton({ label, onClick, children, disabled }: { label: string; onC
   )
 }
 
-/** Borrar con confirmación en el mismo botón: el primer clic pregunta, el segundo borra. */
-function DeleteButton({ label, onConfirm }: { label: string; onConfirm: () => Promise<unknown> }) {
-  const [asking, setAsking] = useState(false)
-  const action = useAction()
-  useEffect(() => {
-    if (!asking) return
-    const t = setTimeout(() => setAsking(false), 4000)
-    return () => clearTimeout(t)
-  }, [asking])
-  if (asking)
-    return (
-      <Button size="xs" variant="destructive" disabled={action.busy()} onClick={() => void action.run("delete", () => onConfirm().catch(fail))}>
-        ¿Borrar?
-      </Button>
-    )
+/** Borrar con `ConfirmAction`: se pierde, así que se pregunta. */
+function DeleteButton({ label, title, description, onConfirm }: { label: string; title: string; description: string; onConfirm: () => Promise<unknown> }) {
   return (
-    <IconButton label={label} onClick={() => setAsking(true)}>
-      <Trash2 className="size-3.5" />
-    </IconButton>
+    <ConfirmAction title={title} description={description} confirmLabel={label} onConfirm={onConfirm}>
+      <button
+        type="button"
+        aria-label={`${label}…`}
+        title={`${label}…`}
+        className="shrink-0 rounded-md p-1 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+    </ConfirmAction>
   )
 }
 
-async function copy(text: string, what: string) {
+async function copy(text: string, done: string) {
   try {
     await navigator.clipboard.writeText(text)
-    toast.success(`Copié ${what}`)
+    toast.success(done)
   } catch {
-    toast.error("No pude copiar al portapapeles")
+    toast.error("No se pudo copiar al portapapeles")
   }
 }
 
@@ -132,31 +131,33 @@ function CredentialRow({ credential: c, projectId }: { credential: Credential; p
       clearTimeout(timer.current)
       timer.current = setTimeout(() => setSecret(null), SHOWN_MS)
     } catch (err) {
-      fail(err)
+      fail("mostrar el secreto")(err)
     }
   }
   const copySecret = async () => {
     try {
       const s = secret ?? (await fetchSecret())
-      if (s) await copy(s, `el secreto de ${c.name}`)
+      if (s) await copy(s, "Secreto copiado")
     } catch (err) {
-      fail(err)
+      fail("copiar el secreto")(err)
     }
   }
 
   if (editing) return <CredentialForm environmentId={c.environmentId} credential={c} onDone={() => setEditing(false)} />
   return (
-    <li className="group/cred grid gap-x-3 gap-y-0.5 px-3 py-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,13rem)_6.5rem] sm:items-center">
+    <li className="grid gap-x-3 gap-y-0.5 py-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,13rem)_6.5rem] sm:items-center">
       <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
         <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{c.name}</span>
+        <span className="truncate" title={c.name}>
+          {c.name}
+        </span>
       </span>
       <span className="flex min-w-0 items-center gap-1">
         <span className="truncate font-mono text-xs" title={c.username ?? undefined}>
           {c.username ?? <span className="text-muted-foreground">sin usuario</span>}
         </span>
         {c.username && (
-          <IconButton label="Copiar usuario" onClick={() => void copy(c.username!, `el usuario de ${c.name}`)}>
+          <IconButton label="Copiar usuario" onClick={() => void copy(c.username!, "Usuario copiado")}>
             <Copy className="size-3.5" />
           </IconButton>
         )}
@@ -164,7 +165,7 @@ function CredentialRow({ credential: c, projectId }: { credential: Credential; p
       <span className="flex min-w-0 items-center gap-1">
         {c.hasSecret ? (
           <>
-            <span className="min-w-0 truncate font-mono text-xs" aria-label={secret === null ? "Secreto oculto" : "Secreto"}>
+            <span className="min-w-0 truncate font-mono text-xs" aria-label={secret === null ? "Secreto oculto" : "Secreto"} title={secret ?? undefined}>
               {secret === null ? "••••••••" : secret}
             </span>
             <IconButton label={secret === null ? "Mostrar secreto" : "Ocultar secreto"} onClick={() => void toggle()} disabled={loading}>
@@ -187,7 +188,15 @@ function CredentialRow({ credential: c, projectId }: { credential: Credential; p
         <IconButton label="Editar credencial" onClick={() => setEditing(true)}>
           <Pencil className="size-3.5" />
         </IconButton>
-        <DeleteButton label="Borrar credencial" onConfirm={() => api.deleteCredential(c.id)} />
+        <DeleteButton
+          label="Borrar credencial"
+          title={`¿Borrar ${c.name}?`}
+          description="Se borran el usuario y el secreto guardados. Si una sesión la necesita, la va a tener que volver a dejar."
+          onConfirm={async () => {
+            await api.deleteCredential(c.id)
+            toast.success("Credencial borrada", { description: c.name })
+          }}
+        />
       </span>
       <span className="flex min-w-0 flex-wrap items-center gap-x-2 sm:col-span-4">
         {c.notes && <span className="min-w-0 text-xs text-muted-foreground">{c.notes}</span>}
@@ -202,26 +211,20 @@ function useProjectApps(projectId: string): AppView[] {
   return useStore((s) => s.apps[projectId]) ?? NO_APPS
 }
 const NO_APPS: AppView[] = []
+/** El valor de "ninguna app" en el selector (Radix no acepta un valor vacío). */
+const NO_APP = "__none"
 
 /** El estado de la app conectada y, si está bajada, "Levantar" ahí mismo. */
 function AppState({ app }: { app: AppView }) {
-  const [starting, setStarting] = useState(false)
+  const action = useAction()
+  const starting = action.busy("start")
   const st = APP_STATUS[app.state.status]
   const down = app.state.status === "stopped" || app.state.status === "crashed"
-  const start = async () => {
-    setStarting(true)
-    try {
-      await api.startApp(app.id)
-    } catch (err) {
-      fail(err)
-    } finally {
-      setStarting(false)
-    }
-  }
+  const start = () => action.run("start", () => api.startApp(app.id).catch(fail(`levantar ${app.name}`)))
   return (
     <span className="flex items-center gap-1.5">
       <TonePill tone={st.tone} className={st.pulse ? "animate-pulse" : undefined}>
-        {app.name} · {st.label}
+        <span className="name">{app.name}</span> · {st.label}
       </TonePill>
       {down && (
         <Button size="xs" variant="outline" onClick={() => void start()} disabled={starting}>
@@ -241,12 +244,12 @@ function EnvironmentBlock({ env }: { env: Environment }) {
   const url = app?.url ?? env.url
   if (editing) return <EnvironmentForm projectId={env.projectId} environment={env} onDone={() => setEditing(false)} />
   return (
-    <div className="min-w-0 space-y-1.5">
+    <div className="min-w-0 space-y-1.5 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <Server className="size-4 shrink-0 text-muted-foreground" />
         <span className="font-medium">{env.name}</span>
         {url && (
-          <a href={url} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline">
+          <a href={url} target="_blank" rel="noreferrer" title={url} className="flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline">
             <span className="truncate">{url}</span>
             <SquareArrowOutUpRight className="size-3 shrink-0" />
           </a>
@@ -256,24 +259,36 @@ function EnvironmentBlock({ env }: { env: Environment }) {
         <span className="ml-auto flex items-center gap-0.5">
           <Button size="xs" variant="ghost" onClick={() => setAdding(true)}>
             <Plus />
-            Credencial
+            Agregar credencial
           </Button>
           <IconButton label="Editar entorno" onClick={() => setEditing(true)}>
             <Pencil className="size-3.5" />
           </IconButton>
-          <DeleteButton label="Borrar entorno (con sus credenciales)" onConfirm={() => api.deleteEnvironment(env.id)} />
+          <DeleteButton
+            label="Borrar entorno"
+            title={`¿Borrar el entorno ${env.name}?`}
+            description={
+              env.credentials.length
+                ? `Se borra con ${plural(env.credentials.length, "su credencial", "sus credenciales")}. La app conectada no se toca.`
+                : "La app conectada no se toca."
+            }
+            onConfirm={async () => {
+              await api.deleteEnvironment(env.id)
+              toast.success("Entorno borrado", { description: env.name })
+            }}
+          />
         </span>
       </div>
-      {env.notes && <p className="text-xs text-muted-foreground">{env.notes}</p>}
+      {env.notes && <p className="pl-6 text-xs text-muted-foreground">{env.notes}</p>}
       {adding && <CredentialForm environmentId={env.id} onDone={() => setAdding(false)} />}
       {env.credentials.length > 0 ? (
-        <ul className="divide-y rounded-lg border">
+        <ul className="divide-y pl-6">
           {env.credentials.map((c) => (
             <CredentialRow key={c.id} credential={c} projectId={env.projectId} />
           ))}
         </ul>
       ) : (
-        !adding && <p className="text-xs text-muted-foreground">Sin credenciales.</p>
+        !adding && <p className="pl-6 text-xs text-muted-foreground">Sin credenciales todavía.</p>
       )}
     </div>
   )
@@ -292,16 +307,17 @@ function EnvironmentForm({ projectId, environment, onDone }: { projectId: string
       const fields = { name, url: url.trim() || null, notes: notes.trim() || null, app: app || null }
       if (environment) await api.updateEnvironment(environment.id, fields)
       else await api.createEnvironment(projectId, fields)
+      toast.success(environment ? "Entorno guardado" : "Entorno creado", { description: fields.name })
       onDone()
     } catch (err) {
-      fail(err)
+      fail(environment ? "guardar el entorno" : "crear el entorno")(err)
     } finally {
       setSaving(false)
     }
   }
   return (
     <form
-      className="space-y-2 rounded-lg border p-3"
+      className="space-y-2 rounded-xl bg-muted/50 p-3"
       onSubmit={(e) => {
         e.preventDefault()
         void save()
@@ -318,23 +334,23 @@ function EnvironmentForm({ projectId, environment, onDone }: { projectId: string
         />
       </div>
       {apps.length > 0 && (
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           La URL la da la app
-          <select
-            aria-label="App conectada"
-            value={app}
-            onChange={(e) => setApp(e.target.value)}
-            className="h-8 rounded-md border bg-transparent px-2 text-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
-          >
-            <option value="">ninguna (uso la URL de arriba)</option>
-            {apps.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-                {a.url ? ` · ${a.url}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select value={app || NO_APP} onValueChange={(v) => setApp(v === NO_APP ? "" : v)}>
+            <SelectTrigger size="sm" className="min-w-0" aria-label="App conectada">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_APP}>Ninguna: la URL de arriba</SelectItem>
+              {apps.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                  {a.url ? ` · ${a.url}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       )}
       <Textarea aria-label="Notas" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (cómo se levanta, qué datos tiene)" className="min-h-14 text-sm" />
       <FormButtons saving={saving} disabled={!name.trim()} onCancel={onDone} label={environment ? "Guardar" : "Crear entorno"} />
@@ -356,16 +372,17 @@ function CredentialForm({ environmentId, credential, onDone }: { environmentId: 
       const fields = { name, username: username.trim() || null, loginUrl: loginUrl.trim() || null, notes: notes.trim() || null, ...(secret || !credential ? { secret: secret || null } : {}) }
       if (credential) await api.updateCredential(credential.id, fields)
       else await api.createCredential(environmentId, fields)
+      toast.success(credential ? "Credencial guardada" : "Credencial agregada", { description: fields.name })
       onDone()
     } catch (err) {
-      fail(err)
+      fail(credential ? "guardar la credencial" : "agregar la credencial")(err)
     } finally {
       setSaving(false)
     }
   }
   return (
     <form
-      className="space-y-2 rounded-lg border p-3"
+      className="space-y-2 rounded-xl bg-muted/50 p-3"
       onSubmit={(e) => {
         e.preventDefault()
         void save()
@@ -431,12 +448,18 @@ export function ProjectEnvironments({ project }: { project: Project }) {
   }, [pending, project.id, setUi, revealSection])
 
   return (
-    <Collapsible ref={ref} id="entornos" open={open || adding} onOpenChange={(v) => {
+    <Collapsible
+      ref={ref}
+      id="entornos"
+      open={open || adding}
+      onOpenChange={(v) => {
         if (!v) setAdding(false)
         toggleSection("project-environments", v)
-      }} className="scroll-mt-4 border-b">
+      }}
+      className="scroll-mt-4 border-b"
+    >
       <div className="flex items-center gap-2 pr-4">
-        <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
+        <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
           <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
           <KeyRound className="size-4 shrink-0 text-muted-foreground" />
           <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm">
@@ -445,6 +468,7 @@ export function ProjectEnvironments({ project }: { project: Project }) {
               {" · "}
               {envs.length ? `${plural(envs.length, "entorno", "entornos")} · ${plural(credentials, "credencial", "credenciales")}` : "ninguno todavía"}
             </span>
+            <span className="hidden text-xs text-muted-foreground sm:group-data-[state=closed]:inline">· URLs y usuarios de prueba, locales o de staging</span>
           </span>
         </CollapsibleTrigger>
         <Button
@@ -457,17 +481,21 @@ export function ProjectEnvironments({ project }: { project: Project }) {
           }}
         >
           <Plus />
-          Entorno
+          Agregar entorno
         </Button>
       </div>
-      <CollapsibleContent className="space-y-4 px-4 pb-4 pl-10">
+      <CollapsibleContent className="px-4 pb-4 sm:pl-10">
         {adding && <EnvironmentForm projectId={project.id} onDone={() => setAdding(false)} />}
-        {envs.map((e) => (
-          <EnvironmentBlock key={e.id} env={e} />
-        ))}
+        {envs.length > 0 && (
+          <div className={cn("divide-y", adding && "mt-3")}>
+            {envs.map((e) => (
+              <EnvironmentBlock key={e.id} env={e} />
+            ))}
+          </div>
+        )}
         {!envs.length && !adding && (
           <p className="text-sm text-muted-foreground">
-            Las sesiones que levantan un entorno local o de staging y crean usuarios de prueba los dejan acá (con add_credential). También podés cargarlos vos.
+            Las sesiones que levantan un entorno local o de staging lo dejan acá, con sus usuarios de prueba. También podés cargarlos vos.
           </p>
         )}
       </CollapsibleContent>

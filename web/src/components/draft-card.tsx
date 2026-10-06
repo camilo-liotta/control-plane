@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { draftStateView } from "@/lib/status"
+import { undoable } from "@/lib/undo"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -30,7 +31,10 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
   const [role, setRole] = useState(draft.newSession?.role ?? "")
   const [subagents, setSubagents] = useState(draft.subagents)
   const [fresh, setFresh] = useState(draft.fresh)
-  const [busy, setBusy] = useState<null | "send" | "discard" | "save">(null)
+  const [busy, setBusy] = useState<null | "send" | "save">(null)
+  // Descartada: se esconde al toque (sin desmontar, así no se pierde lo que estabas editando) y
+  // vuelve si se deshace o falla.
+  const [hidden, setHidden] = useState(false)
   // Si la orquestadora cambia la propuesta, la casilla la sigue.
   useEffect(() => setFresh(draft.fresh), [draft.fresh, draft.revision])
 
@@ -47,14 +51,14 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
     setEditing(true)
   }
 
-  const run = async (kind: "send" | "discard" | "save", fn: () => Promise<unknown>, ok: string) => {
+  const run = async (kind: "send" | "save", fn: () => Promise<unknown>, ok: string, failed: string) => {
     setBusy(kind)
     try {
       await fn()
       toast.success(ok)
       setEditing(false)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(failed, { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setBusy(null)
     }
@@ -72,36 +76,42 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
               ? { fresh }
               : {}
         ),
-      draft.kind === "session" ? `Sesión ${name || draft.newSession?.name} creada` : `Enviado a ${target?.name ?? "la sesión"}`
+      draft.kind === "session" ? `Sesión ${name || draft.newSession?.name} creada` : `Propuesta enviada a ${target?.name ?? "la sesión"}`,
+      draft.kind === "session" ? "No se pudo crear la sesión" : "No se pudo enviar la propuesta"
     )
+
+  const discard = () =>
+    undoable({
+      message: "Propuesta descartada",
+      failMessage: "No se pudo descartar la propuesta",
+      run: () => api.discardDraft(draft.id),
+      onHide: () => setHidden(true),
+      onRestore: () => setHidden(false),
+    })
 
   return (
     <FileRefScope projectId={draft.projectId} sessionId={draft.targetSessionId ?? undefined}>
       <article
         data-draft-id={draft.id}
         data-draft-state={draft.state}
-        className={cn(
-          "rounded-xl border bg-card p-4 shadow-xs transition-colors",
-          draft.state === "ready" && "border-status-attention/40",
-          !open && "opacity-70",
-          className
-        )}
+        hidden={hidden}
+        className={cn("surface-card p-4", !open && "opacity-70", className)}
       >
         <header className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           {draft.kind === "session" ? (
             <span className="inline-flex items-center gap-1 font-medium text-foreground">
               <Sparkles className="size-3.5" /> Sesión nueva
-              <span className="font-mono">{draft.newSession?.name}</span>
+              <span className="name">{draft.newSession?.name}</span>
             </span>
           ) : (
             <span className="inline-flex items-center gap-1">
               <ArrowRight className="size-3.5" />
               {target ? (
-                <Link href={`/p/${target.projectId}/s/${target.id}`} className="font-mono font-medium text-foreground hover:underline">
+                <Link href={`/p/${target.projectId}/s/${target.id}`} className="name text-foreground hover:underline">
                   {target.name}
                 </Link>
               ) : (
-                <span className="font-mono">sesión eliminada</span>
+                <span>una sesión que ya no está</span>
               )}
             </span>
           )}
@@ -109,28 +119,31 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
             {draft.state === "staged" && <Lock className="size-3" />}
             {view.label}
           </TonePill>
-          {draft.revision > 1 && <span className="font-mono">rev. {draft.revision}</span>}
+          {draft.revision > 1 && <span>rev. {draft.revision}</span>}
           {draft.fresh && draft.state === "sent" && (
             <span className="inline-flex items-center gap-1">
               <Eraser className="size-3" /> empezó de cero
             </span>
           )}
           {draft.edited && draft.state === "sent" && <span>con tus cambios</span>}
-          <span className="ml-auto">{timeAgo(draft.decidedAt ?? draft.updatedAt)}</span>
+          <span className="ml-auto" title={new Date(draft.decidedAt ?? draft.updatedAt).toLocaleString("es-AR")}>
+            {timeAgo(draft.decidedAt ?? draft.updatedAt)}
+          </span>
         </header>
 
         {editing ? (
           <div className="mt-3 space-y-2">
             {draft.kind === "session" && (
-              <div className="grid grid-cols-2 gap-2">
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre" className="font-mono uppercase" />
-                <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Rol" />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre" aria-label="Nombre de la sesión" />
+                <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Rol" aria-label="Rol de la sesión" />
               </div>
             )}
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Título" />
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Título" aria-label="Título de la propuesta" />
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              aria-label="Prompt"
               className="min-h-40 text-sm leading-relaxed"
               autoFocus
             />
@@ -138,7 +151,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
           </div>
         ) : (
           <>
-            <h3 className="mt-2 text-[0.95rem] leading-snug font-medium">{draft.title}</h3>
+            <h3 className="mt-2 text-base leading-snug font-medium">{draft.title}</h3>
             {draft.kind === "session" && draft.newSession?.role && (
               <p className="text-xs text-muted-foreground">Rol: {draft.newSession.role}</p>
             )}
@@ -179,7 +192,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
         )}
 
         {draft.state === "staged" && (
-          <p className="mt-3 flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <p className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
             <Lock className="mt-0.5 size-3.5 shrink-0" />
             La orquestadora sigue revisando resultados. La propuesta se libera cuando termine con la cola vacía.
           </p>
@@ -201,7 +214,8 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
                     run(
                       "save",
                       () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "prompt" ? { fresh } : {}) }),
-                      "Cambios guardados"
+                      "Propuesta guardada",
+                      "No se pudo guardar la propuesta"
                     )
                   }
                 >
@@ -223,9 +237,9 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
               variant="ghost"
               className="ml-auto text-muted-foreground"
               disabled={busy !== null}
-              onClick={() => run("discard", () => api.discardDraft(draft.id), "Propuesta descartada")}
+              onClick={discard}
             >
-              {busy === "discard" ? <Spinner /> : <Trash2 />}
+              <Trash2 />
               Descartar
             </Button>
           </footer>
@@ -251,7 +265,7 @@ function FreshToggle({
 }) {
   const pct = context?.max ? Math.round((context.tokens / context.max) * 100) : null
   return (
-    <label className={cn("mt-3 flex items-start gap-2.5 rounded-lg border px-3 py-2 text-sm", checked && "border-claude/40 bg-claude/5", !disabled && "cursor-pointer")}>
+    <label className={cn("mt-3 flex items-start gap-2.5 text-sm", !disabled && "cursor-pointer")}>
       <Checkbox checked={checked} onCheckedChange={(v) => onChange(v === true)} disabled={disabled} className="mt-0.5" />
       <span className="min-w-0">
         <span className="font-medium">Empezar de cero</span>

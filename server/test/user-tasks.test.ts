@@ -109,6 +109,14 @@ describe("tareas para vos", () => {
     assert.match(text, /Abiertas:[\s\S]*Correr el workflow[\s\S]*1\. `gh workflow run/)
     assert.match(text, /Cerradas[\s\S]*Reautenticar gcloud · hecha por el usuario/)
   })
+
+  it("una que te anotás vos puede no tener pasos, y se le puede cambiar el título igual", () => {
+    const { task } = tasks.create("p1", { title: "Pagar el dominio", steps: [], priority: 2, tags: ["dominio"] }, null)
+    assert.deepEqual([task.steps, task.priority, task.tags, task.createdBy], [[], 2, ["dominio"], null])
+    assert.equal(tasks.update(task.id, { title: "Pagar el dominio .com" }, "user").title, "Pagar el dominio .com")
+    assert.equal(tasks.update(task.id, { title: "Pagar el dominio .com.ar" }, alfa).title, "Pagar el dominio .com.ar")
+    assert.throws(() => tasks.update(task.id, { steps: [] }, alfa), /pasos/)
+  })
 })
 
 describe("cli, prioridad y etiquetas", () => {

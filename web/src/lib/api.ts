@@ -224,7 +224,7 @@ export const api = {
   compactionApply: (id: string, selection: CompactionSelection) =>
     request("POST", `/api/sessions/${id}/compaction/apply`, selection),
   compactionDirect: (id: string) => request("POST", `/api/sessions/${id}/compaction/direct`),
-  createTask: (projectId: string, task: { title: string; steps: string[]; why?: string; due?: number | null }) =>
+  createTask: (projectId: string, task: { title: string; steps: string[]; why?: string; due?: number | null; priority?: number | null; tags?: string[] }) =>
     request<UserTask>("POST", `/api/projects/${projectId}/tasks`, task),
   updateTask: (
     id: string,
