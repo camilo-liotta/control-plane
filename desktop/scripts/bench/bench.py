@@ -4,11 +4,16 @@
   bench.py windows                    ventanas X visibles (título y tamaño)
   bench.py shot <título> <out.png>    captura la ventana cuyo título contiene <título>
   bench.py close <título>             le pide cerrar a esa ventana (como la X de la barra)
+  bench.py resize <título> <w> <h>    cambia el tamaño de esa ventana (el cliente, sin el marco)
   bench.py a11y                       los controles de la app (AT-SPI)
   bench.py press <nombre>             aprieta el botón o la casilla con ese nombre (AT-SPI)
   bench.py menu                       el menú del ícono (dbusmenu)
   bench.py menu-click <texto>         toca ese ítem del menú del ícono
   bench.py click <x> <y>              clic real en la pantalla (Mutter RemoteDesktop)
+  bench.py click-el <expresión JS>    clic real en el centro del elemento de la página (OFFSET_Y: la barra)
+  bench.py drag <x1> <y1> <x2> <y2>   arrastre real con el botón apretado
+  bench.py keys <combo> [combo…]      teclas reales: ctrl+v, ctrl+shift+z, alt+Down, Escape, question…
+  bench.py type <texto>               escribe el texto tecla por tecla
 """
 import ctypes, json, subprocess, sys, time
 import gi
@@ -77,6 +82,26 @@ def close(title):
             ev.xclient.l[0] = x.XInternAtom(dpy, b"WM_DELETE_WINDOW", 0)
             x.XSendEvent(dpy, xid, 0, 0, ctypes.byref(ev)); x.XSync(dpy, 0)
             print("cerrada", name); return
+    sys.exit(f"no hay ventana «{title}»")
+
+def resize(title, w, h):
+    class CM(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int), ("display", ctypes.c_void_p), ("window", ctypes.c_ulong), ("message_type", ctypes.c_ulong), ("format", ctypes.c_int), ("l", ctypes.c_long * 5)]
+    class Ev(ctypes.Union):
+        _fields_ = [("xclient", CM), ("pad", ctypes.c_long * 24)]
+    x, dpy, wins = windows()
+    x.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(Ev)]
+    x.XResizeWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint]
+    atom = lambda n: x.XInternAtom(dpy, n, 0)
+    for xid, name, *_ in sorted(wins, key=lambda w: w[2] * w[3]):
+        if name == title:
+            # Desmaximizar primero (_NET_WM_STATE remove): maximizada, el gestor ignora el tamaño.
+            ev = Ev(); ev.xclient.type = 33; ev.xclient.window = xid; ev.xclient.format = 32
+            ev.xclient.message_type = atom(b"_NET_WM_STATE")
+            ev.xclient.l[0] = 0; ev.xclient.l[1] = atom(b"_NET_WM_STATE_MAXIMIZED_VERT"); ev.xclient.l[2] = atom(b"_NET_WM_STATE_MAXIMIZED_HORZ"); ev.xclient.l[3] = 1
+            x.XSendEvent(dpy, x.XDefaultRootWindow(dpy), 0, (1 << 20) | (1 << 19), ctypes.byref(ev)); x.XSync(dpy, 0)
+            time.sleep(0.5)
+            x.XResizeWindow(dpy, xid, int(w), int(h)); x.XSync(dpy, 0); print("tamaño", w, h); return
     sys.exit(f"no hay ventana «{title}»")
 
 def atspi_nodes():
@@ -152,20 +177,88 @@ def menu_click(text):
             print("tocado", text); return
     sys.exit(f"no hay ítem «{text}»")
 
-def click(x, y):
-    from gi.repository import Gio, GLib
-    bus = Gio.bus_get_sync(Gio.BusType.SESSION)
-    call = lambda path, iface, m, args=None, rt=None: bus.call_sync("org.gnome.Mutter.RemoteDesktop", path, iface, m, args, rt, 0, -1, None)
-    sp = call("/org/gnome/Mutter/RemoteDesktop", "org.gnome.Mutter.RemoteDesktop", "CreateSession", None, GLib.VariantType("(o)")).unpack()[0]
+class Remote:
+    """Una sesión de Mutter RemoteDesktop: mouse y teclado de verdad para la pantalla aislada."""
     S = "org.gnome.Mutter.RemoteDesktop.Session"
-    call(sp, S, "Start"); time.sleep(0.3)
-    call(sp, S, "NotifyPointerMotionRelative", GLib.Variant("(dd)", (-5000.0, -5000.0))); time.sleep(0.1)
-    call(sp, S, "NotifyPointerMotionRelative", GLib.Variant("(dd)", (float(x), float(y)))); time.sleep(0.2)
-    for down in (True, False):
-        call(sp, S, "NotifyPointerButton", GLib.Variant("(ib)", (272, down))); time.sleep(0.05)
-    time.sleep(0.3); call(sp, S, "Stop")
+    def __enter__(self):
+        from gi.repository import Gio, GLib
+        self.GLib = GLib
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+        self.sp = self.call("/org/gnome/Mutter/RemoteDesktop", "org.gnome.Mutter.RemoteDesktop", "CreateSession", None, GLib.VariantType("(o)")).unpack()[0]
+        self.call(self.sp, self.S, "Start"); time.sleep(0.3)
+        # La primera tecla de una sesión nueva se pierde: un Shift suelto de calentamiento.
+        self.s("NotifyKeyboardKeysym", "(ub)", 0xFFE1, True); self.s("NotifyKeyboardKeysym", "(ub)", 0xFFE1, False); time.sleep(0.1)
+        return self
+    def __exit__(self, *a):
+        time.sleep(0.2); self.call(self.sp, self.S, "Stop")
+    def call(self, path, iface, m, args=None, rt=None):
+        return self.bus.call_sync("org.gnome.Mutter.RemoteDesktop", path, iface, m, args, rt, 0, -1, None)
+    def s(self, m, fmt, *args):
+        self.call(self.sp, self.S, m, self.GLib.Variant(fmt, args))
+    def move_to(self, x, y):
+        self.s("NotifyPointerMotionRelative", "(dd)", -5000.0, -5000.0); time.sleep(0.05)
+        self.s("NotifyPointerMotionRelative", "(dd)", float(x), float(y)); time.sleep(0.1)
+    def button(self, down):
+        self.s("NotifyPointerButton", "(ib)", 272, down); time.sleep(0.05)
+    def keysym(self, sym, down):
+        self.s("NotifyKeyboardKeysym", "(ub)", sym, down); time.sleep(0.02)
+
+def click(x, y):
+    with Remote() as r:
+        r.move_to(x, y); r.button(True); r.button(False)
+
+def element_center(expr):
+    import os
+    js = f"(()=>{{const e=({expr}); if(!e) return null; e.scrollIntoView({{block:'nearest'}}); const r=e.getBoundingClientRect(); return [r.x+r.width/2, r.y+r.height/2]}})()"
+    out = subprocess.run(["node", os.path.join(os.path.dirname(__file__), "page.mjs"), f"JSON.stringify({js})"], capture_output=True, text=True, timeout=15).stdout.strip()
+    pos = json.loads(json.loads(out)) if out.startswith('"') else None
+    if not pos:
+        sys.exit(f"no hay elemento: {expr}")
+    # La ventana arranca arriba a la izquierda; su contenido empieza OFFSET_Y px más abajo (barra de título).
+    return pos[0], pos[1] + float(os.environ.get("OFFSET_Y", "69"))
+
+def click_el(expr):
+    x, y = element_center(expr)
+    click(x, y)
+    print("clic en", round(x), round(y))
+
+def drag(x1, y1, x2, y2):
+    with Remote() as r:
+        r.move_to(x1, y1); r.button(True)
+        steps = 20
+        for i in range(1, steps + 1):
+            r.s("NotifyPointerMotionRelative", "(dd)", (float(x2) - float(x1)) / steps, (float(y2) - float(y1)) / steps); time.sleep(0.04)
+        time.sleep(0.4); r.button(False)
+
+def keysym_of(name):
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk
+    alias = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L", "super": "Super_L", "esc": "Escape", "enter": "Return", "up": "Up", "down": "Down", "?": "question", "`": "grave"}
+    n = alias.get(name.lower(), name)
+    sym = Gdk.keyval_from_name(n)
+    if sym in (0, 0xFFFFFF):
+        sym = Gdk.unicode_to_keyval(ord(n)) if len(n) == 1 else 0
+    if not sym:
+        sys.exit(f"tecla desconocida «{name}»")
+    return sym
+
+def keys(*combos):
+    with Remote() as r:
+        for combo in combos:
+            parts = [keysym_of(p) for p in (combo.split("+") if combo != "+" else ["plus"])]
+            for k in parts: r.keysym(k, True)
+            for k in reversed(parts): r.keysym(k, False)
+            time.sleep(0.15)
+
+def type_text(text):
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk
+    with Remote() as r:
+        for ch in text:
+            k = Gdk.unicode_to_keyval(ord(ch)) if ch != " " else Gdk.keyval_from_name("space")
+            r.keysym(k, True); r.keysym(k, False)
 
 if __name__ == "__main__":
     cmd, *args = sys.argv[1:] or ["help"]
-    fn = {"windows": lambda: [print(hex(w[0]), repr(w[1]), w[2], w[3]) for w in windows()[2]], "shot": shot, "close": close, "a11y": a11y, "press": press, "menu": menu, "menu-click": menu_click, "click": click}.get(cmd)
+    fn = {"windows": lambda: [print(hex(w[0]), repr(w[1]), w[2], w[3]) for w in windows()[2]], "shot": shot, "close": close, "resize": resize, "a11y": a11y, "press": press, "menu": menu, "menu-click": menu_click, "click": click, "click-el": click_el, "drag": drag, "keys": keys, "type": type_text}.get(cmd)
     fn(*args) if fn else print(__doc__)
