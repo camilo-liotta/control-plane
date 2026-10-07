@@ -441,7 +441,10 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
                 return
               }
               // En la app de escritorio en Linux (WebKitGTK) el evento no trae las imágenes: se leen aparte.
+              // Sin texto no hay nada que pegar en el campo: se cancela, si no WebKitGTK deja un paso vacío
+              // en la pila de deshacer (y el primer Ctrl+Z después no hace nada).
               if (inDesktop() && !e.clipboardData.types.includes("text/plain")) {
+                e.preventDefault()
                 void clipboardImages().then((images) => images.length && addFiles(images))
               }
             }}

@@ -48,6 +48,7 @@ node scripts/ux/ux.mjs browser                  # Edge o Chromium headless, CDP 
 
 - `server --from <checkout>` levanta el código de otro checkout. Por ejemplo, `--from ../control-plane--ux-actual` levanta la v0.5.0, que es el "antes".
 - Si `server` encuentra el :4720 ocupado, no hace nada. Para ver si ya está arriba: `node scripts/ux/ux.mjs status`.
+- Un sembrado aparte: `CP_UX_HOME=<carpeta> CP_UX_PORT=<puerto> node scripts/ux/ux.mjs server --reset` (y `seed` con las mismas variables). El navegador del banco (:9340) sigue siendo uno solo: `shots --base http://127.0.0.1:<puerto>` usa el que ya está corriendo.
 
 ## Ver tu área
 
