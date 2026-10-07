@@ -1,23 +1,17 @@
-import { ArrowRight, ChevronRight, FolderGit2, GitBranch, GitCommitHorizontal, SquareArrowOutUpRight } from "lucide-react"
+import { FolderGit2, GitBranch, GitCommitHorizontal, SquareArrowOutUpRight } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { useLocation } from "wouter"
 
 import type { Project, ProjectOverview, RepoInfo } from "@shared/types"
 
 import { GithubMark } from "@/components/github-mark"
-import { ProjectEnvironments } from "@/components/project-environments"
-import { ProjectApps } from "@/components/project-apps"
-import { ProjectScheduled } from "@/components/scheduled"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { EDITOR_NAMES, useEditor } from "@/lib/editor"
-import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
-import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
+import { basename, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -88,8 +82,9 @@ function Commit({ repo }: { repo: RepoInfo }) {
   )
 }
 
+/** owner/repo si está en GitHub; si no, el nombre de la carpeta (la ruta completa va en el title). */
 function repoName(r: RepoInfo) {
-  return r.github ? `${r.github.owner}/${r.github.repo}` : r.isRoot ? "Repositorio git" : r.name
+  return r.github ? `${r.github.owner}/${r.github.repo}` : basename(r.path) || r.name
 }
 
 /** Abre el proyecto (o una de sus carpetas) en el editor de Ajustes; si falla, lo dice. */
@@ -148,7 +143,7 @@ function RepoGroup({ main, worktrees, projectId }: { main: RepoInfo; worktrees: 
             {gh.owner}/{gh.repo}
           </a>
         ) : (
-          <span className="flex items-center gap-1.5 font-medium">
+          <span className="flex items-center gap-1.5 font-medium" title={main.path}>
             <FolderGit2 className="size-4 text-muted-foreground" />
             {repoName(main)}
             {main.remote && <span className="font-mono text-xs font-normal text-muted-foreground">{main.remote}</span>}
@@ -165,8 +160,8 @@ function RepoGroup({ main, worktrees, projectId }: { main: RepoInfo; worktrees: 
             <li key={w.path} className="grid min-w-0 grid-cols-1 items-center gap-x-3 gap-y-0.5 sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)]">
               <Branch repo={w} />
               <span className="flex min-w-0 flex-wrap items-center gap-x-2">
-                <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground" title={w.path}>
-                  {shortPath(w.path)}
+                <span className="min-w-0 truncate text-xs text-muted-foreground" title={w.path}>
+                  {basename(w.path)}
                 </span>
                 <RepoState repo={w} />
                 <OpenFolder projectId={projectId} path={w.path} />
@@ -193,104 +188,93 @@ function groupRepos(repos: RepoInfo[]): { main: RepoInfo; worktrees: RepoInfo[] 
   })
 }
 
-/** La línea del resumen plegado: qué repo, cuántas ramas, cuántas con cambios y cuánto falta subir. */
-function RepoSummary({ repos, groups }: { repos: RepoInfo[]; groups: { main: RepoInfo }[] }) {
+/** Lo que dice la línea de git: cuántas ramas, cuántas con cambios y cuánto falta subir o bajar. */
+function RepoSummary({ repos }: { repos: RepoInfo[] }) {
   const dirty = repos.filter((r) => r.changes).length
   const ahead = repos.reduce((n, r) => n + (r.ahead ?? 0), 0)
   const behind = repos.reduce((n, r) => n + (r.behind ?? 0), 0)
-  const first = groups[0]!.main
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm">
-      {first.github ? <GithubMark className="size-4 shrink-0" /> : <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />}
-      <span className="font-medium">{repoName(first)}</span>
-      {groups.length > 1 && <span className="text-muted-foreground">y {plural(groups.length - 1, "repo más", "repos más")}</span>}
-      <span className="text-xs text-muted-foreground">
-        {" · "}
-        {repos.length === 1 && first.branch ? <span className="font-mono">{first.branch}</span> : plural(repos.length, "rama", "ramas")}
-        {" · "}
-        {dirty ? <span className="font-medium text-status-pending">{repos.length === 1 ? changesText(first) : `${dirty} con cambios`}</span> : "sin cambios"}
-        {ahead > 0 && (
-          <>
-            {" · "}
-            <span className="font-medium text-status-pending">{ahead} por subir</span>
-          </>
-        )}
-        {behind > 0 && ` · ${behind} por bajar`}
-      </span>
+    <span className="text-xs text-muted-foreground">
+      {plural(repos.length, "rama", "ramas")}
+      {" · "}
+      {dirty ? <span className="font-medium text-status-pending">{dirty} con cambios</span> : "sin cambios"}
+      {ahead > 0 && (
+        <>
+          {" · "}
+          <span className="font-medium text-status-pending">{ahead} por subir</span>
+        </>
+      )}
+      {behind > 0 && ` · ${behind} por bajar`}
     </span>
   )
 }
 
-function Repos({ data, error, onRetry, projectId }: { data: ProjectOverview | null; error: unknown; onRetry: () => unknown; projectId: string }) {
-  const open = useSectionOpen("project-repos")
-  const toggle = usePanelSections((s) => s.toggle)
+/** Si hay commits sin subir en algún checkout: para el punto de la pestaña (los cambios locales son lo normal). */
+export function reposHaveChanges(data: ProjectOverview | null) {
+  return Boolean(data?.repos.some((r) => r.ahead))
+}
+
+/** El encabezado de una sección del proyecto (Git, Apps, Entornos): ícono, título, su línea y las acciones. */
+export function SectionHeader({
+  icon,
+  title,
+  summary,
+  actions,
+}: {
+  icon: React.ReactNode
+  title: string
+  summary?: React.ReactNode
+  actions?: React.ReactNode
+}) {
+  return (
+    <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-3 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground">
+      {icon}
+      <h2 className="font-medium">{title}</h2>
+      {summary && <span className="min-w-0 text-xs text-muted-foreground">· {summary}</span>}
+      {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
+    </header>
+  )
+}
+
+/** Git: los repos del proyecto, cada uno con su rama, sus worktrees y su estado. */
+export function ProjectRepos({ project, data, error, onRetry }: { project: Project; data: ProjectOverview | null; error: unknown; onRetry: () => unknown }) {
   const groups = useMemo(() => groupRepos(data?.repos ?? []), [data])
-  if (!data && error)
-    return (
-      <div className="border-b px-4 py-3">
-        <LoadError what="el resumen del proyecto" error={error} onRetry={onRetry} compact />
-      </div>
-    )
-  if (!data)
-    return (
-      <div className="border-b px-4 py-3">
-        <Skeleton className="h-6 w-2/3" />
-      </div>
-    )
-  if (!data.repos.length)
-    return (
-      <div className="flex items-center gap-2 border-b px-4 py-3">
-        <p className="min-w-0 flex-1 text-sm text-muted-foreground">La carpeta del proyecto no es un repositorio git.</p>
-        <OpenProject projectId={projectId} />
-      </div>
-    )
   return (
-    <Collapsible open={open} onOpenChange={(v) => toggle("project-repos", v)} className="border-b">
-      <div className="flex items-center gap-2 pr-4">
-        <CollapsibleTrigger
-          className="group flex min-w-0 flex-1 items-center gap-2 rounded-tl-xl px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-          aria-label={open ? "Plegar los repos" : "Ver los repos y sus ramas"}
-        >
-          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-          <RepoSummary repos={data.repos} groups={groups} />
-        </CollapsibleTrigger>
-        <OpenProject projectId={projectId} />
+    <section className="surface-card overflow-hidden">
+      <SectionHeader
+        icon={<GitBranch />}
+        title="Repos"
+        summary={data?.repos.length ? <RepoSummary repos={data.repos} /> : undefined}
+        actions={<OpenProject projectId={project.id} />}
+      />
+      <div className="space-y-4 px-4 py-3">
+        {!data && error ? (
+          <LoadError what="el estado de git" error={error} onRetry={onRetry} compact />
+        ) : !data ? (
+          <Skeleton className="h-6 w-2/3" />
+        ) : !data.repos.length ? (
+          <p className="text-sm text-muted-foreground">La carpeta del proyecto no es un repositorio git.</p>
+        ) : (
+          groups.map((g) => <RepoGroup key={g.main.path} main={g.main} worktrees={g.worktrees} projectId={project.id} />)
+        )}
       </div>
-      <CollapsibleContent className="space-y-4 px-4 pb-4 sm:pl-10">
-        {groups.map((g) => (
-          <RepoGroup key={g.main.path} main={g.main} worktrees={g.worktrees} projectId={projectId} />
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
+    </section>
   )
 }
 
-function Stat({ label, children, sub }: { label: string; children: React.ReactNode; sub?: string }) {
-  return (
-    <div className="min-w-0 px-4 py-3">
-      <p className="eyebrow">{label}</p>
-      <div className="mt-1 text-xl font-semibold tracking-tight">{children}</div>
-      {sub && (
-        <div className="mt-0.5 truncate text-xs text-muted-foreground" title={sub}>
-          {sub}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Lo principal del proyecto arriba de todo: sus repos, cuánto se gastó y dónde fue lo último. */
-export function ProjectOverviewCard({ project }: { project: Project }) {
-  const [, navigate] = useLocation()
+/**
+ * El resumen del proyecto (git, tokens, costo), compartido por el tablero: se pide al entrar, cada
+ * minuto, al volver a la pestaña o a la ventana, y cuando una sesión del proyecto termina un turno
+ * (que es cuando suele haber commits o cambios nuevos).
+ */
+export function useProjectOverview(projectId: string) {
   const [data, setData] = useState<ProjectOverview | null>(null)
   const [error, setError] = useState<unknown>(null)
-  const sessions = useStore((s) => s.sessions)
-
   // Lo que llega de un proyecto anterior (al cambiar rápido) no pisa al actual.
-  const current = useRef(project.id)
-  current.current = project.id
+  const current = useRef(projectId)
+  current.current = projectId
   const load = useCallback(() => {
-    const id = project.id
+    const id = projectId
     return api.projectOverview(id).then(
       (d) => {
         if (current.current !== id) return
@@ -299,9 +283,8 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
       },
       (err: unknown) => current.current === id && setError(err)
     )
-  }, [project.id])
+  }, [projectId])
 
-  // Cada minuto, y además al volver a la pestaña o a la ventana: el git cambia afuera del dashboard.
   useEffect(() => {
     setData(null)
     setError(null)
@@ -317,10 +300,9 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
     }
   }, [load])
 
-  // Y cuando una sesión del proyecto termina un turno, que es cuando suele haber commits o cambios nuevos.
   const workingKey = useStore((s) =>
     Object.values(s.sessions)
-      .filter((x) => x.projectId === project.id && x.status === "working")
+      .filter((x) => x.projectId === projectId && x.status === "working")
       .map((x) => x.id)
       .sort()
       .join(",")
@@ -335,54 +317,19 @@ export function ProjectOverviewCard({ project }: { project: Project }) {
     return () => clearTimeout(t)
   }, [workingKey, load])
 
-  // La última actividad sale de las sesiones en vivo (se mueve más rápido que el resumen).
-  const last = useMemo(() => {
-    const list = Object.values(sessions).filter((s) => s.projectId === project.id && s.lastActivityAt)
-    return list.sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0] ?? null
-  }, [sessions, project.id])
+  return { data, error, reload: load }
+}
 
-  const projectSessionsList = useMemo(() => Object.values(sessions).filter((s) => s.projectId === project.id && !s.archivedAt), [sessions, project.id])
-  const t = data?.tokens
-  return (
-    <section className="surface-card">
-      <Repos data={data} error={error} onRetry={load} projectId={project.id} />
-      <ProjectScheduled sessions={projectSessionsList} />
-      <ProjectApps project={project} />
-      <ProjectEnvironments project={project} />
-      <div className="grid divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <Stat
-          label="Tokens del proyecto"
-          sub={t && t.total ? `entrada ${tokens(t.input)} · salida ${tokens(t.output)} · caché ${tokens(t.cacheRead + t.cacheWrite)}` : undefined}
-        >
-          <span title={t ? tokensFull(t.total) : undefined}>{t ? tokens(t.total) : "—"}</span>
-        </Stat>
-        <Stat label="Costo equivalente" sub={data ? `${data.sessions} ${data.sessions === 1 ? "sesión" : "sesiones"}, incluidas las archivadas` : undefined}>
-          <span title="Lo que costaría por API. Con tu plan no se cobra aparte.">{data ? usd(data.costUsd) : "—"}</span>
-        </Stat>
-        <div className="flex min-w-0 items-center gap-3 px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="eyebrow">Última actividad</p>
-            {last ? (
-              <>
-                <p className="mt-1 text-xl font-semibold tracking-tight" title={last.lastActivityAt ? new Date(last.lastActivityAt).toLocaleString("es-AR") : undefined}>
-                  {timeAgo(last.lastActivityAt)} <span className="name text-sm text-muted-foreground">{last.kind === "orchestrator" ? "orquestadora" : last.name}</span>
-                </p>
-                <p className="mt-0.5 truncate text-xs text-muted-foreground" title={last.lastActivity ?? undefined}>
-                  {last.lastActivity ?? ""}
-                </p>
-              </>
-            ) : (
-              <p className="mt-1 text-sm text-muted-foreground">Todavía no hubo actividad.</p>
-            )}
-          </div>
-          {last && (
-            <Button size="sm" variant="outline" onClick={() => navigate(`/p/${project.id}/s/${last.id}`)}>
-              Ir a la sesión
-              <ArrowRight />
-            </Button>
-          )}
-        </div>
-      </div>
-    </section>
-  )
+/** El costo y los tokens del proyecto, para el encabezado; el detalle va en el title. */
+export function overviewTotals(data: ProjectOverview | null): { text: string; title: string } | null {
+  if (!data || (!data.costUsd && !data.tokens.total)) return null
+  const t = data.tokens
+  return {
+    text: `${usd(data.costUsd)} · ${tokens(t.total)} tokens`,
+    title: [
+      `${plural(data.sessions, "sesión", "sesiones")}, incluidas las archivadas.`,
+      `Entrada ${tokens(t.input)} · salida ${tokens(t.output)} · caché ${tokens(t.cacheRead + t.cacheWrite)} (${tokensFull(t.total)}).`,
+      "Costo equivalente por API: con tu plan no se cobra aparte.",
+    ].join("\n"),
+  }
 }

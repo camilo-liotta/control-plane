@@ -1,4 +1,4 @@
-import { ChevronRight, Copy, Eye, EyeOff, KeyRound, Pencil, Play, Plus, Server, SquareArrowOutUpRight, Trash2 } from "lucide-react"
+import { Copy, Eye, EyeOff, KeyRound, Pencil, Play, Plus, Server, SquareArrowOutUpRight, Trash2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
@@ -6,10 +6,10 @@ import { Link } from "wouter"
 import type { AppView, Credential, Environment, Project } from "@shared/types"
 
 import { APP_STATUS } from "@/components/project-apps"
+import { SectionHeader } from "@/components/project-overview"
 import { TonePill } from "@/components/status"
 
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -18,7 +18,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
-import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
@@ -424,67 +423,44 @@ function FormButtons({ saving, disabled, onCancel, label }: { saving: boolean; d
   )
 }
 
-/** "Entornos" en el resumen del proyecto: los locales o de staging, con sus credenciales de prueba. */
+/** "Entornos" del proyecto (en su pestaña): los locales o de staging, con sus credenciales de prueba. */
 export function ProjectEnvironments({ project }: { project: Project }) {
   const envs = useProjectEnvironments(project.id)
-  const open = useSectionOpen("project-environments")
-  const toggleSection = usePanelSections((s) => s.toggle)
-  const revealSection = usePanelSections((s) => s.reveal)
   const [adding, setAdding] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLElement>(null)
   const pending = useUi((s) => s.reveal)
   const setUi = useUi((s) => s.set)
   const credentials = envs.reduce((n, e) => n + e.credentials.length, 0)
 
-  // Llegaste desde un aviso ("ALFA dejó una credencial") o desde el panel de la sesión.
+  // Llegaste desde un aviso ("ALFA dejó una credencial") o desde el panel de la sesión: el tablero ya
+  // abrió esta pestaña, acá se marca.
   useEffect(() => {
     if (pending?.kind !== "environments" || pending.id !== project.id) return
-    revealSection("project-environments")
     const raf = requestAnimationFrame(() => {
       if (ref.current) reveal(ref.current)
       setUi({ reveal: null })
     })
     return () => cancelAnimationFrame(raf)
-  }, [pending, project.id, setUi, revealSection])
+  }, [pending, project.id, setUi])
 
   return (
-    <Collapsible
-      ref={ref}
-      id="entornos"
-      open={open || adding}
-      onOpenChange={(v) => {
-        if (!v) setAdding(false)
-        toggleSection("project-environments", v)
-      }}
-      className="scroll-mt-4 border-b"
-    >
-      <div className="flex items-center gap-2 pr-4">
-        <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-          <KeyRound className="size-4 shrink-0 text-muted-foreground" />
-          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm">
-            <span className="font-medium">Entornos</span>
-            <span className="text-xs text-muted-foreground">
-              {" · "}
-              {envs.length ? `${plural(envs.length, "entorno", "entornos")} · ${plural(credentials, "credencial", "credenciales")}` : "ninguno todavía"}
-            </span>
-            <span className="hidden text-xs text-muted-foreground sm:group-data-[state=closed]:inline">· URLs y usuarios de prueba, locales o de staging</span>
-          </span>
-        </CollapsibleTrigger>
-        <Button
-          size="xs"
-          variant="ghost"
-          className="shrink-0"
-          onClick={() => {
-            toggleSection("project-environments", true)
-            setAdding(true)
-          }}
-        >
-          <Plus />
-          Agregar entorno
-        </Button>
-      </div>
-      <CollapsibleContent className="px-4 pb-4 sm:pl-10">
+    <section ref={ref} id="entornos" className="surface-card scroll-mt-4 overflow-hidden">
+      <SectionHeader
+        icon={<KeyRound />}
+        title="Entornos"
+        summary={
+          envs.length
+            ? plural(credentials, "credencial", "credenciales")
+            : "URLs y usuarios de prueba, locales o de staging"
+        }
+        actions={
+          <Button size="xs" variant="ghost" onClick={() => setAdding(true)} disabled={adding}>
+            <Plus />
+            Agregar entorno
+          </Button>
+        }
+      />
+      <div className="px-4 py-3">
         {adding && <EnvironmentForm projectId={project.id} onDone={() => setAdding(false)} />}
         {envs.length > 0 && (
           <div className={cn("divide-y", adding && "mt-3")}>
@@ -498,8 +474,8 @@ export function ProjectEnvironments({ project }: { project: Project }) {
             Las sesiones que levantan un entorno local o de staging lo dejan acá, con sus usuarios de prueba. También podés cargarlos vos.
           </p>
         )}
-      </CollapsibleContent>
-    </Collapsible>
+      </div>
+    </section>
   )
 }
 
@@ -511,7 +487,7 @@ export function SessionCredentialsLine({ sessionId, projectId }: { sessionId: st
   if (!n) return null
   return (
     <Link
-      href={`/p/${projectId}`}
+      href={`/p/${projectId}?tab=entornos`}
       onClick={() => setUi({ reveal: { kind: "environments", id: projectId, at: Date.now() } })}
       className="flex items-center gap-2 border-b py-3 pr-4 pl-3 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
     >
