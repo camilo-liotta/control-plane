@@ -76,7 +76,7 @@ Todo transiciona en **180 ms** con `--ease-standard`. Es el valor por defecto de
   - `default` es la acción principal (una por vista);
   - `outline` y `secondary` son secundarias;
   - `ghost` va en barras y filas;
-  - `destructive` (sólido) es para borrar o perder algo;
+  - `destructive` (sólido) es para borrar o perder algo: el botón que **confirma** adentro de `ConfirmAction`. El que **abre** la confirmación va en `outline` (o como ítem `destructive` de un menú), con "…" al final ("Borrar proyecto…");
   - `link` va dentro de un texto.
 
   Tamaños: `xs`, `sm`, `default`, `lg` y sus `icon-*`. El foco es un anillo de 2 px.
@@ -167,7 +167,7 @@ Una sola regla en toda la app. Los predicados están en `@shared/inbox-count`:
 - **Plurales**: siempre resueltos ("1 sesión", "3 sesiones"), nunca "sesión(es)".
 - **Puntos suspensivos**: el carácter "…" (no tres puntos). Van en lo que todavía pasa ("Cargando…", "Compactando…") y en los botones que abren algo antes de hacer la acción ("Borrar proyecto…").
 - **Comillas**: las rectas, "así", para citar lo que escribió alguien o el nombre de una tarea.
-- **Código**: los comandos, rutas y nombres de archivo van entre `backticks` en markdown, o en `font-mono` en la UI.
+- **Código**: los comandos y nombres de archivo van entre `backticks` en markdown, o en `font-mono` en la UI. Las rutas, según la regla de abajo.
 - **Rutas**:
   - en los lugares de lectura (tarjetas, encabezados, filas, el título de un panel) va **el nombre de la carpeta**, en la voz de la UI (`basename()` de `lib/format`);
   - la ruta completa va en el `title` y en el detalle;
