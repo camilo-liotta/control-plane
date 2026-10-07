@@ -235,7 +235,7 @@ export function ProjectSettingsDialog({
               <FieldDescription>Se pierden sus sesiones, su historial y sus tareas. No toca el repo.</FieldDescription>
             </FieldContent>
             <Button
-              variant="destructive"
+              variant="outline"
               className="shrink-0"
               // Los ajustes quedan abiertos abajo: si cancelás el borrado, no perdés lo que estabas editando.
               onClick={() => setUi({ deleteFor: project.id })}
