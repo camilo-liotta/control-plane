@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
-import { shortPath, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
+import { basename, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { openDrafts, projectReports, useModels, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
@@ -224,7 +224,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           <Detail label="Modelo">{model?.label ?? session.model ?? project.settings.defaultModel ?? "El de tu configuración"}</Detail>
           <Detail label="Esfuerzo">{session.effort ?? project.settings.defaultEffort ?? "El de tu configuración"}</Detail>
           <Detail label="Carpeta" hint={session.cwd}>
-            <span className="font-mono">{shortPath(session.cwd)}</span>
+            {basename(session.cwd)}
           </Detail>
           {session.worktree && <Detail label="Checkout">Worktree propio</Detail>}
           <Detail label="Costo" hint="Lo que costaría por API. Con tu plan no se cobra aparte: sirve para comparar cuánto trabajó cada sesión.">

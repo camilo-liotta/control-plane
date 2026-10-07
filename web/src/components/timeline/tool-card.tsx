@@ -2,7 +2,6 @@ import {
   Bot,
   Check,
   ChevronRight,
-  CircleCheck,
   CircleX,
   FilePen,
   FilePlus,
@@ -290,9 +289,7 @@ export function ToolRow({ call, root, live }: { call: ToolCall; root?: string; l
             )
           ) : error ? (
             <CircleX className="size-3.5 text-status-error" aria-label="Falló" />
-          ) : (
-            <CircleCheck className="size-3.5 text-status-done" aria-label="Listo" />
-          )}
+          ) : null}
           {d.detail && (
             <ChevronRight className={cn("size-3.5 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
           )}

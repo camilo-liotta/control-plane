@@ -1,4 +1,4 @@
-import { Brain, ChevronRight, Compass, Info, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
+import { Brain, ChevronRight, Compass, Info, ListTree, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
@@ -432,26 +432,113 @@ export function TimelineItems({
       <EventItem key={it.ev.id} ev={it.ev} sessionId={sessionId} />
     )
   // Lo que hace la sesión entre mensaje y mensaje (herramientas y pensamiento) va junto, en un
-  // bloque apretado: el chat se lee por los mensajes y las tarjetas, no por cada paso.
+  // bloque apretado: el chat se lee por los mensajes y las tarjetas, no por cada paso. Cuando el
+  // turno terminó, el bloque se pliega en una línea que lo resume.
   const out: React.ReactNode[] = []
-  let run: React.ReactNode[] = []
-  let runKey = 0
+  let run: { it: Item; i: number }[] = []
   const flush = () => {
-    if (run.length === 1) out.push(run[0])
-    else if (run.length) out.push(<div key={`steps-${runKey}`} className="flex flex-col gap-0.5">{run}</div>)
+    if (run.length) {
+      const list = run
+      const first = list[0]!.it
+      const key = `steps-${first.type === "tool" ? first.id : first.ev.id}`
+      const settled = !(live && list[list.length - 1]!.i > lastTurnIndex)
+      out.push(
+        <StepRun key={key} settled={settled} items={list.map((r) => r.it)}>
+          {(only) => list.filter((r) => !only || only(r.it)).map((r) => render(r.it, r.i))}
+        </StepRun>
+      )
+    }
     run = []
   }
   items.forEach((it, i) => {
-    if (isStep(it)) {
-      if (!run.length) runKey = it.type === "tool" ? it.id : it.ev.id
-      run.push(render(it, i))
-    } else {
+    if (isStep(it)) run.push({ it, i })
+    else {
       flush()
       out.push(render(it, i))
     }
   })
   flush()
   return <>{out}</>
+}
+
+const EDITS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"])
+const failedStep = (it: Item) => it.type === "tool" && Boolean(it.call.result?.isError)
+/** Sin resultado en un turno que ya terminó: la sesión se cortó mientras corría. */
+const unfinishedStep = (it: Item) => it.type === "tool" && !it.call.result
+/** Lo que nunca queda escondido adentro del pliegue. */
+const visibleStep = (it: Item) => failedStep(it) || unfinishedStep(it)
+
+/** "12 pasos · 2 archivos editados · 3 comandos": de qué se trató el bloque, sin abrirlo. */
+function stepSummary(items: Item[]): string {
+  const tools = items.filter((it): it is Extract<Item, { type: "tool" }> => it.type === "tool")
+  const files = new Set(
+    tools.filter((t) => EDITS.has(t.call.use.name)).map((t) => String((t.call.use.input as Record<string, unknown>)?.file_path ?? (t.call.use.input as Record<string, unknown>)?.notebook_path ?? t.id))
+  )
+  const commands = tools.filter((t) => t.call.use.name === "Bash").length
+  return [
+    items.length === 1 ? "1 paso" : `${items.length} pasos`,
+    files.size ? (files.size === 1 ? "1 archivo editado" : `${files.size} archivos editados`) : null,
+    commands ? (commands === 1 ? "1 comando" : `${commands} comandos`) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+}
+
+/**
+ * Un bloque de pasos seguidos. Mientras el turno corre, se ven todos. Cuando terminó, se pliega en
+ * una línea (si son dos o más); lo que falló queda siempre a la vista, debajo.
+ */
+function StepRun({
+  items,
+  settled,
+  children,
+}: {
+  items: Item[]
+  settled: boolean
+  children: (only?: (it: Item) => boolean) => React.ReactNode
+}) {
+  // El bloque que viste correr queda abierto al terminar el turno (no salta la página); se pliegan
+  // solos los que ya llegan terminados.
+  const [open, setOpen] = useState(!settled)
+  const foldable = settled && items.length > 1 && items.some((it) => it.type === "tool")
+  if (!foldable) return <div className="flex flex-col gap-0.5">{children()}</div>
+  const failures = items.filter(failedStep).length
+  const unfinished = items.filter(unfinishedStep).length
+  const summary = stepSummary(items)
+  const label = [
+    summary,
+    failures ? (failures === 1 ? "1 falló" : `${failures} fallaron`) : null,
+    unfinished ? (unfinished === 1 ? "1 sin terminar" : `${unfinished} sin terminar`) : null,
+  ]
+    .filter(Boolean)
+    .join(", ")
+  return (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={`${open ? "Ocultar" : "Ver"} los pasos: ${label}`}
+        className={cn(
+          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+          open && "bg-muted/50"
+        )}
+      >
+        <ListTree className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{summary}</span>
+        {failures > 0 && (
+          <span className="shrink-0 font-medium text-status-error">· {failures === 1 ? "1 falló" : `${failures} fallaron`}</span>
+        )}
+        {unfinished > 0 && <span className="shrink-0">· {unfinished === 1 ? "1 sin terminar" : `${unfinished} sin terminar`}</span>}
+        <ChevronRight className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
+      </button>
+      {open ? (
+        <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children()}</div>
+      ) : (
+        failures + unfinished > 0 && <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children(visibleStep)}</div>
+      )}
+    </div>
+  )
 }
 
 /** Las herramientas que no son una tarjeta propia y el pensamiento: los pasos chicos del trabajo. */

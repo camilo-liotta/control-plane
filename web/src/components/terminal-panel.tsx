@@ -14,6 +14,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Shortcut } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
+import { basename } from "@/lib/format"
 import { isNotFound, STALE_SERVER } from "@/lib/server-version"
 import { toneSoft } from "@/lib/status"
 import { useTerminal } from "@/lib/terminal"
@@ -340,8 +341,8 @@ export function TerminalPanel({ session, embedded = false, onClose }: { session:
       <header className="flex min-w-0 items-center gap-2 border-b px-3 py-1 text-xs text-muted-foreground">
         <SquareTerminal className="size-3.5 shrink-0" />
         {!embedded && <span className="shrink-0 font-medium text-foreground">Terminal</span>}
-        <span className="min-w-0 truncate font-mono" title={session.cwd}>
-          {session.cwd}
+        <span className="min-w-0 truncate" title={session.cwd}>
+          {basename(session.cwd)}
         </span>
         <span className={cn("ml-1 shrink-0", status === "error" && "text-status-error")}>
           {status === "connecting"
