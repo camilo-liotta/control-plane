@@ -92,48 +92,70 @@ export function UserTasksCard({ project }: { project: Project }) {
     })
 
   // Llegaste desde la Bandeja o un aviso: la tarea misma (abierta y a la vista) o, sin tarea, la sección.
+  // El pedido se limpia recién después de mover la vista: si se limpiara antes, el efecto se volvería
+  // a correr y su limpieza cancelaría el scroll.
   const pendingReveal = useUi((s) => s.reveal)
   const setUi = useUi((s) => s.set)
   useEffect(() => {
     if (pendingReveal?.kind !== "tasks" || pendingReveal.id !== project.id) return
-    setUi({ reveal: null })
-    const item = pendingReveal.item ? all[pendingReveal.item] : undefined
+    const item = pendingReveal.item ? useStore.getState().tasks[pendingReveal.item] : undefined
     if (item) {
       setTag(null)
       if (item.status !== "open") setShowClosed(true)
       setRevealItem(item.id)
     }
-    const raf = requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
         const el = (item && section.current?.querySelector<HTMLElement>(`[data-task-id="${item.id}"]`)) || section.current
         if (el) reveal(el)
+        setUi({ reveal: null })
       })
-    )
-    return () => cancelAnimationFrame(raf)
-  }, [pendingReveal, project.id, setUi, all])
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
+  }, [pendingReveal, project.id, setUi])
 
   return (
-    <section ref={section} id="tareas-para-vos" className="surface-card scroll-mt-4 p-4 sm:p-5">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <ClipboardList className="size-4.5 shrink-0" />
+    <section ref={section} id="tareas-para-vos" className="surface-card scroll-mt-16 overflow-hidden">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:px-5">
+        <ClipboardList className="size-4 shrink-0 text-muted-foreground" />
         <h2 className="font-medium">Tareas para vos</h2>
-        <span className="text-sm text-muted-foreground">{count}</span>
+        {count > 0 ? (
+          <span className="text-sm text-muted-foreground">{count}</span>
+        ) : (
+          !adding && (
+            <span
+              className="min-w-0 text-xs text-muted-foreground"
+              title="Cuando una sesión necesita algo que no puede hacer ella (un login, algo en otro sistema), lo deja acá."
+            >
+              · nada pendiente de tu lado
+            </span>
+          )
+        )}
         {waiting > 0 && <TonePill tone="attention">{waiting === 1 ? "1 frena a una sesión" : `${waiting} frenan a sesiones`}</TonePill>}
         <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setAdding((v) => !v)}>
           <Plus />
           Nueva tarea
         </Button>
       </header>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Lo que las sesiones necesitan que hagas y no pueden hacer ellas. Ellas mismas las crean y las cierran cuando ya no hacen falta.
-      </p>
 
-      {adding && <NewTask projectId={project.id} onDone={() => setAdding(false)} />}
+      {adding && (
+        <div className="px-4 pb-4 sm:px-5 [&>form]:mt-0">
+          <NewTask projectId={project.id} onDone={() => setAdding(false)} />
+        </div>
+      )}
 
-      {filter && <TagFilter group={groups.get(filter)!} onClear={() => setTag(null)} />}
+      {filter && (
+        <div className="px-4 pb-3 sm:px-5 [&>div]:mt-0">
+          <TagFilter group={groups.get(filter)!} onClear={() => setTag(null)} />
+        </div>
+      )}
 
       {open.length > 0 && (
-        <ul className="mt-3 -mx-4 divide-y border-t sm:-mx-5" hidden={count === 0}>
+        <ul className="divide-y border-t" hidden={count === 0}>
           {open.map((t) => (
             <TaskRow
               key={t.id}
@@ -148,22 +170,26 @@ export function UserTasksCard({ project }: { project: Project }) {
           ))}
         </ul>
       )}
-      {count === 0 && !adding && <p className="mt-3 text-sm text-muted-foreground">Nada pendiente de tu lado.</p>}
 
       {closed.length > 0 && (
-        <div className="mt-3">
-          <button type="button" onClick={() => setShowClosed((v) => !v)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <>
+          <button
+            type="button"
+            onClick={() => setShowClosed((v) => !v)}
+            aria-expanded={showClosed}
+            className="flex w-full items-center gap-1.5 border-t px-4 py-2.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5"
+          >
             <ChevronRight className={cn("size-3.5 transition-transform", showClosed && "rotate-90")} />
             Cerradas en la última semana · {closed.length}
           </button>
           {showClosed && (
-            <ul className="mt-2 -mx-4 divide-y border-t sm:-mx-5">
+            <ul className="divide-y border-t">
               {closed.map((t) => (
                 <ClosedRow key={t.id} task={t} />
               ))}
             </ul>
           )}
-        </div>
+        </>
       )}
     </section>
   )
@@ -260,7 +286,9 @@ function TaskRow({
   onHide: (hidden: boolean) => void
   revealed: boolean
 }) {
-  const [open, setOpen] = useState(task.blocking || task.cli !== null || revealed)
+  // Plegadas: se lee la lista de un vistazo. La que te espera lo dice en su línea, y la Bandeja abre
+  // la que tocaste.
+  const [open, setOpen] = useState(revealed)
   const [note, setNote] = useState("")
   const [notify, setNotify] = useState(task.blocking)
   const overdue = task.due !== null && task.due < Date.now()

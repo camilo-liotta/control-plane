@@ -131,7 +131,7 @@ export function OrchestratorCard({
           )}
           <div className="mt-4 flex flex-wrap gap-2">
             {orchestrator && (
-              <Button asChild size="sm">
+              <Button asChild size="sm" variant="outline">
                 <Link href={`/p/${project.id}/s/${orchestrator.id}`}>Abrir chat</Link>
               </Button>
             )}

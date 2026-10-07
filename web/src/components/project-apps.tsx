@@ -1,13 +1,13 @@
-import { Boxes, ChevronRight, ExternalLink, Pencil, Play, Plus, RotateCw, ScrollText, Sparkles, Square, Trash2 } from "lucide-react"
+import { Boxes, ExternalLink, Pencil, Play, Plus, RotateCw, ScrollText, Sparkles, Square, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { AppHealth, AppInput, AppStatus, AppSuggestion, AppView, Project } from "@shared/types"
 
+import { SectionHeader } from "@/components/project-overview"
 import { Lamp } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -17,7 +17,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
-import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
 import { toneSoft, toneText, type Tone } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { useAction } from "@/lib/use-action"
@@ -418,21 +417,31 @@ function Suggestions({ projectId, onPick }: { projectId: string; onPick: (s: App
   )
 }
 
-/** "Apps" en el resumen del proyecto: lo que se levanta localmente, su estado y los botones. */
+/** Cómo están las apps, en una línea: para el encabezado de Apps y la pestaña del proyecto. */
+export function appsSummary(apps: AppView[]): { tone: Tone; text: string; crashed: number } | null {
+  if (!apps.length) return null
+  const up = apps.filter(isUp).length
+  const crashed = apps.filter((a) => a.state.status === "crashed").length
+  const tone: Tone = crashed ? "error" : up === apps.length ? "done" : "idle"
+  const text = apps.length === 1 ? APP_STATUS[apps[0]!.state.status].label : `${up} de ${apps.length} levantadas`
+  return { tone, text, crashed }
+}
+
+/**
+ * "Apps" del proyecto: lo que se levanta localmente, su estado y los botones. Vive en su pestaña:
+ * mientras está a la vista se piden con `watch` cada 20 s (el server mira la salud de las que no
+ * corren solo mientras alguien las mira).
+ */
 export function ProjectApps({ project }: { project: Project }) {
-  const open = useSectionOpen("project-apps")
-  const { error, retry } = useWatchApps(project.id, open)
-  const stored = useStore((s) => s.apps[project.id])
-  const apps = stored ?? NO_APPS
-  const toggle = usePanelSections((s) => s.toggle)
+  const { error, retry } = useWatchApps(project.id, true)
+  const apps = useStore((s) => s.apps[project.id]) ?? NO_APPS
   const [dialog, setDialog] = useState<{ editing: AppView | null; initial: AppInput | null } | null>(null)
   const [logOf, setLogOf] = useState<string | null>(null)
   const action = useAction()
   const up = apps.filter(isUp).length
-  const crashed = apps.filter((a) => a.state.status === "crashed").length
-  const summaryTone: Tone = crashed ? "error" : apps.length && up === apps.length ? "done" : "idle"
+  const sum = appsSummary(apps)
   const logApp = useMemo(() => apps.find((a) => a.id === logOf) ?? null, [apps, logOf])
-  // Sin datos y con error: no es "ninguna registrada", es que no se pudo saber.
+  // Sin datos y con error: no es "ninguna todavía", es que no se pudo saber.
   const failed = Boolean(error) && !apps.length
   const all = (what: "start" | "stop") => () =>
     action.run(what, async () => {
@@ -447,68 +456,65 @@ export function ProjectApps({ project }: { project: Project }) {
     })
 
   return (
-    <Collapsible open={open} onOpenChange={(v) => toggle("project-apps", v)} className="border-b">
-      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-4 py-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-        <Boxes className="size-4 shrink-0 text-muted-foreground" />
-        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-sm">
-          <span className="font-medium">Apps</span>
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {" · "}
-            {failed ? (
-              <span className="font-medium text-status-error">no se pudieron cargar</span>
-            ) : apps.length ? (
-              <>
-                <Lamp tone={summaryTone} className="size-1.5" />
-                {apps.length === 1 ? APP_STATUS[apps[0]!.state.status].label : `${up} de ${apps.length} levantadas`}
-                {crashed > 0 && apps.length > 1 && <span className="font-medium text-status-error">· {crashed === 1 ? "1 se cayó" : `${crashed} se cayeron`}</span>}
-              </>
-            ) : (
-              "ninguna todavía"
-            )}
-          </span>
-          <span className="hidden text-xs text-muted-foreground sm:group-data-[state=closed]:inline">· lo que se levanta localmente: backend, frontend, workers</span>
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="px-4 pb-4 sm:pl-10">
-        {failed ? (
-          <LoadError what="las apps" error={error} onRetry={retry} />
-        ) : (
+    <section className="surface-card overflow-hidden">
+      <SectionHeader
+        icon={<Boxes />}
+        title="Apps"
+        summary={
+          failed ? (
+            <span className="font-medium text-status-error">no se pudieron cargar</span>
+          ) : sum ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Lamp tone={sum.tone} className="size-1.5" />
+              {sum.text}
+              {sum.crashed > 0 && apps.length > 1 && <span className="font-medium text-status-error">· {sum.crashed === 1 ? "1 se cayó" : `${sum.crashed} se cayeron`}</span>}
+            </span>
+          ) : (
+            "lo que se levanta localmente: backend, frontend, workers"
+          )
+        }
+        actions={
           <>
             {apps.length > 1 && (
-              <div className="mb-1 flex items-center gap-1.5">
-                <Button size="xs" variant="outline" onClick={all("start")} disabled={action.busy() || up === apps.length}>
+              <>
+                <Button size="xs" variant="ghost" onClick={all("start")} disabled={action.busy() || up === apps.length}>
                   {action.busy("start") ? <Spinner /> : <Play />}
                   Levantar todas
                 </Button>
-                <Button size="xs" variant="outline" onClick={all("stop")} disabled={action.busy() || !apps.some(isOurs)}>
+                <Button size="xs" variant="ghost" onClick={all("stop")} disabled={action.busy() || !apps.some(isOurs)}>
                   {action.busy("stop") ? <Spinner /> : <Square />}
                   Bajar todas
                 </Button>
-              </div>
+              </>
             )}
-            {apps.length > 0 ? (
-              <ul className="divide-y">
-                {apps.map((a) => (
-                  <AppRow key={a.id} app={a} onEdit={() => setDialog({ editing: a, initial: null })} onLog={() => setLogOf(a.id)} />
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Lo que se levanta localmente (un backend, un frontend, un worker). Las sesiones las registran solas cuando arman una; también podés agregarlas vos.
-              </p>
-            )}
-            <Button size="xs" variant="ghost" className="mt-2 text-muted-foreground" onClick={() => setDialog({ editing: null, initial: null })}>
+            <Button size="xs" variant="ghost" onClick={() => setDialog({ editing: null, initial: null })}>
               <Plus />
-              Agregar una app
+              Agregar app
             </Button>
-            {apps.length === 0 && open && <Suggestions projectId={project.id} onPick={(s) => setDialog({ editing: null, initial: s })} />}
+          </>
+        }
+      />
+      <div className="px-4 pb-3">
+        {failed ? (
+          <LoadError what="las apps" error={error} onRetry={retry} className="mt-3" />
+        ) : apps.length > 0 ? (
+          <ul className="divide-y">
+            {apps.map((a) => (
+              <AppRow key={a.id} app={a} onEdit={() => setDialog({ editing: a, initial: null })} onLog={() => setLogOf(a.id)} />
+            ))}
+          </ul>
+        ) : (
+          <>
+            <p className="pt-3 text-sm text-muted-foreground">
+              Lo que se levanta localmente (un backend, un frontend, un worker). Las sesiones las registran solas cuando arman una; también podés agregarlas vos.
+            </p>
+            <Suggestions projectId={project.id} onPick={(s) => setDialog({ editing: null, initial: s })} />
           </>
         )}
-      </CollapsibleContent>
+      </div>
       <AppDialog projectId={project.id} open={!!dialog} editing={dialog?.editing ?? null} initial={dialog?.initial ?? null} onClose={() => setDialog(null)} />
       <LogDialog app={logApp} onClose={() => setLogOf(null)} />
-    </Collapsible>
+    </section>
   )
 }
 const NO_APPS: AppView[] = []
