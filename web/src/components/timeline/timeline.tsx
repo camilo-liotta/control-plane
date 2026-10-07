@@ -463,6 +463,10 @@ export function TimelineItems({
 
 const EDITS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"])
 const failedStep = (it: Item) => it.type === "tool" && Boolean(it.call.result?.isError)
+/** Sin resultado en un turno que ya terminó: la sesión se cortó mientras corría. */
+const unfinishedStep = (it: Item) => it.type === "tool" && !it.call.result
+/** Lo que nunca queda escondido adentro del pliegue. */
+const visibleStep = (it: Item) => failedStep(it) || unfinishedStep(it)
 
 /** "12 pasos · 2 archivos editados · 3 comandos": de qué se trató el bloque, sin abrirlo. */
 function stepSummary(items: Item[]): string {
@@ -471,12 +475,10 @@ function stepSummary(items: Item[]): string {
     tools.filter((t) => EDITS.has(t.call.use.name)).map((t) => String((t.call.use.input as Record<string, unknown>)?.file_path ?? (t.call.use.input as Record<string, unknown>)?.notebook_path ?? t.id))
   )
   const commands = tools.filter((t) => t.call.use.name === "Bash").length
-  const thoughts = items.length - tools.length
   return [
-    tools.length ? (tools.length === 1 ? "1 paso" : `${tools.length} pasos`) : null,
+    items.length === 1 ? "1 paso" : `${items.length} pasos`,
     files.size ? (files.size === 1 ? "1 archivo editado" : `${files.size} archivos editados`) : null,
     commands ? (commands === 1 ? "1 comando" : `${commands} comandos`) : null,
-    !tools.length && thoughts ? "Pensamiento" : null,
   ]
     .filter(Boolean)
     .join(" · ")
@@ -495,29 +497,46 @@ function StepRun({
   settled: boolean
   children: (only?: (it: Item) => boolean) => React.ReactNode
 }) {
-  const [open, setOpen] = useState(false)
-  const foldable = settled && items.length > 1
+  // El bloque que viste correr queda abierto al terminar el turno (no salta la página); se pliegan
+  // solos los que ya llegan terminados.
+  const [open, setOpen] = useState(!settled)
+  const foldable = settled && items.length > 1 && items.some((it) => it.type === "tool")
   if (!foldable) return <div className="flex flex-col gap-0.5">{children()}</div>
   const failures = items.filter(failedStep).length
+  const unfinished = items.filter(unfinishedStep).length
+  const summary = stepSummary(items)
+  const label = [
+    summary,
+    failures ? (failures === 1 ? "1 falló" : `${failures} fallaron`) : null,
+    unfinished ? (unfinished === 1 ? "1 sin terminar" : `${unfinished} sin terminar`) : null,
+  ]
+    .filter(Boolean)
+    .join(", ")
   return (
     <div className="flex flex-col gap-0.5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-label={`${open ? "Ocultar" : "Ver"} los pasos: ${label}`}
         className={cn(
-          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
           open && "bg-muted/50"
         )}
       >
         <ListTree className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate">{stepSummary(items)}</span>
+        <span className="min-w-0 truncate">{summary}</span>
         {failures > 0 && (
           <span className="shrink-0 font-medium text-status-error">· {failures === 1 ? "1 falló" : `${failures} fallaron`}</span>
         )}
+        {unfinished > 0 && <span className="shrink-0">· {unfinished === 1 ? "1 sin terminar" : `${unfinished} sin terminar`}</span>}
         <ChevronRight className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
       </button>
-      {open ? <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children()}</div> : failures > 0 && children(failedStep)}
+      {open ? (
+        <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children()}</div>
+      ) : (
+        failures + unfinished > 0 && <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children(visibleStep)}</div>
+      )}
     </div>
   )
 }

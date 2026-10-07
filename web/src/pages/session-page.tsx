@@ -42,6 +42,7 @@ import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
+import { sessionStatus } from "@/lib/status"
 
 export function SessionPage({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const session = useStore((s) => s.sessions[sessionId])
@@ -221,7 +222,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             </span>
             {/* En angosto, solo la luz (con el estado para el lector): la pastilla le come el nombre. */}
             <StatusPill session={session} className="hidden shrink-0 sm:inline-flex" />
-            <SessionLamp session={session} className="sm:hidden" />
+            <span className="flex shrink-0 sm:hidden" title={sessionStatus(session).label}>
+              <SessionLamp session={session} />
+            </span>
           </span>
         }
         subtitle={
