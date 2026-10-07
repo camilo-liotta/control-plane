@@ -25,7 +25,11 @@ iso_env() {
 case "$1" in
 start)
   mkdir -p "$X" "$B/home/.config" && chmod 700 "$X"
-  [ -S "$X/cp-desk" ] && { echo "ya está arriba"; exit 0; }
+  for p in $(pgrep -x gnome-shell); do
+    tr '\0' '\n' < /proc/$p/environ 2>/dev/null | grep -qx "XDG_RUNTIME_DIR=$X" && { echo "ya está arriba"; exit 0; }
+  done
+  # De una corrida anterior que se bajó: el socket y el lock quedan.
+  rm -f "$X/cp-desk" "$X/cp-desk.lock"
   (
     iso_env
     unset DBUS_SESSION_BUS_ADDRESS WAYLAND_DISPLAY DISPLAY XAUTHORITY
@@ -92,7 +96,7 @@ stop)
       kill "${d#/proc/}" 2>/dev/null && echo "SIGTERM a ${d#/proc/} ($(cat "$d/comm" 2>/dev/null))"
     fi
   done
-  rm -f "$B/bus.sh"
+  rm -f "$B/bus.sh" "$X/cp-desk" "$X/cp-desk.lock"
   ;;
 *) sed -n '2,12p' "$0"; exit 1 ;;
 esac
