@@ -63,7 +63,7 @@ export function DiffView({ oldText, newText, maxLines = 80 }: { oldText: string;
           <tbody>
             {visible.map((row, i) =>
               row.kind === "gap" ? (
-                <tr key={i} className="text-muted-foreground/70">
+                <tr key={i} className="text-muted-foreground">
                   <td className="w-5 select-none" />
                   <td className="px-2 py-0.5 font-sans text-2xs">··· {row.count} líneas sin cambios</td>
                 </tr>
