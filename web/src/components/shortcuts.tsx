@@ -71,7 +71,7 @@ export function GlobalShortcuts() {
             return
           }
           if (to.kind === "proposals") setUi({ reveal: { kind: "proposals", id: to.orchestratorId, at: Date.now() } })
-          if (to.kind === "task") setUi({ reveal: { kind: "tasks", id: to.task.projectId, at: Date.now() } })
+          if (to.kind === "task") setUi({ reveal: { kind: "tasks", id: to.task.projectId, item: to.task.id, at: Date.now() } })
           navigate(needsYouHref(to))
           return
         }

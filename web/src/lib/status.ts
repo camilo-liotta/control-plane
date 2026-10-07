@@ -46,6 +46,14 @@ export function sessionStatus(s: Session): StatusView {
 /** La regla única de "te necesita" (ver DESIGN.md): una sesión esperando algo tuyo. "Bloqueada" no entra. */
 export { sessionWaits as sessionNeedsYou } from "@shared/inbox-count"
 
+/** Por qué te necesita una sesión, en una línea (Bandeja, tablero, paleta). */
+export function needReason(s: Session, compacting = false): string {
+  if (s.pending?.kind === "permission") return "pide permiso para una herramienta"
+  if (s.pending) return "te hizo una pregunta"
+  if (compacting) return "espera que elijas qué conservar al compactar"
+  return s.statusDetail ?? "te necesita"
+}
+
 export const toneText: Record<Tone, string> = {
   working: "text-status-working",
   attention: "text-status-attention",

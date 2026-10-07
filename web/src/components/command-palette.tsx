@@ -118,7 +118,7 @@ export function CommandPalette() {
   const goNeeds = (n: NeedsYou) =>
     run(() => {
       if (n.kind === "proposals") setUi({ reveal: { kind: "proposals", id: n.orchestratorId, at: Date.now() } })
-      if (n.kind === "task") setUi({ reveal: { kind: "tasks", id: n.task.projectId, at: Date.now() } })
+      if (n.kind === "task") setUi({ reveal: { kind: "tasks", id: n.task.projectId, item: n.task.id, at: Date.now() } })
       navigate(needsYouHref(n))
     })
 
