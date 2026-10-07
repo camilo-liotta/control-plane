@@ -204,9 +204,14 @@ export function ProjectSettingsDialog({
               className="min-h-24"
             />
           </Field>
-        </FieldGroup>
-        <DialogFooter sticky className="sm:justify-between">
-          <div className="flex gap-2">
+
+          {/* Lo que saca al proyecto, al final y lejos de Guardar: ninguna de las dos se guarda con el resto. */}
+          <FieldSeparator>Archivar o borrar</FieldSeparator>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel>Archivar el proyecto</FieldLabel>
+              <FieldDescription>Detiene sus sesiones y lo saca de la barra lateral. Lo restaurás desde el inicio, en Archivados.</FieldDescription>
+            </FieldContent>
             <ConfirmAction
               title={`¿Archivar ${project.name}?`}
               description={
@@ -219,27 +224,34 @@ export function ProjectSettingsDialog({
               destructive={false}
               onConfirm={archive}
             >
-              <Button variant="outline">Archivar…</Button>
+              <Button variant="outline" className="shrink-0">
+                Archivar…
+              </Button>
             </ConfirmAction>
+          </Field>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel>Borrar el proyecto</FieldLabel>
+              <FieldDescription>Se pierden sus sesiones, su historial y sus tareas. No toca el repo.</FieldDescription>
+            </FieldContent>
             <Button
-              variant="ghost"
-              onClick={() => {
-                onOpenChange(false)
-                setUi({ deleteFor: project.id })
-              }}
+              variant="destructive"
+              className="shrink-0"
+              // Los ajustes quedan abiertos abajo: si cancelás el borrado, no perdés lo que estabas editando.
+              onClick={() => setUi({ deleteFor: project.id })}
             >
               Borrar proyecto…
             </Button>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={save} disabled={saving}>
-              {saving && <Spinner />}
-              Guardar
-            </Button>
-          </div>
+          </Field>
+        </FieldGroup>
+        <DialogFooter sticky>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Spinner />}
+            Guardar
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
