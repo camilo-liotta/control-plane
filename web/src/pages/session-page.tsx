@@ -10,7 +10,7 @@ import { ContextMeter, Ring } from "@/components/context-meter"
 import { ModelPicker, ModelSubmenu, SubagentsChip } from "@/components/model-picker"
 import { PageHeader } from "@/components/page-header"
 import { SessionPanel } from "@/components/session-panel"
-import { StatusPill } from "@/components/status"
+import { SessionLamp, StatusPill } from "@/components/status"
 import { FileRefScope } from "@/components/file-ref"
 import { TerminalTargetProvider } from "@/components/take-to-terminal"
 import { TerminalPanel } from "@/components/terminal-panel"
@@ -219,7 +219,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
             <span className="name min-w-0 truncate" title={isOrch ? "Orquestadora" : session.name}>
               {isOrch ? "Orquestadora" : session.name}
             </span>
-            <StatusPill session={session} className="shrink-0" />
+            {/* En angosto, solo la luz (con el estado para el lector): la pastilla le come el nombre. */}
+            <StatusPill session={session} className="hidden shrink-0 sm:inline-flex" />
+            <SessionLamp session={session} className="sm:hidden" />
           </span>
         }
         subtitle={

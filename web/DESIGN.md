@@ -168,6 +168,10 @@ Una sola regla en toda la app. Los predicados están en `@shared/inbox-count`:
 - **Puntos suspensivos**: el carácter "…" (no tres puntos). Van en lo que todavía pasa ("Cargando…", "Compactando…") y en los botones que abren algo antes de hacer la acción ("Borrar proyecto…").
 - **Comillas**: las rectas, "así", para citar lo que escribió alguien o el nombre de una tarea.
 - **Código**: los comandos, rutas y nombres de archivo van entre `backticks` en markdown, o en `font-mono` en la UI.
+- **Rutas**:
+  - en los lugares de lectura (tarjetas, encabezados, filas, el título de un panel) va **el nombre de la carpeta**, en la voz de la UI (`basename()` de `lib/format`);
+  - la ruta completa va en el `title` y en el detalle;
+  - la ruta en `font-mono` solo cuando es el dato en sí: un comando, el archivo que tocó una herramienta, el campo donde se escribe.
 
 ## Acciones que pegan al server
 

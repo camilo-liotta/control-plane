@@ -27,11 +27,23 @@ const DRAFT = JSON.stringify({
     { title: "Archivos", points: ["src/billing/afip-client.ts", "src/billing/invoices.ts"] },
   ],
 })
+// Los comandos que devuelve el initialize, para ver el menú de / del composer.
+const COMMANDS = [
+  { name: "compact", description: "Compacta la conversación eligiendo qué queda", argumentHint: "[instrucciones]", builtin: true },
+  { name: "clear", description: "Empieza una conversación nueva", argumentHint: "", builtin: true },
+  { name: "context", description: "Muestra cuánto contexto usa la sesión", argumentHint: "", builtin: true },
+  { name: "cost", description: "Muestra lo que lleva gastado la sesión", argumentHint: "", builtin: true },
+  { name: "model", description: "Cambia el modelo", argumentHint: "[modelo]", builtin: true },
+  { name: "review", description: "Revisa un pull request", argumentHint: "[número]", builtin: true },
+  { name: "commit", description: "Arma el commit de lo que cambió", argumentHint: "", builtin: false },
+  { name: "deploy-check", description: "Lista lo que hay que revisar antes de un deploy", argumentHint: "", builtin: false },
+  { name: "release-notes", description: "Escribe las notas de la versión a partir de los commits", argumentHint: "[desde]", builtin: false },
+]
 must(
   `  if (msg.type === "control_request") {
     out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: {} } })`,
   `  if (msg.type === "control_request") {
-    const extra = msg.request?.subtype === "side_question" ? { response: ${JSON.stringify(DRAFT)} } : {}
+    const extra = msg.request?.subtype === "side_question" ? { response: ${JSON.stringify(DRAFT)} } : msg.request?.subtype === "initialize" ? { commands: ${JSON.stringify(COMMANDS)} } : {}
     out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: extra } })`
 )
 const DEMO = fs.readFileSync(new URL("./fake-demo.js.txt", import.meta.url), "utf8")
