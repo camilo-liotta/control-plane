@@ -15,7 +15,7 @@ import { Shortcut } from "@/components/ui/kbd"
 import { LoadError } from "@/components/ui/load-error"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
-import { plural, shortPath, timeAgo, tokens, totals, usd } from "@/lib/format"
+import { basename, plural, timeAgo, tokens, totals, usd } from "@/lib/format"
 import { lastRoute } from "@/lib/nav"
 import { openDrafts, projectSessions, useCurrentAccount, useProjects, useStore } from "@/lib/store"
 import { reportStatusView, sessionNeedsYou, sessionStatus, type Tone } from "@/lib/status"
@@ -111,14 +111,17 @@ function ProjectCard({ project }: { project: Project }) {
     >
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <h2 className="min-w-0 truncate text-base font-semibold" title={project.name}>
+          <h2 className="min-w-0 truncate text-base font-semibold" title={`${project.name} · ${project.repoPath}`}>
             {project.name}
           </h2>
           <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         </div>
-        <p className="truncate font-mono text-2xs text-muted-foreground" title={project.repoPath}>
-          {shortPath(project.repoPath)}
-        </p>
+        {/* La carpeta, solo si no es el nombre del proyecto; la ruta completa queda en el title. */}
+        {basename(project.repoPath) !== project.name && (
+          <p className="truncate text-2xs text-muted-foreground" title={project.repoPath}>
+            Carpeta {basename(project.repoPath)}
+          </p>
+        )}
       </div>
       <div className="flex min-h-5 flex-wrap items-center gap-1.5">
         {needs > 0 && <TonePill tone="attention">{needs} {needs === 1 ? "te necesita" : "te necesitan"}</TonePill>}
@@ -362,10 +365,14 @@ function ArchivedProjects() {
                     {p.name}
                   </span>
                   <span className="flex min-w-0 gap-1.5 text-2xs text-muted-foreground">
-                    <span className="truncate font-mono" title={p.repoPath}>
-                      {shortPath(p.repoPath)}
-                    </span>
-                    <span aria-hidden>·</span>
+                    {basename(p.repoPath) !== p.name && (
+                      <>
+                        <span className="truncate" title={p.repoPath}>
+                          Carpeta {basename(p.repoPath)}
+                        </span>
+                        <span aria-hidden>·</span>
+                      </>
+                    )}
                     <span className="shrink-0">Archivado {timeAgo(p.archivedAt)}</span>
                   </span>
                 </span>
