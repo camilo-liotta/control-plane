@@ -31,7 +31,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { basename, tokens, totals, usd } from "@/lib/format"
-import { sessionNeedsYou, toneText } from "@/lib/status"
+import { needReason, sessionNeedsYou, toneText } from "@/lib/status"
 import { cn } from "@/lib/utils"
 import { openDrafts, projectReports, projectSessions, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
@@ -63,14 +63,6 @@ function SectionTitle({
  */
 const TABS = ["resumen", "repos", "entornos", "mapa"] as const
 type Tab = (typeof TABS)[number]
-
-/** Por qué te necesita una sesión, en una línea (la misma razón que en la Bandeja). */
-function needReason(s: Session, compacting: boolean | undefined) {
-  if (s.pending?.kind === "permission") return "pide permiso para una herramienta"
-  if (s.pending) return "te hizo una pregunta"
-  if (compacting) return "espera que elijas qué conservar al compactar"
-  return s.statusDetail ?? "te necesita"
-}
 
 /** Arriba de todo: las sesiones que esperan una respuesta tuya. */
 function NeedsYou({ sessions }: { sessions: Session[] }) {
