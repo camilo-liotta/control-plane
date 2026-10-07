@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { inboxCounts, taskWaits } from "@shared/inbox-count"
 import { orderTasks } from "@shared/task-order"
 import type { Draft, Report, Session, UserTask } from "@shared/types"
+import { needReason } from "@/lib/status"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
@@ -52,14 +53,6 @@ function Rows({ children }: { children: React.ReactNode }) {
 const rowClass = "flex min-h-11 items-center gap-2.5 px-3 py-2 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none focus-visible:ring-inset"
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
-
-/** Por qué te necesita una sesión, en una línea. */
-function needReason(s: Session, compacting: boolean | undefined) {
-  if (s.pending?.kind === "permission") return "pide permiso para una herramienta"
-  if (s.pending) return "te hizo una pregunta"
-  if (compacting) return "espera que elijas qué conservar al compactar"
-  return s.statusDetail ?? "te necesita"
-}
 
 function summary(b: Bucket) {
   const blocking = b.todo.filter((t) => t.blocking).length
