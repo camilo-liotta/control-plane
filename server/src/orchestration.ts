@@ -2,6 +2,7 @@ import type { Accounts } from "./accounts.ts"
 import { lastCostState, listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
 import type { Db, ProjectRecord, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
+import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
 import { checkModelChoice, choiceLabel, sessionChoice } from "./shared/models.ts"
@@ -64,6 +65,8 @@ export interface DraftEdits {
   fresh?: boolean
   model?: string | null
   effort?: string | null
+  /** Solo planes: la lista completa de pasos, como la ve el usuario (los hechos no se tocan). */
+  steps?: StepInput[]
 }
 
 export interface CreateWorkerInput {
@@ -92,12 +95,15 @@ export class Orchestration {
   private hub: Hub
   private sessions: SessionManager
   private accounts: Accounts | null
+  /** Los planes por pasos (avanzan solos, sin despertar a la orquestadora). */
+  readonly plans: Plans
 
   constructor(db: Db, hub: Hub, sessions: SessionManager, accounts: Accounts | null = null) {
     this.db = db
     this.hub = hub
     this.sessions = sessions
     this.accounts = accounts
+    this.plans = new Plans(this, db, sessions)
     sessions.on("turnEnd", (rec, info) => this.onTurnEnd(rec, info))
     sessions.on("status", (rec, status) => {
       // Si la orquestadora quedó libre (por ejemplo, tras arrancar) y hay cola, se la entregamos.
@@ -127,12 +133,12 @@ export class Orchestration {
     return { ...r, sessionName: this.db.getSession(r.sessionId)?.name ?? "?" }
   }
 
-  private broadcastProject(projectId: string) {
+  broadcastProject(projectId: string) {
     const p = this.db.getProject(projectId)
     if (p) this.hub.broadcast({ type: "project", project: this.projectView(p) })
   }
 
-  private broadcastDraft(id: string) {
+  broadcastDraft(id: string) {
     const d = this.db.getDraft(id)
     if (d) this.hub.broadcast({ type: "draft", draft: d })
   }
@@ -165,7 +171,7 @@ export class Orchestration {
   }
 
   /** Lo que usaría un worker nuevo del proyecto. */
-  private newWorkerModel(projectId: string): string | null {
+  newWorkerModel(projectId: string): string | null {
     return sessionChoice(this.db.getProject(projectId)?.settings, { kind: "worker", model: null, effort: null }).model
   }
 
@@ -178,7 +184,7 @@ export class Orchestration {
    * Antes de mandarle un prompt: le cambia el modelo y el esfuerzo si la propuesta pide otros (quedan
    * guardados en la sesión) y deja una línea en su chat cuando cambia lo que va a usar.
    */
-  private async applyChoice(target: SessionRecord, model: string | null, effort: string | null, title: string) {
+  async applyChoice(target: SessionRecord, model: string | null, effort: string | null, title: string) {
     const beforeModel = this.effectiveModel(target)
     const beforeEffort = this.effectiveEffort(target)
     if (model && model !== target.model) await this.sessions.setModel(target.id, model)
@@ -193,7 +199,7 @@ export class Orchestration {
     this.sessions.addEvent(target.id, { kind: "notice", level: "info", text: `Modelo: ${label}, para «${title}»` })
   }
 
-  private noteDecision(projectId: string, text: string) {
+  noteDecision(projectId: string, text: string) {
     const list = this.decisions.get(projectId) ?? []
     list.push({ at: now(), text })
     this.decisions.set(projectId, list.slice(-30))
@@ -203,11 +209,20 @@ export class Orchestration {
 
   /** Un worker terminó (report_result). */
   report(worker: SessionRecord, input: { status: ReportStatus; summary: string; details?: string | null }): string {
+    // Un paso de un plan: queda en el plan y no despierta a nadie (salvo que lo frene).
+    const inPlan = this.plans.onReport(worker, input)
+    if (inPlan) return inPlan
+    this.enqueueReport(worker, input)
+    return "Resultado registrado en la cola de la orquestadora. Quedate disponible: el usuario o una nueva tarea pueden llegar en cualquier momento. No hace falta que le avises a nadie más."
+  }
+
+  /** Pone un resultado en la cola de la orquestadora (y programa la entrega). */
+  enqueueReport(worker: SessionRecord, input: { status: ReportStatus; summary: string; details?: string | null; taskTitle?: string | null }) {
     const report = {
       id: shortId("r_"),
       projectId: worker.projectId,
       sessionId: worker.id,
-      taskTitle: worker.taskTitle,
+      taskTitle: input.taskTitle !== undefined ? input.taskTitle : worker.taskTitle,
       status: input.status,
       summary: input.summary.trim(),
       details: input.details?.trim() || null,
@@ -235,7 +250,6 @@ export class Orchestration {
     this.lockReadyDrafts(worker.projectId)
     this.schedule(worker.projectId)
     this.broadcastProject(worker.projectId)
-    return "Resultado registrado en la cola de la orquestadora. Quedate disponible: el usuario o una nueva tarea pueden llegar en cualquier momento. No hace falta que le avises a nadie más."
   }
 
   private lockReadyDrafts(projectId: string) {
@@ -286,6 +300,7 @@ export class Orchestration {
 
   /** Cancela las entregas programadas (al apagar el server). */
   dispose() {
+    this.plans.dispose()
     for (const t of [...this.timers.values(), ...this.followUps.values()]) clearTimeout(t)
     this.timers.clear()
     this.followUps.clear()
@@ -459,7 +474,8 @@ export class Orchestration {
       })
       if (project?.settings.autoDispatch) {
         for (const d of staged) {
-          if (d.kind === "prompt") void this.sendDraft(d.id, {}, true).catch(() => {})
+          // Una sesión nueva (también la de un plan) la aprueba siempre el usuario.
+          if (d.kind === "prompt" || (d.kind === "plan" && d.targetSessionId)) void this.sendDraft(d.id, {}, true).catch(() => {})
         }
       }
     }
@@ -483,6 +499,7 @@ export class Orchestration {
       const names = this.workersOf(orch.projectId).map((w) => w.name).join(", ") || "ninguna"
       throw new Error(`No existe la sesión "${input.session}". Sesiones worker: ${names}. Si hace falta una nueva, usá propose_session.`)
     }
+    this.assertNoPlan(target)
     const choice = this.checkChoice(input.model, input.effort, this.effectiveModel(target))
     const d: Draft = {
       id: shortId("d_"),
@@ -556,10 +573,13 @@ export class Orchestration {
       fresh?: boolean
       model?: string | null
       effort?: string | null
+      steps?: StepInput[]
     }
   ): string {
     const d = this.db.getDraft(input.id)
     if (!d || d.projectId !== orch.projectId) throw new Error(`No existe la propuesta ${input.id}.`)
+    if (d.kind === "plan" && d.state !== "discarded")
+      return this.plans.update(orch, d, { title: input.title, steps: input.steps }) + this.openDraftGuard(orch.projectId)
     if (d.state === "sent" || d.state === "discarded")
       throw new Error(`La propuesta ${d.id} ya fue ${d.state === "sent" ? "enviada" : "descartada"}; creá una nueva si hace falta.`)
     const patch: Partial<Draft> = { state: "staged", updatedAt: now(), revision: d.revision + 1 }
@@ -587,6 +607,15 @@ export class Orchestration {
     return `Propuesta ${d.id} actualizada (revisión ${d.revision + 1})${this.choiceNote(this.db.getDraft(d.id)!)}.${this.openDraftGuard(orch.projectId)}`
   }
 
+  /** Una sesión con un plan en curso no recibe otros prompts en el medio: los reportes se mezclarían. */
+  private assertNoPlan(target: SessionRecord) {
+    const plan = this.plans.busyWith(target.id)
+    if (plan)
+      throw new Error(
+        `${target.name} está en medio del plan ${plan.id} «${plan.title}». Para cambiar lo que sigue, usá update_proposal sobre el plan cuando se pause, o cancelalo con cancel_plan.`
+      )
+  }
+
   /** El modelo con que seguiría la sesión de una propuesta si no lo cambia: contra él se valida el esfuerzo. */
   private baseModelOf(d: Pick<Draft, "kind" | "targetSessionId" | "projectId">): string | null {
     const target = d.targetSessionId ? this.db.getSession(d.targetSessionId) : null
@@ -611,16 +640,31 @@ export class Orchestration {
 
   listProposals(projectId: string): string {
     const open = this.db.listDrafts({ projectId, states: ["staged", "ready"] })
-    if (!open.length) return "No hay propuestas abiertas."
-    return open
-      .map((d) => {
-        const target = d.targetSessionId ? (this.db.getSession(d.targetSessionId)?.name ?? null) : null
-        const subs = d.subagents.length
-          ? `\nSubagentes: ${d.subagents.map((s) => `${s.name} (${s.role || "sin rol"}): ${s.task}`).join(" | ")}`
-          : ""
-        return `${formatDraftLine(d, target)}\n${d.prompt}${subs}`
-      })
-      .join("\n\n")
+    const plans = this.db
+      .listDrafts({ projectId, states: ["sent"] })
+      .filter((d) => d.kind === "plan" && (d.planState === "running" || d.planState === "paused"))
+    if (!open.length && !plans.length) return "No hay propuestas abiertas."
+    const name = (d: Draft) => (d.targetSessionId ? (this.db.getSession(d.targetSessionId)?.name ?? null) : null)
+    const blocks = open.map((d) => {
+      if (d.kind === "plan")
+        return `${formatDraftLine(d, name(d))}${d.revises ? `\nCambia los pasos que faltan del plan ${d.revises}.` : ""}\n${this.plans.describe(d)}`
+      const subs = d.subagents.length
+        ? `\nSubagentes: ${d.subagents.map((s) => `${s.name} (${s.role || "sin rol"}): ${s.task}`).join(" | ")}`
+        : ""
+      return `${formatDraftLine(d, name(d))}\n${d.prompt}${subs}`
+    })
+    if (plans.length) {
+      blocks.push(
+        "## Planes aprobados que siguen\n" +
+          plans
+            .map(
+              (d) =>
+                `- [${d.id}] → ${name(d) ?? "?"}: "${d.title}" · ${d.planState === "paused" ? `pausado${d.planNote ? ` (${d.planNote})` : ""}` : "en curso"}, paso ${(d.currentStep ?? 0) + 1} de ${d.steps.length}\n${this.plans.describe(d)}`
+            )
+            .join("\n\n")
+      )
+    }
+    return blocks.join("\n\n")
   }
 
   /** La orquestadora trae los resultados en cola a mitad de turno. */
@@ -641,7 +685,7 @@ export class Orchestration {
 
   // ------------------------------------------------------- acciones del usuario
 
-  private nameTaken(name: string): boolean {
+  nameTaken(name: string): boolean {
     const n = name.toLowerCase()
     return this.db.listSessions().some((s) => s.name.toLowerCase() === n)
   }
@@ -657,6 +701,11 @@ export class Orchestration {
     if (d.state === "staged")
       throw new Error("La orquestadora todavía está revisando resultados: la propuesta se libera cuando termine.")
     if (d.state !== "ready") throw new Error("La propuesta ya no está pendiente")
+    if (d.kind === "plan") {
+      await this.plans.approve(d, edits, auto)
+      this.broadcastProject(d.projectId)
+      return this.db.getDraft(d.id)!
+    }
     const title = edits.title?.trim() || d.title
     const prompt = edits.prompt?.trim() || d.prompt
     const subagents = edits.subagents !== undefined ? normalizeSubagents(edits.subagents) : d.subagents
@@ -682,8 +731,9 @@ export class Orchestration {
         if (!d.targetSessionId) throw new Error("La propuesta no tiene sesión destino")
         const target = this.db.getSession(d.targetSessionId)
         if (!target || target.archivedAt) throw new Error("La sesión destino ya no existe")
-        // Empezar de cero: /clear y, cuando Claude Code confirma la conversación nueva, el prompt.
-        // En orden: de cero, después el modelo y el esfuerzo, y recién ahí el prompt.
+        this.assertNoPlan(target)
+        // En orden: de cero (/clear, y espera a que Claude Code confirme la conversación nueva), el modelo
+        // y el esfuerzo, y recién ahí el prompt.
         if (fresh) await this.sessions.clearConversation(target.id)
         await this.applyChoice(target, model, effort, title)
         this.sessions.update(target.id, { taskTitle: title, taskState: "assigned" })
@@ -729,7 +779,15 @@ export class Orchestration {
   editDraft(id: string, edits: DraftEdits): Draft {
     const d = this.db.getDraft(id)
     if (!d) throw new Error("La propuesta no existe")
+    if (d.kind === "plan" && d.state === "sent") return this.plans.editPaused(d.id, edits)
     if (d.state !== "ready") throw new Error("Solo se pueden editar propuestas listas")
+    if (d.kind === "plan" && edits.steps !== undefined) {
+      // Llega la lista completa. En un cambio de un plan aprobado, los pasos hechos quedan como están.
+      const kept = d.revises ? d.steps.slice(0, d.currentStep ?? 0) : []
+      const target = d.targetSessionId ? this.db.getSession(d.targetSessionId) : null
+      const base = kept.slice().reverse().find((s) => s.model)?.model ?? (target ? this.effectiveModel(target) : this.newWorkerModel(d.projectId))
+      this.db.updateDraft(d.id, { steps: [...kept, ...this.plans.normalizeSteps(edits.steps.slice(kept.length), base)] })
+    }
     const choice =
       edits.model !== undefined || edits.effort !== undefined
         ? this.checkChoice(edits.model === undefined ? d.model : edits.model, edits.effort === undefined ? d.effort : edits.effort, this.baseModelOf(d))
