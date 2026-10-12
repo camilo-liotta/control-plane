@@ -232,12 +232,12 @@ describe("modo AFK", () => {
       id: "p_old",
       name: "Viejo",
       repoPath: "/tmp",
-      settings: { ...defaultSettings, autoDispatch: true },
+      settings: { ...defaultSettings, autoDispatch: true } as typeof defaultSettings,
       accountId: null,
       createdAt: Date.now(),
       archivedAt: null,
     })
-    old.insertProject({ id: "p_off", name: "Sin", repoPath: "/tmp", settings: { ...defaultSettings, autoDispatch: false }, accountId: null, createdAt: Date.now(), archivedAt: null })
+    old.insertProject({ id: "p_off", name: "Sin", repoPath: "/tmp", settings: { ...defaultSettings, autoDispatch: false } as typeof defaultSettings, accountId: null, createdAt: Date.now(), archivedAt: null })
     const s = { ...session("p_old", "W", "worker") }
     old.insertSession(s)
     old.updateSession(s.id, { costUsd: 7, costByModel: { sonnet: 7 } })

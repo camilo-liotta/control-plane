@@ -334,7 +334,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         const name = req.body.name?.trim() || path.basename(repoPath)
         const account = req.body.accountId ? requireAccount(req.body.accountId) : accounts.defaultAccount()
         const settings = { ...defaultSettings, ...(req.body.settings ?? {}) }
-        delete settings.autoDispatch
+        delete (settings as Record<string, unknown>).autoDispatch
         const project = {
           id: shortId("p_"),
           name,
@@ -372,7 +372,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         const settings = req.body.settings ? { ...p.settings, ...req.body.settings } : undefined
         if (settings) {
           // Lo reemplazó el AFK (POST /api/projects/:id/afk): una web vieja puede seguir mandándolo.
-          delete settings.autoDispatch
+          delete (settings as Record<string, unknown>).autoDispatch
           settings.batchWindowSec = Math.min(600, Math.max(0, Number(settings.batchWindowSec) || 0))
           if (!["auto", "notify", "ask"].includes(settings.compactMode)) settings.compactMode = defaultSettings.compactMode
           settings.compactWaitMin = Math.min(45, Math.max(1, Math.round(Number(settings.compactWaitMin) || defaultSettings.compactWaitMin)))
