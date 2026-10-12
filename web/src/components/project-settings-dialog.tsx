@@ -24,6 +24,8 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 import { shortPath } from "@/lib/format"
+import { effortName, effortsFor, modelName } from "@/lib/models"
+import { useModels } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
 export function ProjectSettingsDialog({
@@ -170,17 +172,28 @@ export function ProjectSettingsDialog({
             </Field>
           )}
 
-          <FieldSeparator>Sesiones nuevas</FieldSeparator>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel>Modelo por defecto</FieldLabel>
-              <ModelSelect value={settings.defaultModel} onChange={(v) => set("defaultModel", v)} />
-            </Field>
-            <Field>
-              <FieldLabel>Esfuerzo por defecto</FieldLabel>
-              <EffortSelect value={settings.defaultEffort} onChange={(v) => set("defaultEffort", v)} />
-            </Field>
-          </div>
+          <FieldSeparator>Modelos</FieldSeparator>
+          <FieldDescription>
+            La orquestadora piensa y reparte: conviene Opus. Las sesiones ejecutan lo que ella define: con Sonnet alcanza
+            y gasta menos. Cada propuesta puede elegir otro.
+          </FieldDescription>
+          <ModelRow
+            id="p-orch-model"
+            label="Orquestadora"
+            description="Aplica al reiniciarla."
+            model={settings.defaultModel}
+            effort={settings.defaultEffort}
+            onChange={(model, effort) => setSettings((s) => ({ ...s, defaultModel: model, defaultEffort: effort }))}
+          />
+          <ModelRow
+            id="p-worker-model"
+            label="Sesiones"
+            description="Las que creás vos y las que propone la orquestadora sin elegir modelo. Aplica desde que arrancan o se reanudan."
+            model={settings.workerModel}
+            effort={settings.workerEffort}
+            inherit={{ model: settings.defaultModel, effort: settings.defaultEffort }}
+            onChange={(model, effort) => setSettings((s) => ({ ...s, workerModel: model, workerEffort: effort }))}
+          />
 
           <FieldSeparator>Instrucciones del proyecto</FieldSeparator>
           <Field>
@@ -255,5 +268,53 @@ export function ProjectSettingsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * Modelo y esfuerzo de la orquestadora o de las sesiones. Con `inherit` (las sesiones), null es
+ * "Igual que la orquestadora"; sin él, "El de tu configuración".
+ */
+function ModelRow({
+  id,
+  label,
+  description,
+  model,
+  effort,
+  inherit,
+  onChange,
+}: {
+  id: string
+  label: string
+  description: string
+  model: string | null
+  effort: string | null
+  inherit?: { model: string | null; effort: string | null }
+  onChange: (model: string | null, effort: string | null) => void
+}) {
+  const models = useModels()
+  const efforts = effortsFor(models, model ?? inherit?.model ?? null)
+  const same = (v: string | null) => (v ? `Igual que la orquestadora (${v})` : "Igual que la orquestadora")
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <div className="grid gap-2 sm:grid-cols-[1.4fr_1fr]">
+        <ModelSelect
+          id={id}
+          value={model}
+          // Si el modelo nuevo no tiene el esfuerzo elegido, vuelve al heredado.
+          onChange={(v) => onChange(v, effort && effortsFor(models, v ?? inherit?.model ?? null).includes(effort) ? effort : null)}
+          placeholder={inherit ? same(inherit.model && modelName(models, inherit.model)) : undefined}
+        />
+        <EffortSelect
+          value={effort}
+          onChange={(v) => onChange(model, v)}
+          efforts={efforts}
+          placeholder={inherit ? same(inherit.effort && effortName(inherit.effort)) : undefined}
+          aria-label={`Esfuerzo: ${label.toLowerCase()}`}
+        />
+      </div>
+      <FieldDescription>{description}</FieldDescription>
+    </Field>
   )
 }
