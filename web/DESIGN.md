@@ -145,6 +145,8 @@ No se usan: **Eliminar** (es Borrar), **Iniciar** para sesiones (es Reanudar) ni
 - **Bandeja**: todo lo que espera una decisión tuya, de todos los proyectos.
 - **Tareas para vos**: lo que las sesiones necesitan que hagas vos (un login, algo en otro sistema).
 - **El ícono de control-plane en la barra de arriba**. En la Mac: "en la barra de menú".
+- **Ajustes** y **Ajustes del proyecto**: "Ajustes" son los del dashboard entero (el engranaje de la barra lateral: el editor); "Ajustes del proyecto" son los de un proyecto (modelos, orquestación). Se llega desde el menú ⋯ de la fila del proyecto, el del tablero, el engranaje y la paleta. No se usa "Configuración" para esto (la "Configuración de Claude Code" es otra cosa).
+- **AFK**: un proyecto en el que la orquestadora envía sus propuestas sin esperar tu aprobación, hasta una hora o un tope de gasto. No es una alarma: va neutro (nunca ámbar), con la palabra "AFK" y, en el `title`, hasta cuándo. Se entra con "Ponerse AFK…" (menú ⋯ de la fila, ajustes del proyecto, paleta) y se sale con "Volver".
 - **Herramientas, Entornos, Apps, Programado**: con mayúscula, porque son nombres de secciones.
 
 ### "Te necesita" y "te espera"

@@ -7,6 +7,8 @@ interface UiState {
   inbox: boolean
   palette: boolean
   settingsFor: string | null
+  /** Proyecto cuyo diálogo "Ponerse AFK" está abierto. */
+  afkFor: string | null
   importFor: string | null
   /** Proyecto cuyo diálogo de borrar está abierto. */
   deleteFor: string | null
@@ -74,6 +76,7 @@ export const useUi = create<UiState>((set) => ({
   inbox: false,
   palette: false,
   settingsFor: null,
+  afkFor: null,
   importFor: null,
   deleteFor: null,
   subagent: null,

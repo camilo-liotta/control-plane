@@ -4,6 +4,7 @@ import { useLocation } from "wouter"
 
 import type { CompactMode, Project, ProjectSettings } from "@shared/types"
 
+import { comeBackFromAfk } from "@/components/afk-dialog"
 import { COMPACT_MODES } from "@/components/context-meter"
 import { EffortSelect, ModelSelect } from "@/components/new-session-dialog"
 import { Button } from "@/components/ui/button"
@@ -22,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { afkOf, afkSummary } from "@/lib/afk"
 import { api } from "@/lib/api"
 import { shortPath } from "@/lib/format"
 import { effortName, effortsFor, modelName } from "@/lib/models"
@@ -42,6 +44,7 @@ export function ProjectSettingsDialog({
   const [name, setName] = useState(project.name)
   const [settings, setSettings] = useState<ProjectSettings>(project.settings)
   const [saving, setSaving] = useState(false)
+  const afk = afkOf(project)
 
   useEffect(() => {
     if (open) {
@@ -78,7 +81,7 @@ export function ProjectSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Configuración de {project.name}</DialogTitle>
+          <DialogTitle>Ajustes de {project.name}</DialogTitle>
           <DialogDescription className="truncate font-mono text-xs" title={project.repoPath}>
             {shortPath(project.repoPath)}
           </DialogDescription>
@@ -92,13 +95,30 @@ export function ProjectSettingsDialog({
           <FieldSeparator>Orquestación</FieldSeparator>
           <Field orientation="horizontal">
             <FieldContent>
-              <FieldLabel htmlFor="p-auto">Enviar las propuestas solas</FieldLabel>
+              <FieldLabel>Modo AFK</FieldLabel>
               <FieldDescription>
-                Cuando la orquestadora termina de revisar la cola, sus prompts salen sin esperar tu aprobación. Las
-                sesiones nuevas siempre las aprobás vos.
+                {afk
+                  ? `${afkSummary(afk)}. La orquestadora envía sus prompts, planes y sesiones nuevas sin esperarte.`
+                  : "Cuando te vas, la orquestadora envía sus prompts, planes y sesiones nuevas sin esperar tu aprobación, hasta que vuelvas, se acabe el tiempo o se gaste el tope."}
               </FieldDescription>
             </FieldContent>
-            <Switch id="p-auto" checked={settings.autoDispatch} onCheckedChange={(v) => set("autoDispatch", v)} />
+            {afk ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => void comeBackFromAfk(project)}>
+                Volver
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false)
+                  setUi({ afkFor: project.id })
+                }}
+              >
+                Ponerse AFK…
+              </Button>
+            )}
           </Field>
           <Field orientation="horizontal">
             <FieldContent>

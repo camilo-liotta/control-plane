@@ -15,6 +15,7 @@ import { ImportSessionDialog } from "@/components/import-session-dialog"
 import { InboxSheet } from "@/components/inbox-sheet"
 import { NewProjectDialog } from "@/components/new-project-dialog"
 import { NewSessionDialog } from "@/components/new-session-dialog"
+import { AfkDialog } from "@/components/afk-dialog"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { CompactionSheet } from "@/components/compaction-sheet"
 import { SubagentSheet } from "@/components/subagent-sheet"
@@ -42,6 +43,7 @@ function Dialogs() {
   const projects = useStore((s) => s.projects)
   const sessionProject = ui.newSessionFor ? (projects[ui.newSessionFor] ?? null) : null
   const settingsProject = ui.settingsFor ? projects[ui.settingsFor] : undefined
+  const afkProject = ui.afkFor ? projects[ui.afkFor] : undefined
   const importProject = ui.importFor ? (projects[ui.importFor] ?? null) : null
   const deleteProject = ui.deleteFor ? projects[ui.deleteFor] : undefined
   return (
@@ -59,6 +61,7 @@ function Dialogs() {
           onOpenChange={(v) => !v && ui.set({ settingsFor: null })}
         />
       )}
+      {afkProject && <AfkDialog project={afkProject} open onOpenChange={(v) => !v && ui.set({ afkFor: null })} />}
       {deleteProject && (
         <DeleteProjectDialog
           project={deleteProject}
