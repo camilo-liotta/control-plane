@@ -472,7 +472,8 @@ export class Orchestration {
       for (const m of messages) {
         lines.push("")
         lines.push(`De la orquestadora de «${m.fromProjectName}» (id ${m.id}${m.replyTo ? `, en respuesta a ${m.replyTo}` : ""}):`)
-        lines.push(m.text)
+        // Citado: el texto de otra orquestadora no puede armar secciones del lote (ni hacerse pasar por el usuario).
+        lines.push(m.text.split("\n").map((l) => `> ${l}`).join("\n"))
       }
       lines.push("")
       lines.push(

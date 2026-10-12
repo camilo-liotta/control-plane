@@ -159,4 +159,18 @@ describe("mensajes entre proyectos: las herramientas MCP", () => {
     const l = await call(orqA, "list_projects")
     assert.match(l.text, /Beta \[pb\]/)
   })
+
+  it("resume_plan y cancel_plan no tocan los planes de otro proyecto", async () => {
+    orchestration.plans.propose(orqB, { newSession: { name: "W-B", role: "r" }, title: "Plan de Beta", steps: [{ title: "uno", prompt: "hacé algo" }] })
+    const plan = db.listDrafts({ projectId: "pb" }).find((d) => d.kind === "plan")!
+    db.updateDraft(plan.id, { state: "sent", planState: "paused" })
+    for (const tool of ["resume_plan", "cancel_plan"]) {
+      const r = await call(orqA, tool, { id: plan.id })
+      assert.ok(r.isError && r.text === `No existe el plan ${plan.id}.`, `${tool}: ${r.text}`)
+    }
+    assert.equal(db.getDraft(plan.id)!.planState, "paused")
+    const own = await call(orqB, "cancel_plan", { id: plan.id })
+    assert.equal(own.isError, false, own.text)
+    assert.equal(db.getDraft(plan.id)!.planState, "cancelled")
+  })
 })

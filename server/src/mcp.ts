@@ -404,6 +404,11 @@ function buildServer(
   }
 
   if (self.kind === "orchestrator") {
+    /** Los planes se tocan solo desde la orquestadora de su proyecto. */
+    const ownPlan = (id: string) => {
+      const d = db.getDraft(id)
+      if (!d || d.kind !== "plan" || d.projectId !== self.projectId) throw new Error(`No existe el plan ${id}.`)
+    }
     server.registerTool(
       "propose_prompt",
       {
@@ -520,6 +525,7 @@ function buildServer(
         },
       },
       wrap(async (args: { id: string; mode?: "retry" | "next" }) => {
+        ownPlan(args.id)
         const d = await orchestration.plans.resume(args.id, args.mode, "orchestrator")
         return `Plan ${d.id} reanudado: paso ${(d.currentStep ?? 0) + 1} de ${d.steps.length}.`
       })
@@ -533,6 +539,7 @@ function buildServer(
         inputSchema: { id: z.string(), reason: z.string().optional() },
       },
       wrap((args: { id: string; reason?: string }) => {
+        ownPlan(args.id)
         const d = orchestration.plans.cancel(args.id, args.reason?.trim() || "Lo canceló la orquestadora.", "orchestrator")
         return `Plan ${d.id} cancelado.`
       })

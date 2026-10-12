@@ -82,8 +82,9 @@ export async function decideSend(deps: SendGuardDeps, caller: SessionRecord | nu
   const withRef = /^(.*?)\s*\[([^\]]+)\]\s*$/.exec(to)
   const base = (withRef ? withRef[1]! : to).trim()
   if (!base) return deny(SEND_DENIED.unresolved(to))
-  // Si el nombre también es el de un subagente propio, SendMessage elige al subagente.
-  if (!withRef && deps.agentNames(caller.id).some((n) => eq(n, base))) return ALLOW
+  // Si el nombre también es el de un subagente propio, SendMessage elige al subagente. Solo con el nombre
+  // exacto: con otras mayúsculas puede no ser el subagente y sí una sesión de otro proyecto.
+  if (!withRef && deps.agentNames(caller.id).some((n) => n.trim() === base)) return ALLOW
 
   const named = deps.sessions().filter((s) => eq(s.name, base))
   if (!named.length) return deny(SEND_DENIED.notDashboard(to, worker))
@@ -91,11 +92,18 @@ export async function decideSend(deps: SendGuardDeps, caller: SessionRecord | nu
   if (!own.length) return crossProject
   if (named.length > 1) return deny(SEND_DENIED.ambiguous(base))
 
-  // Una sesión tuya de afuera del dashboard con el mismo nombre podría ser la elegida: no se puede saber.
+  // Lo que resuelve SendMessage es el nombre con que corre cada proceso, que puede no ser el de la base (un
+  // renombre que no le llegó al proceso). Una sesión tuya de afuera del dashboard con ese nombre podría ser
+  // la elegida: no se puede saber; un proceso del dashboard con ese nombre tiene que ser del proyecto.
   if (deps.live) {
     const pids = deps.pids()
-    const outside = (await deps.live(caller).catch(() => [])).filter((l) => l.name && eq(l.name, base) && !(l.pid && pids.has(l.pid)))
-    if (outside.length) return deny(SEND_DENIED.ambiguous(base))
+    const all = deps.sessions()
+    for (const l of (await deps.live(caller).catch(() => [])).filter((l) => l.name && eq(l.name, base))) {
+      const owner = l.pid ? pids.get(l.pid) : undefined
+      const target = owner ? all.find((s) => s.id === owner) : undefined
+      if (!target) return deny(SEND_DENIED.ambiguous(base))
+      if (!sameProject(target)) return crossProject
+    }
   }
   return ALLOW
 }

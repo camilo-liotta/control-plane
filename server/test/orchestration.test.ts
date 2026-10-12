@@ -490,7 +490,7 @@ describe("mensajes entre orquestadoras", () => {
     assert.match(batch.text, /^\[control-plane\] Mensajes de otros proyectos: 1 mensaje nuevo \(de «Alfa»\)/)
     assert.doesNotMatch(batch.text, /resultado/)
     assert.match(batch.text, /## Mensajes de otros proyectos/)
-    assert.match(batch.text, new RegExp(`De la orquestadora de «Alfa» \\(id ${id}\\):\\n¿Podés exponer GET /ventas\\?`))
+    assert.match(batch.text, new RegExp(`De la orquestadora de «Alfa» \\(id ${id}\\):\\n> ¿Podés exponer GET /ventas\\?`))
     assert.deepEqual(batch.opts.event, {
       kind: "batch",
       reportIds: [],
