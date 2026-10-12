@@ -5,13 +5,13 @@ import type { Draft, Session, UserTask } from "./types.ts"
 
 type Counted = {
   sessions: Iterable<Pick<Session, "projectId" | "status">>
-  drafts: Iterable<Pick<Draft, "projectId" | "state">>
+  drafts: Iterable<Pick<Draft, "projectId" | "state" | "planState">>
   tasks: Iterable<Pick<UserTask, "projectId" | "status" | "blocking">>
 }
 
-/** Te espera: una sesión que te necesita, una propuesta lista o una tarea que frena a una sesión. */
+/** Te espera: una sesión que te necesita, una propuesta lista, un plan pausado o una tarea que frena a una sesión. */
 export const sessionWaits = (s: Pick<Session, "status">) => s.status === "needs_input"
-export const draftWaits = (d: Pick<Draft, "state">) => d.state === "ready"
+export const draftWaits = (d: Pick<Draft, "state" | "planState">) => d.state === "ready" || (d.state === "sent" && d.planState === "paused")
 export const taskWaits = (t: Pick<UserTask, "status" | "blocking">) => t.status === "open" && t.blocking
 
 /** Lo que te espera, en total y por proyecto (solo aparecen los proyectos con algo). */

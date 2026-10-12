@@ -15,7 +15,7 @@ const isWorking = (s: Session) => s.status === "working" || s.status === "starti
  */
 export function desktopSummary({ db, sessions }: SummaryDeps): DesktopSummary {
   const all = sessions.list()
-  const counts = inboxCounts({ sessions: all, drafts: db.listDrafts({ states: ["ready"] }), tasks: db.listTasks() })
+  const counts = inboxCounts({ sessions: all, drafts: db.listDrafts({ states: ["ready", "sent"] }).filter((d) => d.state === "ready" || d.planState === "paused"), tasks: db.listTasks() })
   const projects = db.listProjects().map((p) => ({
     id: p.id,
     name: p.name,

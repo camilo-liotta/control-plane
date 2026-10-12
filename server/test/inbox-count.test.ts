@@ -15,6 +15,8 @@ const drafts = [
   { projectId: "p1", state: "ready" },
   { projectId: "p2", state: "staged" },
   { projectId: "p2", state: "ready" },
+  { projectId: "p3", state: "sent", planState: "paused" },
+  { projectId: "p3", state: "sent", planState: "running" },
 ] as Draft[]
 const tasks = [
   { projectId: "p1", status: "open", blocking: true },
@@ -24,17 +26,17 @@ const tasks = [
 ] as UserTask[]
 
 describe("lo que te espera (Bandeja e ícono)", () => {
-  it("suma sesiones que te necesitan, propuestas listas y tareas que frenan", () => {
+  it("suma sesiones que te necesitan, propuestas listas, planes pausados y tareas que frenan", () => {
     const { total, byProject } = inboxCounts({ sessions, drafts, tasks })
-    assert.equal(total, 6)
-    assert.deepEqual(Object.fromEntries(byProject), { p1: 3, p2: 2, p3: 1 })
+    assert.equal(total, 7)
+    assert.deepEqual(Object.fromEntries(byProject), { p1: 3, p2: 2, p3: 2 })
   })
 
   it("el ícono de la app da el mismo número que la Bandeja", () => {
     const summary = desktopSummary({
       db: {
         listProjects: () => [{ id: "p1", name: "Uno" }, { id: "p2", name: "Dos" }] as never,
-        listDrafts: () => drafts.filter((d) => d.state === "ready"),
+        listDrafts: (opts) => drafts.filter((d) => !opts?.states || opts.states.includes(d.state)),
         listTasks: () => tasks,
       },
       sessions: { list: () => sessions, isRunning: () => false },
