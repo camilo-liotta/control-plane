@@ -46,6 +46,9 @@ import { cn } from "@/lib/utils"
 /** Un plan aprobado que todavía no terminó. */
 export const planActive = (d: Draft) => d.kind === "plan" && d.state === "sent" && (d.planState === "running" || d.planState === "paused")
 
+/** La nota del plan con mayúscula inicial (por si llega una vieja, armada para seguir una oración). */
+const note = (text: string | null) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : null)
+
 /** El paso en curso (o el último que corrió). */
 const currentOf = (d: Draft): PlanStep | undefined => (d.currentStep === null ? undefined : d.steps[d.currentStep])
 
@@ -55,10 +58,20 @@ export const planStuck = (d: Draft) => {
   return d.planState === "paused" && (cur?.state === "blocked" || cur?.state === "partial")
 }
 
+/** Ocupada, como la cuenta el server (plans.ts): trabajando, arrancando o esperando una respuesta tuya. */
+const BUSY = new Set<Session["status"]>(["working", "starting", "needs_input"])
+
+/**
+ * En pausa con el paso "en curso" pero la sesión ya no lo está haciendo (se reinició el server, se detuvo
+ * la sesión): el paso quedó cortado y hay que repetirlo o seguir.
+ */
+export const planCut = (d: Draft, target: Pick<Session, "status"> | undefined) =>
+  d.planState === "paused" && currentOf(d)?.state === "running" && !!target && !BUSY.has(target.status)
+
 /** El estado del plan para la pastilla: ámbar solo si frena. */
-function planView(d: Draft): { label: string; tone: Tone } {
+function planView(d: Draft, target?: Pick<Session, "status">): { label: string; tone: Tone } {
   if (!d.planState) return draftStateView[d.state]
-  if (planStuck(d)) return { label: "Espera una decisión", tone: "attention" }
+  if (planStuck(d) || planCut(d, target)) return { label: "Espera una decisión", tone: "attention" }
   return planStateView[d.planState]
 }
 
@@ -140,13 +153,14 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
   const open = ready || draft.state === "staged" || draft.planState === "running" || paused
   const edited = useMemo(() => JSON.stringify(steps) !== serverSteps, [steps, serverSteps])
   const stuck = planStuck(draft)
-  const view = planView(draft)
+  const cut = planCut(draft, target)
+  const view = planView(draft, target)
   const current = currentOf(draft)
   const next = draft.currentStep !== null && draft.currentStep + 1 < draft.steps.length ? draft.currentStep + 1 : null
 
   // Se cambian los pasos que faltan: todos antes de enviarlo, los pendientes con el plan en pausa.
   // El paso que volvió trabado también, para corregirlo antes de repetirlo.
-  const editable = (i: number) => (ready || paused) && ((draft.steps[i]?.state ?? "pending") === "pending" || (stuck && i === draft.currentStep))
+  const editable = (i: number) => (ready || paused) && ((draft.steps[i]?.state ?? "pending") === "pending" || ((stuck || cut) && i === draft.currentStep))
   const removable = ready && steps.length > 1 && !draft.revises
   const busy = action.busy()
 
@@ -254,17 +268,22 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
         )}
 
         {paused && (
-          <p className={cn("mt-3 rounded-lg px-3 py-2 text-xs", toneSoft[stuck ? "attention" : "idle"])}>
-            {stuck
+          <p className={cn("mt-3 rounded-lg px-3 py-2 text-xs", toneSoft[stuck || cut ? "attention" : "idle"])}>
+            {cut
+              ? `El paso ${(draft.currentStep ?? 0) + 1} quedó cortado: ${target?.name ?? "la sesión"} no lo terminó. ${next !== null ? "Repetilo o seguí con el siguiente." : "Repetilo o cancelá el plan."}`
+              : stuck
               ? `El paso ${(draft.currentStep ?? 0) + 1} volvió ${current?.state === "blocked" ? "bloqueado" : "parcial"}. El plan espera a la orquestadora: puede proponer cambios a los pasos, o lo reanudás vos.`
               : current?.state === "running"
                 ? `En pausa: el paso ${(draft.currentStep ?? 0) + 1} termina lo que está haciendo y el siguiente sale cuando lo reanudes.`
                 : "En pausa: el paso siguiente sale cuando lo reanudes."}
-            {draft.planNote && <span className="mt-1 block">{draft.planNote}</span>}
+            {/* Trabado, lo que reportó el paso dice más que la nota (que es para la orquestadora). */}
+            {(stuck && current?.summary ? current.summary : note(draft.planNote)) && (
+              <span className="mt-1 block whitespace-pre-wrap">{stuck && current?.summary ? current.summary : note(draft.planNote)}</span>
+            )}
           </p>
         )}
         {!paused && draft.planNote && (draft.planState === "done" || draft.planState === "cancelled") && (
-          <p className="mt-2 text-xs text-muted-foreground">{draft.planNote}</p>
+          <p className="mt-2 text-xs text-muted-foreground">{note(draft.planNote)}</p>
         )}
         {revision && (
           <p className="mt-2 text-xs text-muted-foreground">
@@ -281,6 +300,7 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
               live={draft.steps[i]}
               approved={approved}
               current={approved && draft.currentStep === i}
+              cut={cut && draft.currentStep === i}
               defaultOpen={!compact && !approved && steps.length <= 2}
               fallback={stepFallback(steps, i, models, fallback)}
               newSession={isNew && i === 0}
@@ -326,7 +346,7 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
         {approved && (draft.planState === "running" || paused) && (
           <footer className="mt-3 flex flex-wrap items-center gap-2">
             {paused ? (
-              stuck ? (
+              stuck || cut ? (
                 <>
                   <Button size="sm" onClick={() => resume("retry")} disabled={busy}>
                     {action.busy("resume-retry") ? <Spinner /> : <RotateCcw />}
@@ -359,7 +379,7 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
             )}
             <ConfirmAction
               title="¿Cancelar el plan?"
-              description={`${target?.name ?? "La sesión"} no recibe los pasos que faltan. Lo que ya hizo queda como está.`}
+              description={`${target?.name ?? "La sesión"} no recibe los pasos que faltan. Lo que ya hizo queda como está.${current?.state === "running" && !cut ? " El paso que está haciendo lo termina: si querés cortarlo, interrumpilo desde su chat." : ""}`}
               confirmLabel="Cancelar plan"
               cancelLabel="Volver"
               failMessage="No se pudo cancelar el plan"
@@ -387,6 +407,7 @@ function StepRow({
   live,
   approved,
   current,
+  cut,
   defaultOpen,
   fallback,
   newSession,
@@ -401,6 +422,8 @@ function StepRow({
   live: PlanStep | undefined
   approved: boolean
   current: boolean
+  /** El paso en curso quedó cortado (la sesión no lo está haciendo). */
+  cut: boolean
   defaultOpen: boolean
   fallback: string
   /** El primer paso de un plan para una sesión nueva: sin modelo, arranca con el del proyecto. */
@@ -414,7 +437,7 @@ function StepRow({
   const [open, setOpen] = useState(defaultOpen)
   const [editing, setEditing] = useState(false)
   const state = live?.state ?? "pending"
-  const view = planStepView[state]
+  const view = cut ? { label: "Cortado", tone: "attention" as const } : planStepView[state]
   const showState = approved && state !== "pending"
   const result = live?.summary
   useEffect(() => {
@@ -450,7 +473,7 @@ function StepRow({
             </button>
             {showState && (
               <TonePill tone={view.tone}>
-                {state === "running" && <Lamp tone="working" pulse className="size-1.5" />}
+                {state === "running" && !cut && <Lamp tone="working" pulse className="size-1.5" />}
                 {view.label}
               </TonePill>
             )}
@@ -589,7 +612,7 @@ export function SessionPlanLine({ session, className }: { session: Session; clas
   const fallback = useSessionModelName(session.projectId, session)
   const link = usePlanLink(draft)
   if (!draft || !link) return null
-  const view = planView(draft)
+  const view = planView(draft, session)
   return (
     <Link
       {...link}
@@ -657,7 +680,7 @@ function PlanRow({ draft, open, onToggle }: { draft: Draft; open: boolean; onTog
   const models = useModels()
   const target = useStore((s) => (draft.targetSessionId ? s.sessions[draft.targetSessionId] : undefined))
   const fallback = useSessionModelName(draft.projectId, target)
-  const view = planView(draft)
+  const view = planView(draft, target)
   return (
     <>
       <button

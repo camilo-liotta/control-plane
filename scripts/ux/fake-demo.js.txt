@@ -1,6 +1,34 @@
   // --- banco de UX (scripts/ux/fake-claude.mjs) ---
   const blk = (content) => out({ type: "assistant", message: { id: "m" + Math.random(), role: "assistant", content }, parent_tool_use_id: null })
   const toolCall = (name, input, result) => { const id = "toolu_" + Math.random().toString(36).slice(2, 10); blk([{ type: "tool_use", id, name, input }]); out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: result }] }, parent_tool_use_id: null }) }
+  // "REPORTA done|blocked|partial" (en cualquier parte, como en el prompt de un paso de un plan): reporta
+  // por el MCP del control-plane y termina el turno. Con "LENTO", antes trabaja un rato (FAKE_SLOW_MS, o "LENTO <segundos>").
+  const rep = /REPORTA (done|blocked|partial)/.exec(text)
+  if (rep) {
+    const slow = /LENTO(?: (\d+))?/.exec(text)
+    if (slow) {
+      // Se puede interrumpir, como LARGO: corta la espera y el turno cierra como interrumpido.
+      const ms = slow[1] ? Number(slow[1]) * 1000 : Number(process.env.FAKE_SLOW_MS ?? 25000)
+      const cut = await new Promise((r) => { const t = setTimeout(() => r(false), ms); globalThis.__cpInterrupt = () => { clearTimeout(t); r(true) } })
+      globalThis.__cpInterrupt = null
+      if (cut) { result({ subtype: "error_during_execution", is_error: false, terminal_reason: "aborted_streaming" }); continue }
+    }
+    const at = args.indexOf("--mcp-config")
+    const url = at >= 0 ? JSON.parse(args[at + 1]).mcpServers?.["control-plane"]?.url : null
+    const summary = rep[1] === "done" ? "Hecho: " + (text.split("\n\n").at(-1) ?? text).replace(/\s*(LENTO(?: \d+)?|REPORTA \w+)/g, "").trim().slice(0, 90) : rep[1] === "blocked" ? "Bloqueado: falta el rol de administrador para seguir." : "Parcial: quedó la mitad; falta el resto."
+    const input = { status: rep[1], summary }
+    let res = "Sin MCP"
+    if (url) {
+      const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_result", arguments: input } }) }).catch(() => null)
+      const j = r ? await r.json().catch(() => null) : null
+      res = j?.result?.content?.[0]?.text ?? "Resultado registrado."
+    }
+    toolCall("mcp__control-plane__report_result", input, res)
+    say(summary)
+    usd += 0.4
+    result({})
+    continue
+  }
   if (text.startsWith("MUERE")) { process.stderr.write("Error: API Error: 529 Overloaded\n"); process.exit(3) }
   if (text.startsWith("PERMISO")) {
     out({ type: "control_request", request_id: "p-" + Math.random().toString(36).slice(2), request: { subtype: "can_use_tool", tool_name: "Bash", tool_use_id: "toolu_p1", input: { command: "npm run db:migrate -- --env staging", description: "Correr las migraciones en staging" } } })
