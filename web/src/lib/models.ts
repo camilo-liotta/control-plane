@@ -1,4 +1,4 @@
-import type { ModelOption } from "@shared/types"
+import type { ModelOption, ProjectSettings, SessionKind } from "@shared/types"
 
 /** Los esfuerzos que conoce el CLI, de menor a mayor. */
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"]
@@ -57,4 +57,16 @@ export function modelLabel(models: ModelOption[], current: string | null, config
   if (current) return bareId(current).replace(/^claude-/, "")
   if (configured) return configured
   return "Modelo por defecto"
+}
+
+/**
+ * Modelo y esfuerzo con los que arranca una sesión sin los suyos: la orquestadora usa los del proyecto
+ * y las sesiones, los de sesiones (o los de la orquestadora si no tienen). null = el de tu configuración.
+ */
+export function projectDefaults(settings: ProjectSettings, kind: SessionKind) {
+  if (kind === "orchestrator") return { model: settings.defaultModel, effort: settings.defaultEffort }
+  return {
+    model: settings.workerModel ?? settings.defaultModel,
+    effort: settings.workerEffort ?? settings.defaultEffort,
+  }
 }
