@@ -15,6 +15,7 @@ import { defaultSettings, type Db } from "./db.ts"
 import { projectFolder, type Editor } from "./editor.ts"
 import { PathResolver } from "./file-refs.ts"
 import type { Hub } from "./hub.ts"
+import type { Afk } from "./afk.ts"
 import { importSession, type DraftEdits, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
@@ -34,6 +35,7 @@ interface Deps {
   hub: Hub
   sessions: SessionManager
   orchestration: Orchestration
+  afk: Afk
   attachments: AttachmentStore
   accounts: Accounts
   compaction: Compaction
@@ -331,11 +333,14 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
           throw new Error("La carpeta del repo no existe")
         const name = req.body.name?.trim() || path.basename(repoPath)
         const account = req.body.accountId ? requireAccount(req.body.accountId) : accounts.defaultAccount()
+        const settings = { ...defaultSettings, ...(req.body.settings ?? {}) }
+        delete settings.autoDispatch
         const project = {
           id: shortId("p_"),
           name,
           repoPath,
-          settings: { ...defaultSettings, ...(req.body.settings ?? {}) },
+          settings,
+          afk: null,
           accountId: account.id,
           createdAt: now(),
           archivedAt: null,
@@ -366,6 +371,8 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         const p = requireProject(req.params.id)
         const settings = req.body.settings ? { ...p.settings, ...req.body.settings } : undefined
         if (settings) {
+          // Lo reemplazó el AFK (POST /api/projects/:id/afk): una web vieja puede seguir mandándolo.
+          delete settings.autoDispatch
           settings.batchWindowSec = Math.min(600, Math.max(0, Number(settings.batchWindowSec) || 0))
           if (!["auto", "notify", "ask"].includes(settings.compactMode)) settings.compactMode = defaultSettings.compactMode
           settings.compactWaitMin = Math.min(45, Math.max(1, Math.round(Number(settings.compactWaitMin) || defaultSettings.compactWaitMin)))
@@ -388,7 +395,33 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
   )
 
   app.delete<{ Params: { id: string } }>("/api/projects/:id", (req, reply) =>
-    guard(reply, () => archiveProject(deps, requireProject(req.params.id)))
+    guard(reply, () => {
+      const p = requireProject(req.params.id)
+      // Un proyecto archivado no puede quedar enviando solo.
+      deps.afk.stop(p.id, "user")
+      return archiveProject(deps, p)
+    })
+  )
+
+  // Modo AFK: la orquestadora envía sin esperar tu aprobación, con tiempo y presupuesto como topes.
+  app.post<{ Params: { id: string }; Body: { until?: number | null; budgetUsd?: number | null } }>("/api/projects/:id/afk", (req, reply) =>
+    guard(reply, () => {
+      requireProject(req.params.id)
+      return deps.afk.start(req.params.id, { until: req.body?.until, budgetUsd: req.body?.budgetUsd })
+    })
+  )
+  app.delete<{ Params: { id: string } }>("/api/projects/:id/afk", (req, reply) =>
+    guard(reply, () => {
+      const p = requireProject(req.params.id)
+      return deps.afk.stop(p.id, "user") ?? orchestration.projectView(p)
+    })
+  )
+  // Lo que pasó en el último período AFK (null si el proyecto nunca estuvo AFK).
+  app.get<{ Params: { id: string } }>("/api/projects/:id/afk-log", (req, reply) =>
+    guard(reply, () => {
+      requireProject(req.params.id)
+      return deps.afk.log(req.params.id)
+    })
   )
 
   // Los archivados (de todas las cuentas: la web filtra por la que estás mirando).

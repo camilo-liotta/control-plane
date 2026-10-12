@@ -29,6 +29,8 @@ export const DRAFT_DEFAULTS = {
   currentStep: null,
   planNote: null,
   revises: null,
+  hold: false,
+  sentBy: null,
 } satisfies Partial<Draft>
 
 const STATUS_ES: Record<SessionStatus, string> = {

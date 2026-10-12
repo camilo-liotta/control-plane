@@ -196,6 +196,8 @@ export class Plans {
       currentStep: null,
       planNote: null,
       revises: null,
+      hold: false,
+      sentBy: null,
     }
     this.db.insertDraft(d)
     this.o.broadcastDraft(d.id)
@@ -261,6 +263,8 @@ export class Plans {
       currentStep: kept.length,
       planNote: null,
       revises: d.id,
+      hold: false,
+      sentBy: null,
     }
     this.db.insertDraft(rev)
     this.o.broadcastDraft(rev.id)
