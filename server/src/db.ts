@@ -15,6 +15,7 @@ import type {
   PlanStep,
   DraftState,
   ProjectSettings,
+  ProjectMessage,
   Report,
   ReportState,
   ReportStatus,
@@ -282,6 +283,21 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE sessions ADD COLUMN cost_by_model TEXT;
   `,
+  `
+  CREATE TABLE project_messages (
+    id TEXT PRIMARY KEY,
+    from_project_id TEXT NOT NULL,
+    to_project_id TEXT NOT NULL,
+    from_session_id TEXT NOT NULL,
+    to_session_id TEXT,
+    text TEXT NOT NULL,
+    reply_to TEXT,
+    created_at INTEGER NOT NULL,
+    delivered_at INTEGER
+  );
+  CREATE INDEX project_messages_to ON project_messages(to_project_id, delivered_at);
+  CREATE INDEX project_messages_from ON project_messages(from_project_id, created_at);
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -508,6 +524,23 @@ function toAttachment(r: Row): AttachmentRecord {
     path: String(r.path),
     source: r.source === "tool" ? "tool" : "user",
     createdAt: Number(r.created_at),
+  }
+}
+
+/** Lo que guarda la base de un mensaje entre proyectos; los nombres los pone la vista. */
+export type ProjectMessageRow = Omit<ProjectMessage, "fromProjectName" | "toProjectName">
+
+function toProjectMessage(r: Row): ProjectMessageRow {
+  return {
+    id: String(r.id),
+    fromProjectId: String(r.from_project_id),
+    toProjectId: String(r.to_project_id),
+    fromSessionId: String(r.from_session_id),
+    toSessionId: str(r.to_session_id),
+    text: String(r.text),
+    replyTo: str(r.reply_to),
+    createdAt: Number(r.created_at),
+    deliveredAt: num(r.delivered_at),
   }
 }
 
@@ -841,6 +874,7 @@ export class Db {
       this.db.prepare(`DELETE FROM events WHERE session_id IN (${sessionIds})`).run(id)
       this.db.prepare(`DELETE FROM attachments WHERE session_id IN (${sessionIds})`).run(id)
       this.db.prepare("DELETE FROM reports WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM project_messages WHERE from_project_id = ? OR to_project_id = ?").run(id, id)
       this.db.prepare("DELETE FROM drafts WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM credentials WHERE environment_id IN (SELECT id FROM environments WHERE project_id = ?)").run(id)
@@ -1284,6 +1318,60 @@ export class Db {
     const limit = opts.limit ? ` LIMIT ${Math.floor(opts.limit)}` : ""
     const sql = `SELECT * FROM (SELECT * FROM reports ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC${limit}) ORDER BY created_at`
     return (this.db.prepare(sql).all(...params) as Row[]).map(toReport)
+  }
+
+  // --------------------------------------------------------- project messages
+
+  insertProjectMessage(m: ProjectMessageRow) {
+    this.db
+      .prepare(
+        `INSERT INTO project_messages (id, from_project_id, to_project_id, from_session_id, to_session_id, text, reply_to, created_at, delivered_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(m.id, m.fromProjectId, m.toProjectId, m.fromSessionId, m.toSessionId, m.text, m.replyTo, m.createdAt, m.deliveredAt)
+  }
+
+  getProjectMessage(id: string): ProjectMessageRow | null {
+    const r = this.db.prepare("SELECT * FROM project_messages WHERE id = ?").get(id) as Row | undefined
+    return r ? toProjectMessage(r) : null
+  }
+
+  /** Marca mensajes como entregados a la orquestadora destino. */
+  markProjectMessagesDelivered(ids: string[], toSessionId: string, deliveredAt: number) {
+    const stmt = this.db.prepare("UPDATE project_messages SET delivered_at = ?, to_session_id = ? WHERE id = ?")
+    for (const id of ids) stmt.run(deliveredAt, toSessionId, id)
+  }
+
+  /** Vuelve a la cola mensajes que no se pudieron entregar. */
+  requeueProjectMessages(ids: string[]) {
+    const stmt = this.db.prepare("UPDATE project_messages SET delivered_at = NULL, to_session_id = NULL WHERE id = ?")
+    for (const id of ids) stmt.run(id)
+  }
+
+  /** Los que esperan a la orquestadora de un proyecto (sin entregar), del más viejo al más nuevo. */
+  listQueuedProjectMessages(toProjectId: string): ProjectMessageRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM project_messages WHERE to_project_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid")
+        .all(toProjectId) as Row[]
+    ).map(toProjectMessage)
+  }
+
+  /** Los enviados y recibidos por un proyecto, más nuevos primero. */
+  listProjectMessages(projectId: string, limit = 200): ProjectMessageRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM project_messages WHERE from_project_id = ? OR to_project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
+        .all(projectId, projectId, Math.floor(limit)) as Row[]
+    ).map(toProjectMessage)
+  }
+
+  /** Cuántos mandó un proyecto a otro desde `sinceMs` (para el límite contra bucles). */
+  countProjectMessagesSince(fromProjectId: string, toProjectId: string, sinceMs: number): number {
+    const r = this.db
+      .prepare("SELECT COUNT(*) AS n FROM project_messages WHERE from_project_id = ? AND to_project_id = ? AND created_at >= ?")
+      .get(fromProjectId, toProjectId, sinceMs) as Row
+    return Number(r.n)
   }
 
   /** Reportes abiertos más los recientes (para la UI). */
