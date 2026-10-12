@@ -84,6 +84,7 @@ export interface SessionRecord {
   lastActivity: string | null
   lastActivityAt: number | null
   costUsd: number
+  costByModel: Record<string, number>
   tokens: TokenUsage | null
   context: ContextUsage | null
   createdAt: number
@@ -278,6 +279,9 @@ const MIGRATIONS: string[] = [
   ALTER TABLE drafts ADD COLUMN plan_note TEXT;
   ALTER TABLE drafts ADD COLUMN revises TEXT;
   `,
+  `
+  ALTER TABLE sessions ADD COLUMN cost_by_model TEXT;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -357,6 +361,7 @@ function toSession(r: Row): SessionRecord {
     lastActivity: str(r.last_activity),
     lastActivityAt: num(r.last_activity_at),
     costUsd: Number(r.cost_usd ?? 0),
+    costByModel: parseCostByModel(r.cost_by_model),
     tokens: parseTokens(r.tokens),
     context: parseContext(r.context),
     createdAt: Number(r.created_at),
@@ -371,6 +376,18 @@ function parseTokens(raw: unknown): TokenUsage | null {
     return typeof t.total === "number" ? t : null
   } catch {
     return null
+  }
+}
+
+function parseCostByModel(raw: unknown): Record<string, number> {
+  if (!raw) return {}
+  try {
+    const o = JSON.parse(String(raw)) as Record<string, unknown>
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(o ?? {})) if (typeof v === "number" && v > 0) out[k] = v
+    return out
+  } catch {
+    return {}
   }
 }
 
@@ -531,6 +548,7 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   lastActivity: "last_activity",
   lastActivityAt: "last_activity_at",
   costUsd: "cost_usd",
+  costByModel: "cost_by_model",
   tokens: "tokens",
   context: "context",
   createdAt: "created_at",

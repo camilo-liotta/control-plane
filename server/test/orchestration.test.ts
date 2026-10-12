@@ -104,7 +104,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     taskState: "none",
     lastActivity: null,
     lastActivityAt: null,
-    costUsd: 0,
+    costUsd: 0, costByModel: {},
     tokens: null,
     context: null,
     createdAt: Date.now(),

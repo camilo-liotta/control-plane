@@ -72,7 +72,7 @@ interface Runtime {
   /** El turno en curso, para el indicador de "trabajando": cuándo empezó y cuántos tokens van. */
   turn: TurnCounter | null
   /** Lo que la sesión llevaba gastado cuando arrancó este proceso. */
-  spentBefore: { usd: number; tokens: TokenUsage | null }
+  spentBefore: { usd: number; tokens: TokenUsage | null; byModel: Record<string, number> }
   /**
    * Lo que Claude Code restaura al reanudar (el último cost-state del transcript): sus totales siguen
    * desde ahí. applies se decide con el primer total que informa (si es menor, no restauró nada).
@@ -85,7 +85,11 @@ interface Runtime {
   /** El turno en curso es un reenvío: si vuelve a no entrar, no se insiste solo. */
   resending: boolean
   /** Los últimos totales que informó el proceso (para rebasar la cuenta si la conversación se reinicia). */
-  lastTotals: { usd: number; tokens: TokenUsage | null }
+  lastTotals: { usd: number; tokens: TokenUsage | null; byModel: Record<string, number> }
+  /** Lo gastado por modelo según el último total del proceso: la base para saber cuánto costó cada turno. */
+  seenByModel: Record<string, number> | null
+  /** Lo que costó el turno en curso por modelo (llega con el resultado, justo antes del fin de turno). */
+  turnModels: Record<string, number> | null
   /** Hubo un /clear: el próximo fin de turno (el del propio /clear) dice si los totales volvieron a cero. */
   resetPending: boolean
   /**
@@ -456,6 +460,7 @@ export class SessionManager extends EventEmitter<{
       lastActivity: null,
       lastActivityAt: null,
       costUsd: 0,
+      costByModel: {},
       tokens: null,
       context: null,
       createdAt: now(),
@@ -558,12 +563,14 @@ export class SessionManager extends EventEmitter<{
       lastCompactEventId: null,
       hold: null,
       turn: null,
-      spentBefore: { usd: rec.costUsd, tokens: rec.tokens },
-      restored: { ...(lastCostState(rec.cwd, rec.claudeSessionId, built.env.CLAUDE_CONFIG_DIR) ?? { usd: 0, tokens: null }), applies: null },
+      spentBefore: { usd: rec.costUsd, tokens: rec.tokens, byModel: rec.costByModel },
+      restored: { ...(lastCostState(rec.cwd, rec.claudeSessionId, built.env.CLAUDE_CONFIG_DIR) ?? { usd: 0, tokens: null, byModel: {} }), applies: null },
       turnInputs: [],
       failedInputs: null,
       resending: false,
-      lastTotals: { usd: 0, tokens: null },
+      lastTotals: { usd: 0, tokens: null, byModel: {} },
+      seenByModel: null,
+      turnModels: null,
       resetPending: false,
       resetFrom: null,
       lostConversation,
@@ -690,6 +697,11 @@ export class SessionManager extends EventEmitter<{
             }
             // El "acumulado" del fin de turno es el de la sesión, no el de este proceso.
             if (event.costUsd > 0) event.costUsd = rt.spentBefore.usd + this.processUsd(rt, event.costUsd)
+            const models = Object.entries(rt.turnModels ?? {})
+              .sort((a, b) => b[1] - a[1])
+              .map(([model, usd]) => ({ model, usd }))
+            if (models.length) event.models = models
+            rt.turnModels = null
           }
           const stored = this.addEvent(id, event)
           if (event.kind === "compact") {
@@ -803,10 +815,17 @@ export class SessionManager extends EventEmitter<{
           break
         case "cost":
           // total_cost_usd y modelUsage siguen desde lo que Claude Code restauró al reanudar: se suma solo lo nuevo.
-          this.decideRestored(rt, action.totalUsd, action.tokens)
-          rt.lastTotals = { usd: action.totalUsd, tokens: action.tokens ?? rt.lastTotals.tokens }
+          // modelUsage también es acumulado: lo de cada turno sale de restarle el total anterior.
+          this.decideRestored(rt, action.totalUsd, null)
+          const restoredByModel = rt.restored.applies ? rt.restored.byModel : {}
+          rt.turnModels = costsSince(action.byModel, rt.seenByModel ?? restoredByModel)
+          if (Object.keys(action.byModel).length) rt.seenByModel = action.byModel
+          rt.lastTotals = { usd: action.totalUsd, tokens: action.tokens ?? rt.lastTotals.tokens, byModel: action.byModel }
           this.db.updateSession(id, {
             ...(action.totalUsd > 0 ? { costUsd: rt.spentBefore.usd + this.processUsd(rt, action.totalUsd) } : {}),
+            ...(Object.keys(action.byModel).length
+              ? { costByModel: addCosts(rt.spentBefore.byModel, costsSince(action.byModel, restoredByModel)) }
+              : {}),
             ...(action.tokens ? { tokens: addTokens(rt.spentBefore.tokens, tokensSince(action.tokens, rt.restored)) } : {}),
           })
           break
@@ -865,8 +884,9 @@ export class SessionManager extends EventEmitter<{
           // /clear: la conversación nueva arranca sus totales de cero (o, si algún día no, sigue desde los
           // últimos). Lo gastado hasta acá queda como base; el resultado del /clear dice cuál de las dos.
           const cur = this.db.getSession(id)
-          rt.spentBefore = { usd: cur?.costUsd ?? 0, tokens: cur?.tokens ?? null }
+          rt.spentBefore = { usd: cur?.costUsd ?? 0, tokens: cur?.tokens ?? null, byModel: cur?.costByModel ?? {} }
           rt.restored = { ...rt.lastTotals, applies: null }
+          rt.seenByModel = null
           rt.resetPending = true
           // El id nuevo es el session_id de lo que sigue (ver resetFrom), no el new_conversation_id.
           rt.resetFrom = cur?.claudeSessionId ?? null
@@ -1291,8 +1311,10 @@ export class SessionManager extends EventEmitter<{
 
   /** Cambia el modelo: queda guardado y, si la sesión está corriendo, aplica desde el próximo turno. */
   async setModel(id: string, model: string | null) {
-    this.update(id, { model })
     const rt = this.runtimes.get(id)
+    // El modelo que informó el proceso ya no vale: hasta el próximo turno se ve el elegido.
+    if (rt) rt.currentModel = null
+    this.update(id, { model })
     if (rt && !rt.proc.exited) await rt.proc.request("set_model", { model }, 15_000)
   }
 
@@ -1364,6 +1386,22 @@ function tokensSince(total: TokenUsage, restored: Runtime["restored"]): TokenUsa
     cacheWrite: d(total.cacheWrite, r.cacheWrite),
     total: d(total.total, r.total),
   }
+}
+
+/** Lo que sumó cada modelo desde `base` (los dos acumulados); lo que no creció no aparece. */
+function costsSince(total: Record<string, number>, base: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [model, usd] of Object.entries(total)) {
+    const d = usd - (base[model] ?? 0)
+    if (d > 1e-9) out[model] = d
+  }
+  return out
+}
+
+function addCosts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out = { ...a }
+  for (const [model, usd] of Object.entries(b)) out[model] = (out[model] ?? 0) + usd
+  return out
 }
 
 function addTokens(a: TokenUsage | null, b: TokenUsage): TokenUsage {

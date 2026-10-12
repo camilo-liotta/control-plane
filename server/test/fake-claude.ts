@@ -44,13 +44,19 @@ if (flag("--resume") && process.env.FAKE_STRICT_RESUME === "1" && !fs.existsSync
   process.exit(1)
 }
 let usd = 0
+// Con "HAIKU" en el mensaje, una parte del turno va a otro modelo (SUB), como un subagente.
+const MAIN = process.env.FAKE_MODEL ?? "claude-x"
+const SUB = process.env.FAKE_SUB_MODEL ?? "claude-y"
+let sub = 0
 let tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
+const usage = () => ({ [MAIN]: { ...tok, costUSD: usd - sub }, ...(sub ? { [SUB]: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: sub } } : {}) })
 try {
   for (const l of fs.readFileSync(file, "utf8").split("\n")) {
     if (!l.includes('"cost-state"')) continue
     const j = JSON.parse(l)
     usd = j.totalCostUSD
-    tok = j.modelUsage["claude-x"]
+    tok = j.modelUsage[MAIN] ?? tok
+    sub = j.modelUsage[SUB]?.costUSD ?? 0
   }
 } catch {}
 let full = process.env.FAKE_FULL === "1"
@@ -60,11 +66,11 @@ const save = () => {
   if (saved) return
   saved = true
   fs.mkdirSync(dir, { recursive: true })
-  fs.appendFileSync(file, JSON.stringify({ type: "cost-state", sessionId: sid, totalCostUSD: usd, modelUsage: { "claude-x": tok } }) + "\n")
+  fs.appendFileSync(file, JSON.stringify({ type: "cost-state", sessionId: sid, totalCostUSD: usd, modelUsage: usage() }) + "\n")
 }
 const state = (s) => out({ type: "system", subtype: "session_state_changed", state: s })
 const result = (extra) => {
-  out({ type: "result", subtype: "success", is_error: false, result: "ok", total_cost_usd: usd, usage: {}, modelUsage: { "claude-x": tok }, ...extra })
+  out({ type: "result", subtype: "success", is_error: false, result: "ok", total_cost_usd: usd, usage: {}, modelUsage: usage(), ...extra })
   state("idle")
 }
 const say = (text) => out({ type: "assistant", message: { id: "m" + Math.random(), role: "assistant", content: [{ type: "text", text }] }, parent_tool_use_id: null })
@@ -88,10 +94,11 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     sid = "clear-" + Math.random().toString(36).slice(2, 8)
     file = path.join(dir, sid + ".jsonl")
     usd = 0
+    sub = 0
     tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
     full = false
     out({ type: "conversation_reset", new_conversation_id: "otro-" + Math.random().toString(36).slice(2, 8), session_id: before, trigger: "clear" })
-    out({ type: "system", subtype: "init", cwd: process.cwd(), model: "claude-x", mcp_servers: [], tools: [] })
+    out({ type: "system", subtype: "init", cwd: process.cwd(), model: MAIN, mcp_servers: [], tools: [] })
     out({ type: "result", subtype: "success", is_error: false, result: "", total_cost_usd: 0, usage: {}, modelUsage: {} })
     state("idle")
     continue
@@ -211,6 +218,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     continue
   }
   usd += 0.25
+  if (text.includes("HAIKU")) {
+    usd += 0.05
+    sub += 0.05
+  }
   tok = { inputTokens: tok.inputTokens + 10, outputTokens: tok.outputTokens + 5, cacheReadInputTokens: tok.cacheReadInputTokens + 100, cacheCreationInputTokens: 0 }
   say("respuesta a: " + text.slice(0, 40))
   result({})
