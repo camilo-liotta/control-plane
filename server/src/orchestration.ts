@@ -1,4 +1,5 @@
 import type { Accounts } from "./accounts.ts"
+import { AFK_HEADER, afkEnterNotice } from "./afk.ts"
 import { lastCostState, listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
 import type { Db, ProjectMessageRow, ProjectRecord, ReportRow, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
@@ -454,6 +455,8 @@ export class Orchestration {
           : `[control-plane] Mensajes de otros proyectos: ${messages.length} ${messages.length === 1 ? "mensaje nuevo" : "mensajes nuevos"} (de ${from}).`
       )
     }
+    const afk = this.db.getProject(projectId)?.afk
+    if (afk) lines.push(`[control-plane] ${afkEnterNotice(afk)}`)
     reports.forEach((r, i) => {
       lines.push("")
       lines.push(`## ${i + 1}. ${r.sessionName} (${STATUS_LABEL[r.status]})${r.taskTitle ? `. Tarea: ${r.taskTitle}` : ""}`)
@@ -548,28 +551,48 @@ export class Orchestration {
     this.messagesInReview.delete(projectId)
     this.broadcastProject(projectId)
     if (staged.length) {
-      const project = this.db.getProject(projectId)
+      // En AFK sale todo lo que la orquestadora no marcó con hold; lo demás espera al usuario como siempre.
+      const afk = this.db.getProject(projectId)?.afk
+      const auto = afk ? staged.filter((d) => !d.hold) : []
+      const waiting = staged.length - auto.length
       const orch = this.orchestratorOf(projectId)
+      if (waiting) {
+        this.hub.broadcast({
+          type: "toast",
+          level: "info",
+          event: "proposals",
+          title: `${waiting === 1 ? "Hay una propuesta lista" : `Hay ${waiting} propuestas listas`} para revisar`,
+          body: afk
+            ? `La orquestadora marcó ${waiting === 1 ? "esta" : "estas"} con hold: ${waiting === 1 ? "espera" : "esperan"} tu aprobación aunque estés AFK.`
+            : inReview.length
+              ? `La orquestadora terminó de revisar ${inReview.length} ${inReview.length === 1 ? "resultado" : "resultados"}.`
+              : readMessages
+                ? `La orquestadora terminó de leer ${readMessages === 1 ? "un mensaje" : `${readMessages} mensajes`} de otros proyectos.`
+                : undefined,
+          projectId,
+          // Las propuestas se ven en el chat de la orquestadora: el aviso lleva ahí y baja hasta ellas.
+          ...(orch ? { sessionId: orch.id, open: "proposals" as const } : {}),
+        })
+      }
+      for (const d of auto) void this.sendAuto(d)
+    }
+  }
+
+  /** Envía sola una propuesta en AFK. Si no sale, queda lista para que la apruebe el usuario, con un aviso. */
+  private async sendAuto(d: Draft) {
+    try {
+      await this.sendDraft(d.id, {}, true)
+    } catch (err) {
+      const orch = this.orchestratorOf(d.projectId)
       this.hub.broadcast({
         type: "toast",
-        level: "info",
+        level: "warn",
         event: "proposals",
-        title: `${staged.length === 1 ? "Hay una propuesta lista" : `Hay ${staged.length} propuestas listas`} para revisar`,
-        body: inReview.length
-          ? `La orquestadora terminó de revisar ${inReview.length} ${inReview.length === 1 ? "resultado" : "resultados"}.`
-          : readMessages
-            ? `La orquestadora terminó de leer ${readMessages === 1 ? "un mensaje" : `${readMessages} mensajes`} de otros proyectos.`
-            : undefined,
-        projectId,
-        // Las propuestas se ven en el chat de la orquestadora: el aviso lleva ahí y baja hasta ellas.
+        title: `No se pudo enviar sola «${d.title}»`,
+        body: `${errorMessage(err)} Queda lista para que la apruebes vos.`,
+        projectId: d.projectId,
         ...(orch ? { sessionId: orch.id, open: "proposals" as const } : {}),
       })
-      if (project?.settings.autoDispatch) {
-        for (const d of staged) {
-          // Una sesión nueva (también la de un plan) la aprueba siempre el usuario.
-          if (d.kind === "prompt" || (d.kind === "plan" && d.targetSessionId)) void this.sendDraft(d.id, {}, true).catch(() => {})
-        }
-      }
     }
   }
 
@@ -591,9 +614,17 @@ export class Orchestration {
     return `\n\n⚠️ Hay en la cola: ${parts.join(" y ")}. Leelos con read_results antes de terminar: tus propuestas no se liberan hasta que la cola esté vacía.`
   }
 
+  /** Qué va a pasar con una propuesta cuando la orquestadora termine el turno (para las respuestas de propose_*). */
+  releaseNote(projectId: string, d: Pick<Draft, "hold">, createsSession = false): string {
+    if (!this.db.getProject(projectId)?.afk) return createsSession ? "después el usuario la tiene que aprobar para que se cree" : "después la aprueba el usuario"
+    return d.hold
+      ? "el usuario está AFK, pero la marcaste con hold: la tiene que aprobar él"
+      : "el usuario está AFK: sale sola cuando termines el turno (si la marcás con hold, la aprueba él)"
+  }
+
   proposePrompt(
     orch: SessionRecord,
-    input: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null }
+    input: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null; hold?: boolean }
   ): string {
     const target = this.findSessionByName(orch.projectId, input.session)
     if (!target || target.kind !== "worker") {
@@ -621,17 +652,18 @@ export class Orchestration {
       fresh: input.fresh === true,
       ...DRAFT_DEFAULTS,
       ...choice,
+      hold: input.hold === true,
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
     const subs = d.subagents.length ? ` Con ${d.subagents.length} ${d.subagents.length === 1 ? "subagente" : "subagentes"} (${d.subagents.map((s) => s.name).join(", ")}).` : ""
-    return `Propuesta ${d.id} creada para ${target.name}${d.fresh ? " (empieza de cero)" : ""}${this.choiceNote(d)}.${subs} Queda en preparación hasta que termines el turno; después la aprueba el usuario${this.db.getProject(orch.projectId)?.settings.autoDispatch ? " (el proyecto tiene auto-envío: se va a enviar sola)" : ""}.${this.openDraftGuard(orch.projectId)}`
+    return `Propuesta ${d.id} creada para ${target.name}${d.fresh ? " (empieza de cero)" : ""}${this.choiceNote(d)}.${subs} Queda en preparación hasta que termines el turno; ${this.releaseNote(orch.projectId, d)}.${this.openDraftGuard(orch.projectId)}`
   }
 
   proposeSession(
     orch: SessionRecord,
-    input: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null }
+    input: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null; hold?: boolean }
   ): string {
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
@@ -656,11 +688,12 @@ export class Orchestration {
       fresh: false,
       ...DRAFT_DEFAULTS,
       ...choice,
+      hold: input.hold === true,
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
-    return `Propuesta ${d.id} creada: sesión nueva ${name}${this.choiceNote(d)}. El usuario la tiene que aprobar para que se cree.${this.openDraftGuard(orch.projectId)}`
+    return `Propuesta ${d.id} creada: sesión nueva ${name}${this.choiceNote(d)}. Queda en preparación hasta que termines el turno; ${this.releaseNote(orch.projectId, d, true)}.${this.openDraftGuard(orch.projectId)}`
   }
 
   updateProposal(
@@ -675,12 +708,13 @@ export class Orchestration {
       model?: string | null
       effort?: string | null
       steps?: StepInput[]
+      hold?: boolean
     }
   ): string {
     const d = this.db.getDraft(input.id)
     if (!d || d.projectId !== orch.projectId) throw new Error(`No existe la propuesta ${input.id}.`)
     if (d.kind === "plan" && d.state !== "discarded")
-      return this.plans.update(orch, d, { title: input.title, steps: input.steps }) + this.openDraftGuard(orch.projectId)
+      return this.plans.update(orch, d, { title: input.title, steps: input.steps, hold: input.hold }) + this.openDraftGuard(orch.projectId)
     if (d.state === "sent" || d.state === "discarded")
       throw new Error(`La propuesta ${d.id} ya fue ${d.state === "sent" ? "enviada" : "descartada"}; creá una nueva si hace falta.`)
     const patch: Partial<Draft> = { state: "staged", updatedAt: now(), revision: d.revision + 1 }
@@ -688,6 +722,7 @@ export class Orchestration {
     if (input.prompt !== undefined) patch.prompt = input.prompt.trim()
     if (input.subagents !== undefined) patch.subagents = normalizeSubagents(input.subagents)
     if (input.fresh !== undefined && d.kind === "prompt") patch.fresh = input.fresh
+    if (input.hold !== undefined) patch.hold = input.hold
     if (input.session !== undefined && d.kind === "prompt") {
       const target = this.findSessionByName(orch.projectId, input.session)
       if (!target || target.kind !== "worker") throw new Error(`No existe la sesión "${input.session}".`)
@@ -705,7 +740,8 @@ export class Orchestration {
     this.db.updateDraft(d.id, patch)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
-    return `Propuesta ${d.id} actualizada (revisión ${d.revision + 1})${this.choiceNote(this.db.getDraft(d.id)!)}.${this.openDraftGuard(orch.projectId)}`
+    const updated = this.db.getDraft(d.id)!
+    return `Propuesta ${d.id} actualizada (revisión ${d.revision + 1})${this.choiceNote(updated)}.${input.hold !== undefined ? ` ${this.releaseNote(orch.projectId, updated)}.` : ""}${this.openDraftGuard(orch.projectId)}`
   }
 
   /** Una sesión con un plan en curso no recibe otros prompts en el medio: los reportes se mezclarían. */
@@ -877,8 +913,13 @@ export class Orchestration {
     if (d.state === "staged")
       throw new Error("La orquestadora todavía está revisando resultados: la propuesta se libera cuando termine.")
     if (d.state !== "ready") throw new Error("La propuesta ya no está pendiente")
+    const sentBy = auto ? "afk" : "user"
     if (d.kind === "plan") {
       await this.plans.approve(d, edits, auto)
+      this.db.updateDraft(d.id, { sentBy })
+      // Un cambio de un plan: el plan sigue desde ahora con lo que aprobó quien lo aprobó.
+      if (d.revises) this.db.updateDraft(d.revises, { sentBy })
+      this.broadcastDraft(d.id)
       this.broadcastProject(d.projectId)
       return this.db.getDraft(d.id)!
     }
@@ -898,10 +939,11 @@ export class Orchestration {
       fresh !== d.fresh ||
       model !== d.model ||
       effort !== d.effort
-    const message = withSubagents(prompt, subagents)
+    // Sale solo en AFK: el worker no tiene a quién preguntarle.
+    const message = (auto ? `${AFK_HEADER}\n\n` : "") + withSubagents(prompt, subagents)
     const withChoice = choiceLabel(this.sessions.meta.models, model, effort)
     // La marcamos antes de mandar para que un doble click no la envíe dos veces.
-    this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now(), title, prompt, edited, subagents, fresh, model, effort })
+    this.db.updateDraft(d.id, { state: "sent", sentBy, decidedAt: now(), updatedAt: now(), title, prompt, edited, subagents, fresh, model, effort })
     try {
       if (d.kind === "prompt") {
         if (!d.targetSessionId) throw new Error("La propuesta no tiene sesión destino")
@@ -932,7 +974,7 @@ export class Orchestration {
         )
       }
     } catch (err) {
-      this.db.updateDraft(d.id, { state: "ready", decidedAt: null })
+      this.db.updateDraft(d.id, { state: "ready", sentBy: null, decidedAt: null })
       this.broadcastDraft(d.id)
       throw err
     }

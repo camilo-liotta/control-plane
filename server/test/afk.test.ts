@@ -70,7 +70,9 @@ class FakeSessions extends EventEmitter {
   }
   endTurn(rec: SessionRecord) {
     this.statuses.set(rec.id, "idle")
-    this.emit("turnEnd", rec, { ok: true, aborted: false, result: "", local: false })
+    const fresh = this.db.getSession(rec.id) ?? rec
+    this.emit("status", fresh, "idle")
+    this.emit("turnEnd", fresh, { ok: true, aborted: false, result: "", local: false, contextFull: false, retried: false })
   }
 }
 
@@ -119,6 +121,7 @@ describe("modo AFK", () => {
     hub = new FakeHub()
     sessions = new FakeSessions(db)
     orch = new Orchestration(db, hub as unknown as import("../src/hub.ts").Hub, sessions as unknown as SessionManager)
+    orch.plans.graceMs = 0
     afk = new Afk({ db, hub: hub as unknown as import("../src/hub.ts").Hub, sessions: sessions as unknown as SessionManager, orchestration: orch })
   }
 
@@ -229,12 +232,12 @@ describe("modo AFK", () => {
       id: "p_old",
       name: "Viejo",
       repoPath: "/tmp",
-      settings: { ...defaultSettings, autoDispatch: true },
+      settings: { ...defaultSettings, autoDispatch: true } as typeof defaultSettings,
       accountId: null,
       createdAt: Date.now(),
       archivedAt: null,
     })
-    old.insertProject({ id: "p_off", name: "Sin", repoPath: "/tmp", settings: { ...defaultSettings, autoDispatch: false }, accountId: null, createdAt: Date.now(), archivedAt: null })
+    old.insertProject({ id: "p_off", name: "Sin", repoPath: "/tmp", settings: { ...defaultSettings, autoDispatch: false } as typeof defaultSettings, accountId: null, createdAt: Date.now(), archivedAt: null })
     const s = { ...session("p_old", "W", "worker") }
     old.insertSession(s)
     old.updateSession(s.id, { costUsd: 7, costByModel: { sonnet: 7 } })
@@ -325,5 +328,218 @@ describe("modo AFK", () => {
     assert.match(AFK_HEADER, /AskUserQuestion/)
     assert.match(AFK_HEADER, /report_result/)
     assert.match(AFK_HEADER, /blocked/)
+  })
+
+  const STEPS = [
+    { title: "Uno", prompt: "Primer paso", model: "sonnet" },
+    { title: "Dos", prompt: "Segundo paso" },
+  ]
+  const drafts = (states?: ("staged" | "ready" | "sent" | "discarded")[]) => db.listDrafts({ projectId, states })
+  /** El worker BACKEND reporta y termina el turno (avanza el plan). */
+  const finishStep = async (status: "done" | "blocked", summary: string) => {
+    orch.report(db.getSession(a.id)!, { status, summary })
+    sessions.endTurn(db.getSession(a.id)!)
+    await sleep(30)
+  }
+  const release = async () => {
+    sessions.endTurn(orq)
+    await sleep(150)
+  }
+
+  describe("qué sale solo", () => {
+    it("en AFK sale todo al terminar la revisión: prompt, sesión nueva, plan, plan con sesión nueva, y lleva el encabezado", async () => {
+      afk.start(projectId)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Prompt", prompt: "Hacé algo" })
+      orch.proposeSession(orq, { name: "tests", role: "QA", title: "Suite", prompt: "Armá la suite" })
+      orch.plans.propose(orq, { session: "BACKEND", title: "Plan", steps: STEPS })
+      orch.plans.propose(orq, { newSession: { name: "docs", role: "Docs" }, title: "Plan nuevo", steps: STEPS })
+      assert.equal(drafts(["staged"]).length, 4)
+      await release()
+      assert.equal(drafts(["staged", "ready"]).length, 0)
+      const sent = drafts(["sent"])
+      assert.equal(sent.length, 4)
+      assert.ok(sent.every((d) => d.sentBy === "afk"))
+      assert.ok(db.listSessions().some((s) => s.name === "TESTS"))
+      assert.ok(db.listSessions().some((s) => s.name === "DOCS"))
+      // El prompt directo, el de la sesión nueva y el primer paso de cada plan salen con el encabezado.
+      const texts = sessions.sent.map((m) => m.text)
+      assert.equal(texts.filter((t) => t.startsWith(AFK_HEADER)).length, 4)
+      assert.ok(texts.some((t) => t.startsWith(AFK_HEADER) && t.includes("Hacé algo")))
+      assert.ok(texts.some((t) => t.startsWith(AFK_HEADER) && t.includes("Armá la suite")))
+      // El timeline muestra lo que escribió la orquestadora, sin el encabezado.
+      assert.ok(sessions.sent.every((m) => !m.opts.display || !m.opts.display.includes(AFK_HEADER)))
+    })
+
+    it("una revisión de un plan pausado también sale sola", async () => {
+      afk.start(projectId)
+      orch.plans.propose(orq, { session: "BACKEND", title: "Plan", steps: STEPS })
+      await release()
+      const plan = drafts(["sent"])[0]!
+      assert.equal(db.getDraft(plan.id)!.planState, "running")
+      await finishStep("done", "Uno listo")
+      await finishStep("blocked", "Se trabó")
+      await sleep(150) // el resultado le llega a la orquestadora
+      assert.equal(db.getDraft(plan.id)!.planState, "paused")
+      orch.updateProposal(orq, { id: plan.id, steps: [{ title: "Otro", prompt: "Otro", model: "sonnet" }] })
+      await release()
+      const rev = drafts().find((d) => d.revises === plan.id)!
+      assert.equal(rev.state, "sent")
+      assert.equal(rev.sentBy, "afk")
+      const after = db.getDraft(plan.id)!
+      assert.equal(after.planState, "running")
+      assert.equal(after.sentBy, "afk")
+      assert.equal(after.steps[1]!.title, "Otro")
+    })
+
+    it("lo marcado con hold espera al usuario, con un aviso que lo dice", async () => {
+      afk.start(projectId)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Libre", prompt: "Libre" })
+      const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "Caro", prompt: "Caro", hold: true })
+      assert.match(reply, /AFK, pero la marcaste con hold/)
+      orch.proposeSession(orq, { name: "caja", role: "Caja", title: "Caja", prompt: "Caja", hold: true })
+      orch.plans.propose(orq, { session: "BACKEND", title: "Plan hold", steps: STEPS, hold: true })
+      await release()
+      const byTitle = (t: string) => drafts().find((d) => d.title === t)!
+      assert.equal(byTitle("Libre").state, "sent")
+      for (const t of ["Caro", "Nueva sesión CAJA", "Plan hold"]) {
+        const d = t === "Nueva sesión CAJA" ? drafts().find((x) => x.kind === "session")! : byTitle(t)
+        assert.equal(d.state, "ready", t)
+        assert.equal(d.hold, true)
+        assert.equal(d.sentBy, null)
+      }
+      assert.equal(db.listSessions().some((s) => s.name === "CAJA"), false)
+      const toast = hub.toasts().find((m) => m.event === "proposals")!
+      assert.match(toast.title, /3 propuestas listas/)
+      assert.match(toast.body!, /hold/)
+      // El usuario la aprueba a mano: sale sin encabezado y marcada como suya.
+      const caro = byTitle("Caro")
+      await orch.sendDraft(caro.id, {})
+      assert.equal(db.getDraft(caro.id)!.sentBy, "user")
+      assert.equal(sessions.sent.at(-1)!.text, "Caro")
+    })
+
+    it("update_proposal cambia el hold, y la respuesta dice qué va a pasar", async () => {
+      afk.start(projectId)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+      const d = drafts()[0]!
+      assert.match(orch.updateProposal(orq, { id: d.id, hold: true }), /con hold: la tiene que aprobar él/)
+      assert.equal(db.getDraft(d.id)!.hold, true)
+      assert.match(orch.updateProposal(orq, { id: d.id, hold: false }), /sale sola/)
+      await release()
+      assert.equal(db.getDraft(d.id)!.state, "sent")
+    })
+
+    it("sin AFK nada sale solo, y las respuestas siguen diciendo que lo aprueba el usuario", async () => {
+      const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+      assert.match(reply, /después la aprueba el usuario/)
+      await release()
+      assert.equal(drafts(["ready"]).length, 1)
+      assert.equal(sessions.sent.length, 0)
+      assert.match(orch.proposeSession(orq, { name: "x", role: "x", title: "x", prompt: "x" }), /el usuario la tiene que aprobar para que se cree/)
+    })
+
+    it("si el usuario vuelve antes de que se libere, ya no sale sola", async () => {
+      afk.start(projectId)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+      afk.stop(projectId)
+      await release()
+      assert.equal(drafts(["ready"]).length, 1)
+      assert.equal(sessions.sent.length, 0)
+      assert.equal(hub.toasts().filter((m) => m.event === "proposals").length, 1, "avisa que hay una propuesta lista")
+    })
+
+    it("si una no se puede enviar, queda lista para el usuario y avisa", async () => {
+      afk.start(projectId)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Rota", prompt: "P" })
+      db.updateSession(a.id, { archivedAt: Date.now() })
+      await release()
+      const [d] = drafts()
+      assert.equal(d!.state, "ready")
+      assert.equal(d!.sentBy, null)
+      assert.match(hub.toasts().at(-1)!.title, /No se pudo enviar sola «Rota»/)
+    })
+
+    it("el lote de resultados le recuerda a la orquestadora que el usuario está AFK", async () => {
+      afk.start(projectId, { budgetUsd: 3 })
+      orch.report(a, { status: "done", summary: "Listo" })
+      await sleep(400)
+      const text = sessions.sent.find((m) => m.id === orq.id)!.text
+      assert.match(text, /El usuario está AFK \(presupuesto US\$ 3\): tus propuestas salen solas, salvo las que marques con hold\./)
+    })
+
+    it("al terminar el AFK por presupuesto, un plan que aprobó el AFK queda pausado; uno del usuario sigue", async () => {
+      const w2 = session(projectId, "FRONT", "worker")
+      db.insertSession(w2)
+      orch.plans.propose(orq, { session: "FRONT", title: "Del usuario", steps: STEPS })
+      sessions.endTurn(orq)
+      await orch.sendDraft(drafts(["ready"])[0]!.id, {})
+      afk.start(projectId, { budgetUsd: 1 })
+      orch.plans.propose(orq, { session: "BACKEND", title: "Del AFK", steps: STEPS })
+      await release()
+      const planOf = (t: string) => drafts().find((d) => d.title === t)!
+      assert.equal(planOf("Del AFK").planState, "running")
+      db.updateSession(a.id, { costUsd: 1.5 })
+      sessions.endTurn(a)
+      assert.equal(db.getProject(projectId)!.afk, null)
+      assert.equal(planOf("Del AFK").planState, "paused")
+      assert.match(planOf("Del AFK").planNote!, /se agotó el presupuesto/)
+      assert.equal(planOf("Del usuario").planState, "running")
+    })
+
+    it("un paso de un plan que sigue solo mientras hay AFK lleva el encabezado", async () => {
+      orch.plans.propose(orq, { session: "BACKEND", title: "Plan", steps: STEPS })
+      sessions.endTurn(orq)
+      await orch.sendDraft(drafts(["ready"])[0]!.id, {})
+      assert.ok(!sessions.sent.at(-1)!.text.startsWith(AFK_HEADER), "con el usuario presente no lleva encabezado")
+      afk.start(projectId)
+      await finishStep("done", "Uno listo")
+      await sleep(300)
+      const second = sessions.sent.find((m) => m.text.includes("Segundo paso"))
+      assert.ok(second, "salió el segundo paso")
+      assert.ok(second.text.startsWith(AFK_HEADER))
+    })
+  })
+
+  describe("registro", () => {
+    it("guarda lo que se envió solo, lo que esperó, los resultados y el costo", async () => {
+      afk.start(projectId, { budgetUsd: 50 })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Sale", prompt: "P" })
+      orch.proposeSession(orq, { name: "tests", role: "QA", title: "Suite", prompt: "S" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Espera", prompt: "E", hold: true })
+      await release()
+      orch.report(a, { status: "done", summary: "Terminé lo de la sesión" })
+      db.updateSession(a.id, { costUsd: 2, costByModel: { sonnet: 2 } })
+      const log = afk.log(projectId)!
+      assert.deepEqual(log.sent.map((d) => d.title), ["Sale", "Suite"])
+      assert.ok(log.sent.every((d) => d.sentBy === "afk" && d.state === "sent" && d.sentAt))
+      const suite = log.sent[1]!
+      assert.equal(suite.createdSession, true)
+      assert.equal(suite.sessionName, "TESTS")
+      assert.equal(suite.sessionId, db.listSessions().find((s) => s.name === "TESTS")!.id)
+      // Con el resultado nuevo en la cola, la propuesta que esperaba vuelve a "en preparación".
+      assert.deepEqual(log.held.map((d) => [d.title, d.hold]), [["Espera", true]])
+      assert.equal(log.results.length, 1)
+      assert.equal(log.results[0]!.sessionName, "BACKEND")
+      assert.equal(log.results[0]!.summary, "Terminé lo de la sesión")
+      assert.equal(log.spentUsd, 2)
+      // Lo de antes o después del período no cuenta.
+      afk.stop(projectId)
+      await sleep(5)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Después", prompt: "P" })
+      const after = afk.log(projectId)!
+      assert.equal(after.endReason, "user")
+      assert.ok(!after.sent.some((d) => d.title === "Después") && !after.held.some((d) => d.title === "Después"))
+    })
+
+    it("cada período tiene su registro: el último reemplaza al anterior", () => {
+      afk.start(projectId)
+      afk.stop(projectId)
+      const first = afk.log(projectId)!
+      afk.start(projectId, { budgetUsd: 4 })
+      const second = afk.log(projectId)!
+      assert.ok(second.since >= first.since)
+      assert.equal(second.endedAt, null)
+      assert.equal(second.budgetUsd, 4)
+    })
   })
 })

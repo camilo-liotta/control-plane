@@ -18,11 +18,6 @@ export type TaskState =
   | "reported_partial"
 
 export interface ProjectSettings {
-  /**
-   * @deprecated Lo reemplazó el modo AFK (Project.afk). El server ya no lo lee: un proyecto que lo tenía
-   * en true pasó a AFK sin límites al migrar. Queda en el tipo hasta que la web saque su interruptor.
-   */
-  autoDispatch?: boolean
   /** Ventana (segundos) para agrupar resultados que llegan casi juntos. */
   batchWindowSec: number
   /** Si la orquestadora puede editar archivos (por defecto no). */

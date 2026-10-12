@@ -40,6 +40,11 @@ const subagentSchema = z
   .optional()
   .describe("Subagentes específicos que el worker tiene que lanzar para esta tarea.")
 
+const holdSchema = z
+  .boolean()
+  .optional()
+  .describe("true: esto lo tiene que aprobar el usuario aunque esté AFK (en AFK, lo demás sale solo). Usalo para lo que no debería salir sin que lo mire: algo caro, riesgoso o irreversible, o una decisión que es suya.")
+
 const freshSchema = z
   .boolean()
   .optional()
@@ -404,7 +409,7 @@ function buildServer(
       {
         title: "Proponer prompt",
         description:
-          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el proyecto tiene auto-envío). Poné siempre model y effort: Sonnet para implementar un pedido claro, Haiku para lo mecánico, Opus solo si hace falta.",
+          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el usuario está AFK, salvo que lo marques con hold). Poné siempre model y effort: Sonnet para implementar un pedido claro, Haiku para lo mecánico, Opus solo si hace falta.",
         inputSchema: {
           session: z.string().describe("Nombre de la sesión destino, tal como aparece en list_sessions."),
           title: z.string().describe("Título corto de la tarea (se muestra en el dashboard)."),
@@ -413,9 +418,10 @@ function buildServer(
           fresh: freshSchema,
           model: modelSchema,
           effort: effortSchema,
+          hold: holdSchema,
         },
       },
-      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null }) =>
+      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null; hold?: boolean }) =>
         orchestration.proposePrompt(self, args)
       )
     )
@@ -425,7 +431,7 @@ function buildServer(
       {
         title: "Proponer sesión nueva",
         description:
-          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba. Poné model y effort: la sesión arranca con ellos.",
+          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba (o se crea sola si está AFK, salvo que la marques con hold). Poné model y effort: la sesión arranca con ellos.",
         inputSchema: {
           name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E)."),
           role: z.string().describe("Rol o responsabilidad de la sesión."),
@@ -434,9 +440,10 @@ function buildServer(
           subagents: subagentSchema,
           model: modelSchema,
           effort: effortSchema,
+          hold: holdSchema,
         },
       },
-      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null }) =>
+      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null; hold?: boolean }) =>
         orchestration.proposeSession(self, args)
       )
     )
@@ -456,6 +463,7 @@ function buildServer(
           subagents: subagentSchema,
           model: modelSchema,
           effort: effortSchema,
+          hold: holdSchema,
           steps: z
             .array(stepSchema)
             .optional()
@@ -472,6 +480,7 @@ function buildServer(
         model?: string | null
         effort?: string | null
         steps?: StepInput[]
+        hold?: boolean
       }) =>
         orchestration.updateProposal(self, args)
       )
@@ -491,9 +500,10 @@ function buildServer(
             .describe("En vez de session: crear una sesión nueva para el plan (arranca con el modelo del primer paso)."),
           title: z.string().describe("Título del plan."),
           steps: z.array(stepSchema).min(1).max(20).describe("Los pasos, en orden. Poné model y effort en cada uno."),
+          hold: holdSchema,
         },
       },
-      wrap((args: { session?: string; newSession?: { name: string; role: string }; title: string; steps: StepInput[] }) =>
+      wrap((args: { session?: string; newSession?: { name: string; role: string }; title: string; steps: StepInput[]; hold?: boolean }) =>
         orchestration.plans.propose(self, args)
       )
     )

@@ -119,6 +119,8 @@ export class Afk {
     const to = period.endedAt ?? now()
     const live = period.endedAt === null && p.afk ? this.spent(p, p.afk, period) : null
     const name = (id: string | null) => (id ? (this.db.getSession(id)?.name ?? null) : null)
+    // La sesión que creó una propuesta de sesión nueva (se busca por el nombre que tenía).
+    const created = (d: Draft) => (d.newSession ? this.db.listSessions().find((x) => x.projectId === projectId && x.name === d.newSession!.name) : undefined)
     const item = (d: Draft): AfkLogDraft => ({
       id: d.id,
       kind: d.kind,
@@ -126,7 +128,7 @@ export class Afk {
       state: d.state,
       hold: d.hold,
       sentBy: d.sentBy,
-      sessionId: d.targetSessionId,
+      sessionId: d.targetSessionId ?? created(d)?.id ?? null,
       sessionName: name(d.targetSessionId) ?? d.newSession?.name ?? null,
       createdSession: d.kind === "session" || (d.kind === "plan" && d.newSession !== null),
       sentAt: d.state === "sent" ? d.decidedAt : null,

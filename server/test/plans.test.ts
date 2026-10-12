@@ -386,8 +386,8 @@ describe("planes por pasos", () => {
     assert.equal(db.getDraft(rev.id)!.state, "sent")
   })
 
-  it("con auto-envío, el plan y sus cambios salen solos", async () => {
-    db.updateProject(projectId, { settings: { ...defaultSettings, batchWindowSec: 0.05, autoDispatch: true } })
+  it("en AFK, el plan y sus cambios salen solos", async () => {
+    db.updateProject(projectId, { settings: { ...defaultSettings, batchWindowSec: 0.05 }, afk: { since: Date.now(), until: null, budgetUsd: null, spentAtStart: 0 } })
     orch.plans.propose(orq, { session: "BACKEND", title: "Auto", steps: STEPS })
     sessions.endTurn(orq)
     await sleep(10)
