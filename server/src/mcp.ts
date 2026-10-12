@@ -556,7 +556,7 @@ function buildServer(
       {
         title: "Otros proyectos",
         description:
-          "Lista los otros proyectos del dashboard (sin los archivados): nombre, repo, su orquestadora y en qué estado está. Sirve para saber a quién escribirle con message_project cuando tu proyecto necesita algo de otro.",
+          "Lista los otros proyectos del dashboard (sin los archivados): nombre, id, repo, su orquestadora y en qué estado está. Sirve para saber a quién escribirle con message_project cuando tu proyecto necesita algo de otro (un dato, un cambio en una API, coordinar una migración). Solo la tienen las orquestadoras.",
         annotations: { readOnlyHint: true },
       },
       wrap(() => orchestration.listProjects(db.getSession(self.id) ?? self))
@@ -567,7 +567,7 @@ function buildServer(
       {
         title: "Escribirle a la orquestadora de otro proyecto",
         description:
-          "Le manda un mensaje a la orquestadora de otro proyecto (nombre o id, ver list_projects), por ejemplo para pedirle algo que tu proyecto necesita de él. Es el único canal entre proyectos: tus workers no pueden escribirle a nadie de afuera. El mensaje queda registrado y el usuario lo ve; le llega a esa orquestadora en su próxima revisión, aunque esté quieta o detenida. Escribí un mensaje autocontenido y breve, y no contestes con agradecimientos ni confirmaciones. Hay un límite de mensajes por hora y por par de proyectos.",
+          "Le manda un mensaje a la orquestadora de otro proyecto (nombre o id, ver list_projects). Es el único canal entre proyectos: con SendMessage no se puede (está bloqueado) y tus workers no tienen esta herramienta. Escribí el mensaje autocontenido: qué necesitás, para qué y para cuándo. Queda registrado, el usuario lo ve y le llega a esa orquestadora en su próxima revisión aunque esté quieta o detenida; lo que te contesten te llega igual, con replyTo. No mandes acuses (\"gracias\", \"recibido\"): solo cuando haya algo que decir; hay un límite de mensajes por hora entre dos proyectos y, si lo pasás, pedile al usuario que intervenga. Si contestás un mensaje que recibiste, pasá su id en replyTo.",
         inputSchema: {
           project: z.string().min(1).describe("Nombre o id del proyecto destino."),
           message: z.string().min(1).describe("El mensaje: qué necesitás o qué respondés, con el contexto para que lo entienda sin más."),

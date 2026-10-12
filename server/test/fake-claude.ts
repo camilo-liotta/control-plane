@@ -12,6 +12,8 @@ import path from "node:path"
  * - "CRON …", "CRONDEL …", "WAKEUP …" y "FIRE …" programan, cancelan y disparan tareas (ver el script);
  * - "PREGUNTA" deja una pregunta pendiente y "LARGO" hace un turno que tarda (para los reinicios);
  *   "SECRETO <valor>" llama add_credential y list_environments con ese secreto;
+ *   "MCP <herramienta> <json>" llama esa herramienta de control-plane por el MCP de la sesión (la URL sale de --mcp-config);
+ *   "SENDMSG <a quién>" hace un SendMessage pasando por el hook PreToolUse de --settings, como Claude Code (y muestra si lo frenó);
  *   "SUBAGENTE" cierra el turno con un subagente en segundo plano que sigue andando;
  * - como el de verdad, --resume de una conversación sin transcript sale con "No conversation found";
  * - con FALLA1 en el --name, el primer arranque sale con error (los siguientes andan).
@@ -20,6 +22,7 @@ const SCRIPT = String.raw`#!/usr/bin/env node
 import fs from "node:fs"
 import path from "node:path"
 import readline from "node:readline"
+import { spawnSync } from "node:child_process"
 
 const args = process.argv.slice(2)
 const flag = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : null }
@@ -149,6 +152,35 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     const id = "toolu_" + Math.random().toString(36).slice(2, 10)
     out({ type: "assistant", message: { id: "m" + Math.random(), role: "assistant", content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: null })
     out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] }, parent_tool_use_id: null, tool_use_result: structured })
+  }
+  // "MCP <herramienta> <json>": una herramienta de control-plane por el MCP de la sesión, y su resultado en el chat.
+  if (text.startsWith("MCP ")) {
+    const rest = text.slice(4).trim()
+    const sp = rest.indexOf(" ")
+    const toolName = sp < 0 ? rest : rest.slice(0, sp)
+    const input = sp < 0 ? {} : JSON.parse(rest.slice(sp + 1))
+    const url = JSON.parse(flag("--mcp-config")).mcpServers["control-plane"].url
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: toolName, arguments: input } }) })
+    const j = await res.json()
+    const body = (j.result?.content ?? []).map((b) => b.text).join("\n") || JSON.stringify(j.error ?? j)
+    tool("mcp__control-plane__" + toolName, input, body)
+    say((j.result?.isError ? "ERROR: " : "OK: ") + body)
+    result({})
+    continue
+  }
+  // "SENDMSG <a quién>": como Claude Code, antes de mandar corre el hook PreToolUse de --settings; un deny frena la herramienta.
+  if (text.startsWith("SENDMSG ")) {
+    const to = text.slice(8).trim()
+    const input = { to, recipient: to, recipient_kind: "name", message: "hola", content: "hola" }
+    const cmd = JSON.parse(flag("--settings")).hooks.PreToolUse.find((h) => h.matcher === "SendMessage").hooks[0].command
+    const run = spawnSync("/bin/sh", ["-c", cmd], { input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "SendMessage", tool_input: input }), encoding: "utf8" })
+    let verdict = null
+    try { verdict = JSON.parse(run.stdout).hookSpecificOutput } catch {}
+    const denied = verdict?.permissionDecision === "deny"
+    tool("SendMessage", input, denied ? verdict.permissionDecisionReason : "Message sent to " + to + ".")
+    say(denied ? "BLOQUEADO: " + verdict.permissionDecisionReason : "ENVIADO a " + to)
+    result({})
+    continue
   }
   if (text.startsWith("CRON ")) {
     const [cron, rec, dur, ...rest] = text.slice(5).split("|")
