@@ -24,6 +24,8 @@ function deny() {
   process.exit(0)
 }
 const fail = () => (denyOnError ? deny() : process.exit(0))
+// Un error del script sale con código 1, que Claude Code toma como "seguí": el cerrojo tiene que denegar igual.
+process.on("uncaughtException", fail)
 
 let input = ""
 process.stdin.setEncoding("utf8")

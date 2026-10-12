@@ -54,7 +54,9 @@ export function buildLaunch(
     "--mcp-config",
     JSON.stringify({ mcpServers: { "control-plane": { type: "http", url: opts.mcpUrl } } }),
     "--settings",
-    JSON.stringify({ crossSessionInbound: "accept", hooks: sessionHooks(opts.hookUrl) }),
+    // disableAllHooks: false gana sobre el que ponga un settings del proyecto o del usuario (los
+    // workers pueden escribirlos), que si no apagaría también el cerrojo de SendMessage.
+    JSON.stringify({ crossSessionInbound: "accept", disableAllHooks: false, hooks: sessionHooks(opts.hookUrl) }),
   ]
   if (opts.model) args.push("--model", opts.model)
   if (opts.effort) args.push("--effort", opts.effort)

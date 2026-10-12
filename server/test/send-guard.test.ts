@@ -132,12 +132,28 @@ describe("cerrojo de SendMessage: a quién va el mensaje", () => {
     assert.deepEqual(await send(backA, "WEB", {}, deps({ live: broken })), { allow: true }, "el chequeo de afuera es de mejor esfuerzo")
   })
 
+  it("el nombre con que corre un proceso del dashboard cuenta aunque no sea el de la base (un renombre que no le llegó)", async () => {
+    // BACKEND-B se renombró a WEB2 en el dashboard pero su proceso sigue registrado como WEB.
+    const stale = async () => [
+      { pid: 1002, name: "WEB", cwd: "/x", kind: "interactive" as const },
+      { pid: 2002, name: "WEB", cwd: "/y", kind: "interactive" as const },
+    ]
+    assert.equal(denied(await send(backA, "WEB", {}, deps({ live: stale }))), SEND_DENIED.otherProjectWorker)
+    assert.equal(denied(await send(orqA, "WEB", {}, deps({ live: stale }))), SEND_DENIED.otherProjectOrchestrator)
+    const ownStale = async () => [{ pid: 1001, name: "WEB", cwd: "/x", kind: "interactive" as const }]
+    assert.deepEqual(await send(webA, "WEB", {}, deps({ live: ownStale })), { allow: true }, "si es del propio proyecto, pasa")
+  })
+
   it("un subagente propio con ese nombre gana (SendMessage lo elige a él), sin [ref]", async () => {
     const d = deps({ agentNames: (id) => (id === backA.id ? ["BACKEND-B", "revisor"] : []) })
     assert.deepEqual(await send(backA, "revisor", {}, d), { allow: true })
     assert.deepEqual(await send(backA, "BACKEND-B", {}, d), { allow: true })
     assert.equal(denied(await send(backA, "BACKEND-B [abc123]", {}, d)), SEND_DENIED.otherProjectWorker, "con [ref] se pide una sesión")
     assert.equal(denied(await send(webA, "BACKEND-B", {}, d)), SEND_DENIED.otherProjectWorker, "los subagentes son de cada sesión")
+    // Con otras mayúsculas puede no ser el subagente (los de las propuestas van en minúsculas) y sí la sesión.
+    const lower = deps({ agentNames: (id) => (id === backA.id ? ["backend-b"] : []) })
+    assert.deepEqual(await send(backA, "backend-b", {}, lower), { allow: true })
+    assert.equal(denied(await send(backA, "BACKEND-B", {}, lower)), SEND_DENIED.otherProjectWorker)
   })
 
   it("la conversación principal del propio proceso pasa", async () => {
@@ -163,7 +179,8 @@ describe("cerrojo de SendMessage: el hook en las sesiones", () => {
       model: null,
       effort: null,
     })
-  const settingsOf = (args: string[]) => JSON.parse(args[args.indexOf("--settings") + 1]!) as { hooks: Record<string, { matcher?: string; hooks: { command: string; timeout: number }[] }[]> }
+  const settingsOf = (args: string[]) =>
+    JSON.parse(args[args.indexOf("--settings") + 1]!) as { disableAllHooks?: boolean; hooks: Record<string, { matcher?: string; hooks: { command: string; timeout: number }[] }[]> }
 
   it("los argumentos de lanzamiento traen el PreToolUse de SendMessage, y el de compactación sigue", () => {
     for (const kind of ["worker", "orchestrator"] as const) {
@@ -176,6 +193,10 @@ describe("cerrojo de SendMessage: el hook en las sesiones", () => {
       assert.match(hooks.PreCompact![0]!.hooks[0]!.command, /\/hooks\/tok\/compact"$/)
       assert.ok(hooks.PostCompact)
     }
+  })
+
+  it("un disableAllHooks del proyecto o del usuario no apaga el cerrojo: --settings lo pone en false", () => {
+    for (const kind of ["worker", "orchestrator"] as const) assert.equal(settingsOf(launch(kind).args).disableAllHooks, false)
   })
 
   /** Corre el script del hook como lo corre Claude Code: el evento por stdin, la decisión por stdout. */
@@ -191,6 +212,12 @@ describe("cerrojo de SendMessage: el hook en las sesiones", () => {
     assert.match(out.hookSpecificOutput.permissionDecisionReason, /por seguridad no se envía/)
     const open = runHook("http://127.0.0.1:1/hooks/x/compact")
     assert.deepEqual([open.status, open.stdout], [0, ""])
+  })
+
+  it("si el script mismo se rompe, también deniega (un código 1 Claude Code lo toma como seguir)", () => {
+    const broken = runHook("no es una url", "--deny-on-error")
+    assert.equal(broken.status, 0)
+    assert.match(broken.stdout, /"permissionDecision":"deny"/)
   })
 
   it("el script pasa lo que el server responde: la decisión con deny, o nada para dejar pasar; un 500 deniega", async () => {
