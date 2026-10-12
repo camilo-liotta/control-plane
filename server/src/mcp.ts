@@ -43,7 +43,7 @@ const subagentSchema = z
 const holdSchema = z
   .boolean()
   .optional()
-  .describe("true: esto lo tiene que aprobar el usuario aunque esté AFK (en AFK, lo demás sale solo). Usalo para lo que no debería salir sin que lo mire: algo caro, riesgoso o irreversible, o una decisión que es suya.")
+  .describe("true: lo tiene que aprobar el usuario aunque esté AFK (en AFK, lo demás sale solo, sin revisión). Obligatorio para lo que no se puede deshacer o sale afuera: publicar una versión, deploys, tocar producción o datos reales, borrar, gastar plata, mandar algo a terceros, y lo que nace de un pedido de otro proyecto.")
 
 const freshSchema = z
   .boolean()
@@ -453,7 +453,7 @@ function buildServer(
       {
         title: "Actualizar propuesta",
         description:
-          "Modifica una propuesta que todavía no se envió (título, prompt, sesión destino, modelo o esfuerzo). model o effort en null los sacan: la sesión sigue con el que tiene. Con un plan pausado, cambia los pasos que faltan (pasá steps): vuelve a pasar por el usuario.",
+          "Modifica una propuesta que todavía no se envió (título, prompt, sesión destino, modelo, esfuerzo o hold). model o effort en null los sacan: la sesión sigue con el que tiene. Con un plan pausado, cambia los pasos que faltan (pasá steps): vuelve a pasar por el usuario.",
         inputSchema: {
           id: z.string().describe("Id de la propuesta (ej. d_ab12cd)."),
           title: z.string().optional(),
@@ -491,7 +491,7 @@ function buildServer(
       {
         title: "Proponer un plan por pasos",
         description:
-          "Propone un plan: una lista ordenada de pasos para UNA sesión, cada uno con su prompt, modelo, esfuerzo y fresh. El usuario lo aprueba una vez y control-plane manda cada paso cuando el worker reporta done el anterior, sin despertarte. Te llega un solo resultado al final, o uno apenas un paso vuelva blocked o partial, o la sesión dé error (el plan queda pausado). Sirve para partir una tarea grande en pasos que puede hacer un modelo más barato. Una sesión tiene un solo plan a la vez.",
+          "Propone un plan: una lista ordenada de pasos para UNA sesión, cada uno con su prompt, modelo, esfuerzo y fresh. El usuario lo aprueba una vez (o sale solo si está AFK, salvo que lo marques con hold: si algún paso es irreversible o sale afuera, marcalo) y control-plane manda cada paso cuando el worker reporta done el anterior, sin despertarte. Te llega un solo resultado al final, o uno apenas un paso vuelva blocked o partial, o la sesión dé error (el plan queda pausado). Sirve para partir una tarea grande en pasos que puede hacer un modelo más barato. Una sesión tiene un solo plan a la vez.",
         inputSchema: {
           session: z.string().optional().describe("Sesión worker existente, como aparece en list_sessions."),
           newSession: z

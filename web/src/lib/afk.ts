@@ -1,4 +1,4 @@
-import type { AfkState, Project } from "@shared/types"
+import type { AfkLog, AfkState, Project } from "@shared/types"
 
 import { clock, usd } from "@/lib/format"
 
@@ -40,4 +40,41 @@ export function afkUntil(until: number | null, now = Date.now()): string {
 /** El texto de la marca: "AFK hasta mañana 09:00 · tope US$ 5". */
 export function afkSummary(afk: Afk, now = Date.now()): string {
   return `AFK ${afkUntil(afk.until, now)}${afk.budgetUsd !== null ? ` · tope ${usd(afk.budgetUsd)}` : ""}`
+}
+
+/** Lo gastado en el proyecto desde que empezó el AFK (suma de sus sesiones menos lo que llevaba al entrar). */
+export function afkSpent(afk: Afk, sessionsCost: number): number {
+  return Math.max(0, sessionsCost - afk.spentAtStart)
+}
+
+/** "AFK hasta las 18:00 · US$ 1,20 de 5": la marca del encabezado. */
+export function afkPillText(afk: Afk, spent: number, now = Date.now()): string {
+  const budget = afk.budgetUsd !== null ? ` · ${usd(spent)} de ${afk.budgetUsd.toLocaleString("es-AR", { maximumFractionDigits: 2 })}` : ""
+  return `AFK ${afkUntil(afk.until, now)}${budget}`
+}
+
+/** Por qué terminó un período AFK, en una frase. */
+export const afkEndText: Record<NonNullable<AfkLog["endReason"]>, string> = {
+  user: "Terminó porque volviste.",
+  until: "Terminó porque se cumplió el tiempo.",
+  budget: "Terminó porque se agotó el presupuesto.",
+}
+
+const seenKey = (projectId: string) => `cp-afk-seen:${projectId}`
+
+/** El período AFK (por su `since`) cuyo resumen ya cerraste con "Listo". */
+export const afkSeen = (projectId: string): number | null => {
+  try {
+    return Number(localStorage.getItem(seenKey(projectId))) || null
+  } catch {
+    return null
+  }
+}
+
+export const markAfkSeen = (projectId: string, since: number) => {
+  try {
+    localStorage.setItem(seenKey(projectId), String(since))
+  } catch {
+    // sin almacenamiento: el resumen vuelve en la próxima carga
+  }
 }

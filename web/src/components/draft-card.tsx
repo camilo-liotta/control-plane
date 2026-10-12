@@ -5,6 +5,7 @@ import { Link } from "wouter"
 
 import type { Draft } from "@shared/types"
 
+import { DraftAfkMarks } from "@/components/afk-summary"
 import { FileRefScope, RefText } from "@/components/file-ref"
 import { ModelPill, useSessionModelName } from "@/components/model-choice"
 import { PlanCard } from "@/components/plan-card"
@@ -130,6 +131,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
             {draft.state === "staged" && <Lock className="size-3" />}
             {view.label}
           </TonePill>
+          <DraftAfkMarks draft={draft} />
           {draft.revision > 1 && <span>rev. {draft.revision}</span>}
           {draft.fresh && draft.state === "sent" && (
             <span className="inline-flex items-center gap-1">

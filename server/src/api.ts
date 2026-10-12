@@ -417,12 +417,15 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     })
   )
   // Lo que pasó en el último período AFK (null si el proyecto nunca estuvo AFK).
-  app.get<{ Params: { id: string } }>("/api/projects/:id/afk-log", (req, reply) =>
-    guard(reply, () => {
+  app.get<{ Params: { id: string } }>("/api/projects/:id/afk-log", (req, reply) => {
+    try {
       requireProject(req.params.id)
-      return deps.afk.log(req.params.id)
-    })
-  )
+      // A mano (no por guard): el "nunca estuvo AFK" es un JSON null, no { ok: true }.
+      return reply.type("application/json").send(JSON.stringify(deps.afk.log(req.params.id)))
+    } catch (err) {
+      return reply.code(400).send({ error: errorMessage(err) })
+    }
+  })
 
   // Los archivados (de todas las cuentas: la web filtra por la que estás mirando).
   // Los mensajes entre orquestadoras que mandó o recibió el proyecto, más nuevos primero.

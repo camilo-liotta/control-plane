@@ -418,6 +418,23 @@ describe("modo AFK", () => {
       assert.equal(sessions.sent.at(-1)!.text, "Caro")
     })
 
+    it("si en la revisión leyó mensajes de otro proyecto, lo que arma no sale solo (queda con hold)", async () => {
+      const other = "p2"
+      db.insertProject({ id: other, name: "Otro", repoPath: "/tmp", settings: { ...defaultSettings, batchWindowSec: 0.05 }, accountId: null, createdAt: Date.now(), archivedAt: null })
+      const orq2 = session(other, "ORQ2", "orchestrator")
+      db.insertSession(orq2)
+      afk.start(projectId)
+      orch.messageProject(orq2, { project: "Demo", message: "Necesitamos un endpoint" })
+      await sleep(400) // el mensaje le llega a ORQ en un lote
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Pedido ajeno", prompt: "Hacelo" })
+      await release()
+      const [d] = drafts()
+      assert.equal(d!.state, "ready")
+      assert.equal(d!.hold, true)
+      assert.equal(sessions.sent.filter((m) => m.id === a.id).length, 0)
+      assert.match(hub.toasts().at(-1)!.body!, /pedido de otro proyecto/)
+    })
+
     it("update_proposal cambia el hold, y la respuesta dice qué va a pasar", async () => {
       afk.start(projectId)
       orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
