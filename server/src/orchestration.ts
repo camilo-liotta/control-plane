@@ -18,6 +18,17 @@ interface Decision {
   text: string
 }
 
+/** Los campos de modelo y de plan de una propuesta que no los usa. */
+export const DRAFT_DEFAULTS = {
+  model: null,
+  effort: null,
+  steps: [],
+  planState: null,
+  currentStep: null,
+  planNote: null,
+  revises: null,
+} satisfies Partial<Draft>
+
 const SUBAGENT_MODELS = new Set(["haiku", "sonnet", "opus", "fable"])
 
 /** Normaliza los subagentes que llegan de la orquestadora o de tus ediciones. */
@@ -437,6 +448,7 @@ export class Orchestration {
       revision: 1,
       subagents: normalizeSubagents(input.subagents),
       fresh: input.fresh === true,
+      ...DRAFT_DEFAULTS,
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
@@ -466,6 +478,7 @@ export class Orchestration {
       revision: 1,
       subagents: normalizeSubagents(input.subagents),
       fresh: false,
+      ...DRAFT_DEFAULTS,
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)

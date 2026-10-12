@@ -30,6 +30,10 @@ export interface ProjectSettings {
   orchestratorInstructions: string
   defaultModel: string | null
   defaultEffort: string | null
+  /** Modelo de los workers que no tienen uno propio (null = igual que defaultModel). La orquestadora usa defaultModel. */
+  workerModel: string | null
+  /** Esfuerzo de los workers que no tienen uno propio (null = igual que defaultEffort). */
+  workerEffort: string | null
   /** Qué pasa cuando Claude Code va a compactar solo. */
   compactMode: CompactMode
   /** Modo "esperarme": cuántos minutos espera tu elección antes de compactar solo. */
@@ -516,7 +520,30 @@ export interface SubagentUsage {
   durationMs: number
 }
 
-export type DraftKind = "prompt" | "session"
+export type DraftKind = "prompt" | "session" | "plan"
+
+/** En qué anda un plan aprobado. null mientras no se aprobó (o si la propuesta no es un plan). */
+export type PlanState = "running" | "paused" | "done" | "cancelled"
+
+export type PlanStepState = "pending" | "running" | "done" | "blocked" | "partial" | "skipped"
+
+/** Un paso de un plan: su prompt y con qué modelo, esfuerzo y contexto sale. */
+export interface PlanStep {
+  title: string
+  prompt: string
+  /** null = la sesión sigue con el modelo que tiene. */
+  model: string | null
+  effort: string | null
+  /** La sesión empieza de cero (/clear) antes de este paso; recibe lo que reportó el paso anterior. */
+  fresh: boolean
+  subagents: SubagentSpec[]
+  state: PlanStepState
+  startedAt: number | null
+  endedAt: number | null
+  /** Lo que reportó el worker en este paso (el último report_result). */
+  summary: string | null
+  details: string | null
+}
 
 export type DraftState =
   | "staged" // en preparación: la orquestadora está revisando, no se puede enviar
@@ -542,6 +569,21 @@ export interface Draft {
   subagents: SubagentSpec[]
   /** La sesión empieza de cero (/clear) antes de este prompt. */
   fresh: boolean
+  /** Modelo y esfuerzo con que sale (prompt o sesión nueva). null = la sesión sigue con el que tiene. En un plan, van por paso. */
+  model: string | null
+  effort: string | null
+  /** Los pasos, si es un plan ([] si no). En un plan, `prompt` queda vacío. */
+  steps: PlanStep[]
+  planState: PlanState | null
+  /** Índice (desde 0) del paso en curso, o del último que corrió. */
+  currentStep: number | null
+  /** Por qué el plan está pausado o cómo terminó, en una línea (null si sigue sin novedades). */
+  planNote: string | null
+  /**
+   * Si esta propuesta cambia los pasos de un plan ya aprobado: el id de ese plan. Trae todos los pasos
+   * (los ya hechos, tal cual) y, al aprobarla, el plan original sigue con los pasos nuevos.
+   */
+  revises: string | null
 }
 
 export type ReportStatus = "done" | "blocked" | "partial"
@@ -578,6 +620,8 @@ export type TimelineEvent =
       attachments?: AttachmentRef[]
       /** Subagentes que pidió la orquestadora en esta propuesta (el texto enviado incluye sus instrucciones). */
       subagents?: SubagentSpec[]
+      /** Si es un paso de un plan: step es el índice (desde 0), title el título del paso (draftTitle es el del plan). */
+      plan?: { draftId: string; step: number; total: number; title: string }
     }
   | { kind: "peer"; from: string; body: string }
   | {

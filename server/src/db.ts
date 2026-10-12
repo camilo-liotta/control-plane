@@ -11,6 +11,8 @@ import type {
   ContextUsage,
   Draft,
   DraftKind,
+  PlanState,
+  PlanStep,
   DraftState,
   ProjectSettings,
   Report,
@@ -36,6 +38,8 @@ export const defaultSettings: ProjectSettings = {
   orchestratorInstructions: "",
   defaultModel: null,
   defaultEffort: null,
+  workerModel: null,
+  workerEffort: null,
   compactMode: "notify",
   compactWaitMin: 10,
 }
@@ -265,6 +269,15 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX apps_project ON apps(project_id);
   `,
+  `
+  ALTER TABLE drafts ADD COLUMN model TEXT;
+  ALTER TABLE drafts ADD COLUMN effort TEXT;
+  ALTER TABLE drafts ADD COLUMN steps TEXT;
+  ALTER TABLE drafts ADD COLUMN plan_state TEXT;
+  ALTER TABLE drafts ADD COLUMN current_step INTEGER;
+  ALTER TABLE drafts ADD COLUMN plan_note TEXT;
+  ALTER TABLE drafts ADD COLUMN revises TEXT;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -407,6 +420,23 @@ function toDraft(r: Row): Draft {
     revision: Number(r.revision ?? 1),
     subagents: parseSubagents(r.subagents),
     fresh: bool(r.fresh),
+    model: str(r.model),
+    effort: str(r.effort),
+    steps: parseSteps(r.steps),
+    planState: (str(r.plan_state) as PlanState | null) ?? null,
+    currentStep: num(r.current_step),
+    planNote: str(r.plan_note),
+    revises: str(r.revises),
+  }
+}
+
+function parseSteps(v: unknown): PlanStep[] {
+  if (v === null || v === undefined) return []
+  try {
+    const list = JSON.parse(String(v))
+    return Array.isArray(list) ? (list as PlanStep[]) : []
+  } catch {
+    return []
   }
 }
 
@@ -560,6 +590,13 @@ const DRAFT_COLUMNS: Partial<Record<keyof Draft, string>> = {
   revision: "revision",
   subagents: "subagents",
   fresh: "fresh",
+  model: "model",
+  effort: "effort",
+  steps: "steps",
+  planState: "plan_state",
+  currentStep: "current_step",
+  planNote: "plan_note",
+  revises: "revises",
 }
 
 const REPORT_COLUMNS: Partial<Record<keyof Report, string>> = {
@@ -1066,8 +1103,9 @@ export class Db {
     this.db
       .prepare(
         `INSERT INTO drafts (id, project_id, kind, target_session_id, new_session, title, prompt, state,
-          created_by, created_at, updated_at, decided_at, edited, revision, subagents, fresh)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          created_by, created_at, updated_at, decided_at, edited, revision, subagents, fresh,
+          model, effort, steps, plan_state, current_step, plan_note, revises)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         d.id,
@@ -1085,7 +1123,14 @@ export class Db {
         d.edited ? 1 : 0,
         d.revision,
         d.subagents.length ? JSON.stringify(d.subagents) : null,
-        d.fresh ? 1 : 0
+        d.fresh ? 1 : 0,
+        d.model,
+        d.effort,
+        d.steps.length ? JSON.stringify(d.steps) : null,
+        d.planState,
+        d.currentStep,
+        d.planNote,
+        d.revises
       )
   }
 
