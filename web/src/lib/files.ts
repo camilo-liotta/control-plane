@@ -1,5 +1,3 @@
-import type { ModelOption } from "@shared/types"
-
 export const VISION_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
 
 const MAX_SIDE = 2000
@@ -88,13 +86,4 @@ export function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} MB`
 }
 
-/** Nombre legible del modelo que está usando una sesión (el CLI informa el id completo). */
-export function modelLabel(models: ModelOption[], current: string | null, configured: string | null): string {
-  const byResolved = current ? models.find((m) => m.resolved === current || m.value === current) : undefined
-  if (byResolved && byResolved.value !== "default") return byResolved.label.replace(/ \(.*\)$/, "")
-  const byValue = configured ? models.find((m) => m.value === configured) : undefined
-  if (byValue) return byValue.label.replace(/ \(.*\)$/, "")
-  if (current) return current.replace(/^claude-/, "").replace(/-\d{8}$/, "")
-  if (configured) return configured
-  return "Modelo por defecto"
-}
+export { modelLabel } from "@/lib/models"
