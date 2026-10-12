@@ -17,6 +17,7 @@ import type {
   CompactionState,
   ContextUsage,
   Draft,
+  PlanStep,
   EditorSettings,
   Marketplace,
   Project,
@@ -122,6 +123,20 @@ const qs = (params: Record<string, string | null | undefined>) => {
 
 export const attachmentUrl = (id: string, download = false) => `/api/attachments/${id}${download ? "?download=1" : ""}`
 
+/** Lo que el usuario cambia de una propuesta antes de aprobarla (o de un plan pausado). */
+export interface DraftEdits {
+  title?: string
+  prompt?: string
+  subagents?: SubagentSpec[]
+  fresh?: boolean
+  /** null = la sesión sigue con el que tiene. */
+  model?: string | null
+  effort?: string | null
+  steps?: PlanStepEdit[]
+}
+
+export type PlanStepEdit = Pick<PlanStep, "title" | "prompt" | "model" | "effort" | "fresh" | "subagents">
+
 export const api = {
   accounts: (refresh = false) => request<Account[]>("GET", `/api/accounts${refresh ? "?refresh=1" : ""}`),
   detectAccounts: () => request<{ configDir: string; name: string; auth: AccountAuth }[]>("GET", "/api/accounts/detect"),
@@ -210,13 +225,13 @@ export const api = {
   permission: (id: string, requestId: string, allow: boolean) =>
     request("POST", `/api/sessions/${id}/permission`, { requestId, allow }),
 
-  sendDraft: (
-    id: string,
-    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: SubagentSpec[]; fresh?: boolean } = {}
-  ) => request<Draft>("POST", `/api/drafts/${id}/send`, edits),
+  sendDraft: (id: string, edits: DraftEdits & { name?: string; role?: string } = {}) => request<Draft>("POST", `/api/drafts/${id}/send`, edits),
   discardDraft: (id: string) => request<Draft>("POST", `/api/drafts/${id}/discard`),
-  editDraft: (id: string, edits: { title?: string; prompt?: string; subagents?: SubagentSpec[]; fresh?: boolean }) =>
-    request<Draft>("PATCH", `/api/drafts/${id}`, edits),
+  editDraft: (id: string, edits: DraftEdits) => request<Draft>("PATCH", `/api/drafts/${id}`, edits),
+  pausePlan: (id: string) => request<Draft>("POST", `/api/drafts/${id}/plan/pause`),
+  /** retry repite el paso que se cortó; next sigue con el siguiente (por defecto, lo que corresponda). */
+  resumePlan: (id: string, mode?: "retry" | "next") => request<Draft>("POST", `/api/drafts/${id}/plan/resume`, mode ? { mode } : {}),
+  cancelPlan: (id: string) => request<Draft>("POST", `/api/drafts/${id}/plan/cancel`),
 
   dismissReport: (id: string) => request("POST", `/api/reports/${id}/dismiss`),
 

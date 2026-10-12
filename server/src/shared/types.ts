@@ -200,6 +200,8 @@ export interface ProjectOverview {
   /** Todo lo que gastaron las sesiones del proyecto, incluidas las archivadas. */
   tokens: TokenUsage
   costUsd: number
+  /** Lo mismo, por modelo (id resuelto → US$): la suma del `costByModel` de cada sesión. */
+  costByModel: Record<string, number>
   sessions: number
   lastActivity: { sessionId: string; name: string; kind: SessionKind; at: number; text: string | null } | null
   at: number

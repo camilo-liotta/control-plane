@@ -6,6 +6,8 @@ import { Link } from "wouter"
 import type { Draft } from "@shared/types"
 
 import { FileRefScope, RefText } from "@/components/file-ref"
+import { ModelPill, useSessionModelName } from "@/components/model-choice"
+import { PlanCard } from "@/components/plan-card"
 import { TonePill } from "@/components/status"
 import { cleanSpecs, SubagentSpecEditor, SubagentSpecList } from "@/components/subagent-specs"
 import { Button } from "@/components/ui/button"
@@ -20,8 +22,14 @@ import { undoable } from "@/lib/undo"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
-/** Una propuesta de la orquestadora: se aprueba tal cual, se edita o se descarta. */
-export function DraftCard({ draft, compact = false, className }: { draft: Draft; compact?: boolean; className?: string }) {
+type CardProps = { draft: Draft; compact?: boolean; className?: string }
+
+/** Una propuesta de la orquestadora: se aprueba tal cual, se edita o se descarta. Un plan tiene su tarjeta. */
+export function DraftCard(props: CardProps) {
+  return props.draft.kind === "plan" ? <PlanCard {...props} /> : <PromptCard {...props} />
+}
+
+function PromptCard({ draft, compact = false, className }: CardProps) {
   const target = useStore((s) => (draft.targetSessionId ? s.sessions[draft.targetSessionId] : undefined))
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(!compact)
@@ -31,12 +39,17 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
   const [role, setRole] = useState(draft.newSession?.role ?? "")
   const [subagents, setSubagents] = useState(draft.subagents)
   const [fresh, setFresh] = useState(draft.fresh)
+  const [model, setModel] = useState({ model: draft.model, effort: draft.effort })
+  const fallback = useSessionModelName(draft.projectId, draft.kind === "session" ? null : target)
   const [busy, setBusy] = useState<null | "send" | "save">(null)
   // Descartada: se esconde al toque (sin desmontar, así no se pierde lo que estabas editando) y
   // vuelve si se deshace o falla.
   const [hidden, setHidden] = useState(false)
   // Si la orquestadora cambia la propuesta, la casilla la sigue.
   useEffect(() => setFresh(draft.fresh), [draft.fresh, draft.revision])
+  useEffect(() => setModel({ model: draft.model, effort: draft.effort }), [draft.model, draft.effort, draft.revision])
+  // El modelo y el esfuerzo viajan solo si los cambiaste.
+  const modelEdits = model.model !== draft.model || model.effort !== draft.effort ? model : {}
 
   const view = draftStateView[draft.state]
   const open = draft.state === "ready" || draft.state === "staged"
@@ -71,10 +84,8 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
         api.sendDraft(
           draft.id,
           editing
-            ? { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "session" ? { name, role } : { fresh }) }
-            : draft.kind === "prompt"
-              ? { fresh }
-              : {}
+            ? { title, prompt, subagents: cleanSpecs(subagents), ...modelEdits, ...(draft.kind === "session" ? { name, role } : { fresh }) }
+            : { ...modelEdits, ...(draft.kind === "prompt" ? { fresh } : {}) }
         ),
       draft.kind === "session" ? `Sesión ${name || draft.newSession?.name} creada` : `Propuesta enviada a ${target?.name ?? "la sesión"}`,
       draft.kind === "session" ? "No se pudo crear la sesión" : "No se pudo enviar la propuesta"
@@ -181,6 +192,23 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
           </>
         )}
 
+        {open ? (
+          <ModelPill
+            className="mt-3"
+            model={model.model}
+            effort={model.effort}
+            fallback={fallback}
+            newSession={draft.kind === "session"}
+            fallbackModel={draft.kind === "session" ? null : (target?.currentModel ?? target?.model ?? null)}
+            onChange={setModel}
+            disabled={draft.state !== "ready" || busy !== null}
+          />
+        ) : (
+          (draft.model || draft.effort) && (
+            <ModelPill className="mt-3" model={draft.model} effort={draft.effort} fallback={fallback} newSession={draft.kind === "session"} />
+          )
+        )}
+
         {draft.kind === "prompt" && open && (
           <FreshToggle
             checked={fresh}
@@ -213,7 +241,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
                   onClick={() =>
                     run(
                       "save",
-                      () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents), ...(draft.kind === "prompt" ? { fresh } : {}) }),
+                      () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents), ...modelEdits, ...(draft.kind === "prompt" ? { fresh } : {}) }),
                       "Propuesta guardada",
                       "No se pudo guardar la propuesta"
                     )
@@ -250,7 +278,7 @@ export function DraftCard({ draft, compact = false, className }: { draft: Draft;
 }
 
 /** Empezar de cero (/clear) antes del prompt: con cuánto contexto viene hoy la sesión, para decidir. */
-function FreshToggle({
+export function FreshToggle({
   checked,
   onChange,
   disabled,

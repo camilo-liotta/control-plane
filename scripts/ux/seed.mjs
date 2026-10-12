@@ -23,7 +23,9 @@ const mcp = async (who, tool, args) => {
   const j = await r.json()
   const txt = j.result?.content?.[0]?.text ?? JSON.stringify(j)
   console.log(`  ${who} · ${tool}: ${txt.slice(0, 70)}`)
+  return txt
 }
+const draftId = (txt) => /\b(d_[A-Za-z0-9]+)\b/.exec(txt)?.[1]
 const git = (cwd, ...a) => execFileSync("git", ["-c", "user.name=Demo", "-c", "user.email=demo@example.test", ...a], { cwd, stdio: "ignore" })
 
 if ((await snap()).projects.length) throw new Error("El server ya tiene datos: levantalo con --reset para sembrar de cero")
@@ -101,8 +103,34 @@ await sleep(2500)
 await api("POST", `/api/sessions/${id("FACTURACION")}/compaction/draft`).catch((e) => console.log("compactación:", e.message))
 
 // Propuestas (listas y en preparación) y cola de resultados (con la orquestadora trabajando).
-await mcp("ORQ-TURNOS", "propose_prompt", { session: "COSTOS", title: "Apagar las máquinas ociosas de staging", prompt: "Listá las máquinas de staging sin uso en 7 días y proponé cuáles apagar, con el ahorro estimado." })
-await mcp("ORQ-TURNOS", "propose_session", { name: "ALERTAS", role: "Alertas de presupuesto", title: "Alertas de presupuesto", prompt: "Configurá alertas al 50, 80 y 100% del presupuesto mensual." })
+await mcp("ORQ-TURNOS", "propose_prompt", { session: "COSTOS", title: "Apagar las máquinas ociosas de staging", prompt: "Listá las máquinas de staging sin uso en 7 días y proponé cuáles apagar, con el ahorro estimado.", model: "sonnet", effort: "medium" })
+await mcp("ORQ-TURNOS", "propose_session", { name: "ALERTAS", role: "Alertas de presupuesto", title: "Alertas de presupuesto", prompt: "Configurá alertas al 50, 80 y 100% del presupuesto mensual.", model: "haiku" })
+
+// Planes: uno listo para enviar, uno en curso (paso 2 de 4) y uno en pausa porque un paso volvió bloqueado.
+await mcp("ORQ-DATOS", "propose_plan", { session: "INGESTA", title: "Ingesta de un proveedor nuevo", steps: [
+  { title: "Leer el formato del proveedor", prompt: "Mirá los CSV de ejemplo en samples/proveedor-c y escribí el esquema.", model: "haiku", effort: "low" },
+  { title: "Cargador y validaciones", prompt: "Armá el cargador con validaciones por fila y tests.", model: "sonnet", effort: "medium", fresh: true },
+  { title: "Revisar el resultado", prompt: "Revisá los rechazos de la primera carga y proponé ajustes." },
+] })
+const enCurso = draftId(await mcp("ORQ-PORTAL", "propose_plan", { session: "API", title: "Reintentos del webhook de pagos", steps: [
+  { title: "Cola de reintentos", prompt: "Armá la cola de reintentos con backoff exponencial.", model: "sonnet", effort: "high" },
+  { title: "Idempotencia", prompt: "Que un webhook repetido no marque dos veces la factura.", model: "sonnet", effort: "medium", fresh: true },
+  { title: "Alertas al tercer fallo", prompt: "Al tercer fallo, una alerta al canal de pagos.", model: "haiku", effort: "low" },
+  { title: "Documentar", prompt: "Actualizá el README de pagos.", model: "haiku" },
+] }))
+const enPausa = draftId(await mcp("ORQ-TURNOS", "propose_plan", { session: "MIGRACION-DB", title: "Pasar turnos a Postgres 16", steps: [
+  { title: "Inventario de extensiones", prompt: "Listá las extensiones y si existen en Postgres 16.", model: "haiku", effort: "low" },
+  { title: "Migrar en staging", prompt: "Migrá la base de staging y corré los tests.", model: "sonnet", effort: "medium" },
+  { title: "Medir", prompt: "Compará los tiempos de las consultas lentas antes y después.", model: "haiku", fresh: true },
+] }))
+for (const id of [enCurso, enPausa].filter(Boolean)) await api("POST", `/api/drafts/${id}/send`).catch((e) => console.log("plan:", e.message))
+await sleep(2500)
+if (enCurso) await mcp("API", "report_result", { status: "done", summary: "La cola guarda los webhooks fallidos y reintenta a 1, 5 y 30 min.\nTests en src/payments/retry.test.ts." })
+if (enPausa) {
+  await mcp("MIGRACION-DB", "report_result", { status: "done", summary: "Todas las extensiones existen en 16, salvo una que cambia de nombre." })
+  await sleep(2500)
+  await mcp("MIGRACION-DB", "report_result", { status: "blocked", summary: "No tengo acceso de escritura a la base de staging. Hace falta el rol de administrador." })
+}
 await msg("ORQ-TURNOS", "hola")
 await mcp("ORQ-PORTAL", "propose_prompt", { session: "WEB", title: "Pantalla de recibos", prompt: "Armá la pantalla de recibos: lista por mes, estado y descarga en PDF." })
 await msg("ORQ-PORTAL", "LARGO: revisá lo que llegó")
