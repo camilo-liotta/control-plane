@@ -940,6 +940,19 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => orchestration.editDraft(req.params.id, req.body ?? {}))
   )
 
+  // Planes aprobados: pausar, reanudar (retry repite el paso que se frenó, next sigue con el siguiente) y cancelar.
+  app.post<{ Params: { id: string } }>("/api/drafts/:id/plan/pause", (req, reply) =>
+    guard(reply, () => orchestration.plans.userPause(req.params.id))
+  )
+
+  app.post<{ Params: { id: string }; Body: { mode?: "retry" | "next" } | null }>("/api/drafts/:id/plan/resume", (req, reply) =>
+    guard(reply, () => orchestration.plans.resume(req.params.id, req.body?.mode === "next" || req.body?.mode === "retry" ? req.body.mode : undefined))
+  )
+
+  app.post<{ Params: { id: string } }>("/api/drafts/:id/plan/cancel", (req, reply) =>
+    guard(reply, () => orchestration.plans.cancel(req.params.id, "Lo cancelaste.", "user"))
+  )
+
   // ----------------------------------------------------------------- reports
 
   app.post<{ Params: { id: string } }>("/api/reports/:id/dismiss", (req, reply) =>

@@ -274,10 +274,14 @@ async function main() {
   // Las que un /clear de antes de 0.4.3 dejó apuntando a una conversación que no existe.
   for (const r of sessions.repairConversations()) console.log(`Recuperé la conversación de ${r.name}: ${r.from} → ${r.to}.`)
   // Las sesiones que estaban vivas antes de reiniciar para actualizar.
-  void restart.resumePending().then((outcome) => {
-    const line = resumeSummary(outcome)
-    if (line) console.log(line)
-  })
+  void restart
+    .resumePending()
+    .then((outcome) => {
+      const line = resumeSummary(outcome)
+      if (line) console.log(line)
+    })
+    // Después de retomar las sesiones: los planes que se cortaron entre un paso y el siguiente siguen.
+    .finally(() => orchestration.plans.recover())
 
   let closing = false
   const shutdown = async (signal: string) => {

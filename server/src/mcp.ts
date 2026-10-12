@@ -10,6 +10,7 @@ import type { UserTasks } from "./user-tasks.ts"
 import type { Environments } from "./environments.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
+import type { StepInput } from "./plans.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { AppInput, AppStatus, AppView, ContextUsage, SessionStatus } from "./shared/types.ts"
 import { errorMessage } from "./util.ts"
@@ -59,6 +60,15 @@ const effortSchema = z
   .nullable()
   .optional()
   .describe("Esfuerzo: low, medium, high, xhigh o max (los que soporte el modelo). Sin poner, sigue con el que tiene.")
+
+const stepSchema = z.object({
+  title: z.string().describe("Título corto del paso."),
+  prompt: z.string().min(1).describe("Prompt del paso: concreto y verificable (archivos, interfaces, criterio de terminado), para que el worker no tenga que diseñar."),
+  model: modelSchema,
+  effort: effortSchema,
+  fresh: z.boolean().optional().describe("true: la sesión empieza de cero antes de este paso; recibe lo que reportó el paso anterior."),
+  subagents: subagentSchema,
+})
 
 const taskCliSchema = z
   .object({
@@ -176,6 +186,7 @@ function buildServer(
             `estado: ${STATUS_ES[sessions.statusOf(s.id)]}`,
             s.taskTitle ? `tarea: ${s.taskTitle}` : null,
             choiceLine(orchestration, s),
+            orchestration.plans.sessionLine(s.id),
             contextLine(sessions.contextOf(s.id)),
             s.worktree ? "worktree propio" : null,
             last ? `último resultado: ${last.status} — ${last.summary.split("\n")[0]}` : null,
@@ -434,7 +445,8 @@ function buildServer(
       "update_proposal",
       {
         title: "Actualizar propuesta",
-        description: "Modifica una propuesta que todavía no se envió (título, prompt, sesión destino, modelo o esfuerzo). model o effort en null los sacan: la sesión sigue con el que tiene.",
+        description:
+          "Modifica una propuesta que todavía no se envió (título, prompt, sesión destino, modelo o esfuerzo). model o effort en null los sacan: la sesión sigue con el que tiene. Con un plan pausado, cambia los pasos que faltan (pasá steps): vuelve a pasar por el usuario.",
         inputSchema: {
           id: z.string().describe("Id de la propuesta (ej. d_ab12cd)."),
           title: z.string().optional(),
@@ -444,11 +456,76 @@ function buildServer(
           subagents: subagentSchema,
           model: modelSchema,
           effort: effortSchema,
+          steps: z
+            .array(stepSchema)
+            .optional()
+            .describe("Solo planes. Sin aprobar: todos los pasos. Aprobado y pausado: los pasos que faltan, como tienen que quedar (los hechos no se tocan); arma una propuesta de cambio que aprueba el usuario y, al aprobarla, el plan sigue."),
         },
       },
-      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null }) =>
+      wrap((args: {
+        id: string
+        title?: string
+        prompt?: string
+        session?: string
+        subagents?: unknown
+        fresh?: boolean
+        model?: string | null
+        effort?: string | null
+        steps?: StepInput[]
+      }) =>
         orchestration.updateProposal(self, args)
       )
+    )
+
+    server.registerTool(
+      "propose_plan",
+      {
+        title: "Proponer un plan por pasos",
+        description:
+          "Propone un plan: una lista ordenada de pasos para UNA sesión, cada uno con su prompt, modelo, esfuerzo y fresh. El usuario lo aprueba una vez y control-plane manda cada paso cuando el worker reporta done el anterior, sin despertarte. Te llega un solo resultado al final, o uno apenas un paso vuelva blocked o partial, o la sesión dé error (el plan queda pausado). Sirve para partir una tarea grande en pasos que puede hacer un modelo más barato. Una sesión tiene un solo plan a la vez.",
+        inputSchema: {
+          session: z.string().optional().describe("Sesión worker existente, como aparece en list_sessions."),
+          newSession: z
+            .object({ name: z.string().describe("Nombre en mayúsculas, sin espacios."), role: z.string().describe("Rol de la sesión.") })
+            .optional()
+            .describe("En vez de session: crear una sesión nueva para el plan (arranca con el modelo del primer paso)."),
+          title: z.string().describe("Título del plan."),
+          steps: z.array(stepSchema).min(1).max(20).describe("Los pasos, en orden. Poné model y effort en cada uno."),
+        },
+      },
+      wrap((args: { session?: string; newSession?: { name: string; role: string }; title: string; steps: StepInput[] }) =>
+        orchestration.plans.propose(self, args)
+      )
+    )
+
+    server.registerTool(
+      "resume_plan",
+      {
+        title: "Reanudar un plan pausado",
+        description:
+          "Reanuda un plan pausado sin cambiarle los pasos. mode retry repite el paso en que se frenó (por ejemplo, si ya resolviste lo que lo bloqueaba); next lo da por salteado y sigue con el siguiente. Para cambiar los pasos (subir el modelo del que falló, por ejemplo), usá update_proposal con steps.",
+        inputSchema: {
+          id: z.string().describe("Id del plan (ej. d_ab12cd)."),
+          mode: z.enum(["retry", "next"]).optional().describe("Por defecto, retry si el paso no terminó y next si terminó."),
+        },
+      },
+      wrap(async (args: { id: string; mode?: "retry" | "next" }) => {
+        const d = await orchestration.plans.resume(args.id, args.mode, "orchestrator")
+        return `Plan ${d.id} reanudado: paso ${(d.currentStep ?? 0) + 1} de ${d.steps.length}.`
+      })
+    )
+
+    server.registerTool(
+      "cancel_plan",
+      {
+        title: "Cancelar un plan",
+        description: "Cancela un plan en curso o pausado: los pasos que faltan no se mandan. Si el worker está en medio de un paso, lo termina y su reporte te llega como un resultado común (también si ya había reportado en ese turno).",
+        inputSchema: { id: z.string(), reason: z.string().optional() },
+      },
+      wrap((args: { id: string; reason?: string }) => {
+        const d = orchestration.plans.cancel(args.id, args.reason?.trim() || "Lo canceló la orquestadora.", "orchestrator")
+        return `Plan ${d.id} cancelado.`
+      })
     )
 
     server.registerTool(
@@ -468,7 +545,7 @@ function buildServer(
       "list_proposals",
       {
         title: "Propuestas abiertas",
-        description: "Lista tus propuestas que siguen sin enviar, con su estado y el prompt completo.",
+        description: "Lista tus propuestas que siguen sin enviar (con su estado, modelo y prompt completo) y los planes aprobados que siguen en curso o pausados, con sus pasos.",
         annotations: { readOnlyHint: true },
       },
       wrap(() => orchestration.listProposals(self.projectId))

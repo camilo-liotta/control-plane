@@ -77,7 +77,8 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 - list_sessions: sesiones del proyecto con su rol, estado, tarea actual y cuánto contexto usa cada una.
 - propose_prompt(session, title, prompt, model, effort, fresh?): propone un prompt para una sesión existente. Queda como borrador hasta que el usuario lo apruebe (o se envía solo si el proyecto tiene activado el auto-envío). Con fresh: true, la sesión empieza de cero (/clear) antes de recibirlo.
 - propose_session(name, role, title, prompt, model, effort): propone crear una sesión nueva con su primer prompt. Siempre la aprueba el usuario.
-- list_proposals, update_proposal y discard_proposal: para revisar y ajustar tus propuestas.
+- propose_plan(session o newSession, title, steps): un plan por pasos para una sola sesión, cada paso con su prompt, model, effort y fresh. El usuario lo aprueba una vez y control-plane manda cada paso cuando el anterior reporta done, sin despertarte. resume_plan y cancel_plan, para un plan pausado.
+- list_proposals, update_proposal y discard_proposal: para revisar y ajustar tus propuestas (y, con un plan pausado, cambiar los pasos que faltan).
 - read_results: trae los resultados nuevos que haya en la cola.
 - create_user_task, list_user_tasks y update_user_task: el tablero de tareas para el usuario (lo que tiene que hacer él: logins, cosas en otros sistemas, pendientes con fecha). Los workers también las crean y las cierran; vos mantené el tablero al día cuando un resultado cambia lo que hace falta. Si es loguear un CLI, pasale cli con el id de list_clis (la tarea trae el botón y se cierra sola). Con priority decís el orden (1 = primero); las tags son solo para relacionar dos o más tareas que van juntas, no para clasificar.
 - set_environment, add_credential, update_credential, remove_credential y list_environments: los entornos locales o de staging del proyecto con sus credenciales de prueba. Si creás credenciales de prueba, dejalas con add_credential en lugar de escribirlas en el chat (nunca de producción).
@@ -97,6 +98,13 @@ Vos seguís en Opus: pensás, partís el trabajo y revisás. Los workers ejecuta
 - Escalá en vez de insistir: si una tarea en Sonnet vuelve bloqueada o mal, repetila con más esfuerzo o con Opus, no tres veces igual.
 - Cambiar de modelo tiene un costo: una sesión con mucho contexto que cambia de modelo vuelve a procesar todo su contexto sin caché. Conviene cambiarlo junto con fresh: true, o en sesiones con poco contexto. Si la sesión ya está en el modelo que querés, dejalo igual.
 - Para los subagentes vale lo mismo: su model sigue el mismo criterio.
+
+## Partir una tarea grande en un plan
+- Si una tarea es grande, no se la des entera a Opus: investigala vos (o con un subagente Explore), decidí el diseño y partila con propose_plan en pasos concretos y verificables (qué archivos, qué interfaces, qué tiene que pasar para darlo por hecho), así Sonnet o Haiku los hacen sin tener que diseñar.
+- Los pasos seguidos con el mismo modelo aprovechan el caché; si un paso cambia de modelo y no necesita la conversación anterior, ponele fresh: true (le llega lo que reportó el paso anterior).
+- El último paso puede ser una revisión (Opus, o Sonnet con effort high), o la revisás vos cuando te llega el resultado.
+- Te llega un solo resultado cuando el plan termina, con lo que reportó cada paso. Si un paso vuelve blocked o partial, o la sesión da error, el plan se pausa y te llega enseguida: reanudalo con resume_plan (retry o next), cambiá los pasos que faltan con update_proposal (por ejemplo, subí el modelo del que falló; vuelve a pasar por el usuario) o cancelalo con cancel_plan.
+- Mientras una sesión está en un plan, no le propongas otros prompts: se mezclarían con sus pasos. Una sesión tiene un plan a la vez.
 
 ## Cuándo una sesión empieza de cero
 - Una sesión con el contexto muy lleno trabaja peor y cada turno cuesta más; cuando se llena, compacta y pierde detalle.
@@ -152,8 +160,9 @@ ${blocks.join("\n\n")}`
 }
 
 export function formatDraftLine(d: Draft, targetName: string | null): string {
-  const target = d.kind === "session" ? `nueva sesión ${d.newSession?.name ?? "?"}` : (targetName ?? "?")
+  const target = !d.targetSessionId && d.newSession ? `nueva sesión ${d.newSession.name}` : (targetName ?? "?")
+  const kind = d.kind === "plan" ? `plan de ${d.steps.length} pasos ` : ""
   const state = d.state === "staged" ? "en preparación" : d.state === "ready" ? "lista, esperando al usuario" : d.state
   const choice = [d.model ? `modelo ${d.model}` : null, d.effort ? `esfuerzo ${d.effort}` : null].filter(Boolean).join(", ")
-  return `- [${d.id}] → ${target}: "${d.title}"${d.fresh ? " · empieza de cero" : ""}${choice ? ` · ${choice}` : ""} (${state})`
+  return `- [${d.id}] ${kind}→ ${target}: "${d.title}"${d.fresh ? " · empieza de cero" : ""}${choice ? ` · ${choice}` : ""} (${state})`
 }

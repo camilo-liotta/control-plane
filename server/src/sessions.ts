@@ -159,6 +159,8 @@ export interface SendOptions {
   subagents?: SubagentSpec[]
   /** Id del envío que puso la web: si llega dos veces (reintentó porque se cortó la respuesta), sale una sola. */
   clientId?: string
+  /** Si es un paso de un plan. */
+  plan?: { draftId: string; step: number; total: number; title: string }
 }
 
 /** Cuántos envíos recientes se recuerdan para no duplicar un reintento. */
@@ -201,6 +203,8 @@ export class SessionManager extends EventEmitter<{
   context: [string, ContextUsage]
   compacted: [string, number]
   compactFailed: [string, string]
+  /** Se va a archivar una sesión (antes de detenerla). */
+  archiving: [string]
 }> {
   private runtimes = new Map<string, Runtime>()
   private stoppedDetail = new Map<string, string>()
@@ -1057,6 +1061,7 @@ export class SessionManager extends EventEmitter<{
       ...(opts.draftTitle ? { draftTitle: opts.draftTitle } : {}),
       ...(files.length ? { attachments: files.map(toRef) } : {}),
       ...(opts.subagents?.length ? { subagents: opts.subagents } : {}),
+      ...(opts.plan ? { plan: opts.plan } : {}),
     }
     // Primero sale al proceso y después se guarda: si no sale, no queda en el chat como enviado.
     // (La salida del proceso se lee en otro tick, así que el eco nunca llega antes que el evento.)
@@ -1335,6 +1340,7 @@ export class SessionManager extends EventEmitter<{
   }
 
   async archive(id: string) {
+    this.emit("archiving", id)
     await this.stop(id)
     this.update(id, { archivedAt: now(), status: "stopped" })
   }
