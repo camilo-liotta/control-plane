@@ -552,7 +552,10 @@ export class SessionManager extends EventEmitter<{
     return this.launch(rec, existing?.retried ?? false)
   }
 
-  private launch(rec: SessionRecord, retried: boolean, lostConversation: string | null = null): Promise<void> {
+  private launch(old: SessionRecord, retried: boolean, lostConversation: string | null = null): Promise<void> {
+    // Un token nuevo en cada lanzamiento: el del proceso anterior (y lo que haya quedado de él) deja de valer.
+    const rec = { ...old, mcpToken: token() }
+    this.db.updateSession(rec.id, { mcpToken: rec.mcpToken })
     const built = this.launchFor(rec)
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
