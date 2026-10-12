@@ -20,8 +20,11 @@ import {
   SquareTerminal,
   Sun,
   UserRound,
+  Undo2,
+  UserRoundX,
   Users,
 } from "lucide-react"
+import { comeBackFromAfk } from "@/components/afk-dialog"
 import { useMemo } from "react"
 import { useLocation } from "wouter"
 
@@ -43,6 +46,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { Kbd, KbdGroup, keyLabel, Shortcut } from "@/components/ui/kbd"
+import { afkOf } from "@/lib/afk"
 import { isMac, useNav } from "@/lib/nav"
 import {
   archiveSession,
@@ -245,6 +249,17 @@ export function CommandPalette() {
               <Settings2 />
               Ajustes del proyecto
             </CommandItem>
+            {afkOf(project) ? (
+              <CommandItem value={`volver de afk ${project.name}`} onSelect={run(() => void comeBackFromAfk(project))}>
+                <Undo2 />
+                Volver de AFK
+              </CommandItem>
+            ) : (
+              <CommandItem value={`ponerse afk en ${project.name}`} onSelect={run(() => setUi({ afkFor: project.id }))}>
+                <UserRoundX />
+                Ponerse AFK en {project.name}…
+              </CommandItem>
+            )}
             <CommandItem value={`importar una sesión a ${project.name}`} onSelect={run(() => setUi({ importFor: project.id }))}>
               <Import />
               Importar una sesión…

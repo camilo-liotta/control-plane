@@ -260,7 +260,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
                   <Settings2 />
-                  Configuración del proyecto
+                  Ajustes del proyecto
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onClick={() => setUi({ deleteFor: project.id })}>

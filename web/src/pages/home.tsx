@@ -14,6 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Shortcut } from "@/components/ui/kbd"
 import { LoadError } from "@/components/ui/load-error"
 import { Spinner } from "@/components/ui/spinner"
+import { afkOf, afkUntil } from "@/lib/afk"
 import { api } from "@/lib/api"
 import { basename, plural, timeAgo, tokens, totals, usd } from "@/lib/format"
 import { lastRoute } from "@/lib/nav"
@@ -124,11 +125,12 @@ function ProjectCard({ project }: { project: Project }) {
         )}
       </div>
       <div className="flex min-h-5 flex-wrap items-center gap-1.5">
+        {afkOf(project) && <TonePill tone="idle">AFK {afkUntil(afkOf(project)!.until)}</TonePill>}
         {needs > 0 && <TonePill tone="attention">{needs} {needs === 1 ? "te necesita" : "te necesitan"}</TonePill>}
         {working > 0 && <TonePill tone="working">{working} trabajando</TonePill>}
         {ready > 0 && <TonePill tone="pending">{plural(ready, "propuesta", "propuestas")}</TonePill>}
         {project.review.queued > 0 && <TonePill tone="pending">{project.review.queued} en cola</TonePill>}
-        {!needs && !working && !ready && !project.review.queued && <span className="text-xs text-muted-foreground">Todo quieto</span>}
+        {!needs && !working && !ready && !project.review.queued && !afkOf(project) && <span className="text-xs text-muted-foreground">Todo quieto</span>}
       </div>
       <ul className="flex flex-col gap-1">
         {shown.map((s) => {
