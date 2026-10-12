@@ -3,6 +3,8 @@ import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 import type {
+  AfkEndReason,
+  AfkState,
   AppDef,
   AppHealth,
   Attachment,
@@ -32,7 +34,6 @@ import type {
 } from "./shared/types.ts"
 
 export const defaultSettings: ProjectSettings = {
-  autoDispatch: false,
   batchWindowSec: 15,
   orchestratorCanEdit: false,
   workerInstructions: "",
@@ -50,9 +51,27 @@ export interface ProjectRecord {
   name: string
   repoPath: string
   settings: ProjectSettings
+  afk: AfkState | null
   accountId: string | null
   createdAt: number
   archivedAt: number | null
+}
+
+/** Un período AFK de un proyecto (abierto mientras endedAt es null). */
+export interface AfkPeriodRow {
+  id: number
+  projectId: string
+  since: number
+  until: number | null
+  budgetUsd: number | null
+  spentAtStart: number
+  /** El costo por modelo del proyecto al entrar. */
+  costByModelAtStart: Record<string, number>
+  endedAt: number | null
+  endReason: AfkEndReason | null
+  /** Lo gastado en el período, fijado al terminar. */
+  spentUsd: number | null
+  costByModel: Record<string, number> | null
 }
 
 /** Una cuenta de Claude Code: un directorio de configuración (CLAUDE_CONFIG_DIR) con su login. */
@@ -298,6 +317,27 @@ const MIGRATIONS: string[] = [
   CREATE INDEX project_messages_to ON project_messages(to_project_id, delivered_at);
   CREATE INDEX project_messages_from ON project_messages(from_project_id, created_at);
   `,
+  `
+  ALTER TABLE projects ADD COLUMN afk TEXT;
+  ALTER TABLE drafts ADD COLUMN hold INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE drafts ADD COLUMN sent_by TEXT;
+  CREATE TABLE afk_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    since INTEGER NOT NULL,
+    until INTEGER,
+    budget_usd REAL,
+    spent_at_start REAL NOT NULL DEFAULT 0,
+    cost_by_model_at_start TEXT,
+    ended_at INTEGER,
+    end_reason TEXT,
+    spent_usd REAL,
+    cost_by_model TEXT
+  );
+  CREATE INDEX afk_periods_project ON afk_periods(project_id, since);
+  -- Lo que ya estaba enviándose solo (autoDispatch) pasa a AFK sin límites en migrateAutoDispatch.
+  UPDATE drafts SET sent_by = 'user' WHERE state = 'sent';
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -341,6 +381,7 @@ function toProject(r: Row): ProjectRecord {
     name: String(r.name),
     repoPath: String(r.repo_path),
     settings: { ...defaultSettings, ...settings },
+    afk: parseAfk(r.afk),
     accountId: str(r.account_id),
     createdAt: Number(r.created_at),
     archivedAt: num(r.archived_at),
@@ -382,6 +423,38 @@ function toSession(r: Row): SessionRecord {
     context: parseContext(r.context),
     createdAt: Number(r.created_at),
     archivedAt: num(r.archived_at),
+  }
+}
+
+function parseAfk(raw: unknown): AfkState | null {
+  if (!raw) return null
+  try {
+    const a = JSON.parse(String(raw)) as Partial<AfkState>
+    if (typeof a.since !== "number") return null
+    return {
+      since: a.since,
+      until: typeof a.until === "number" ? a.until : null,
+      budgetUsd: typeof a.budgetUsd === "number" ? a.budgetUsd : null,
+      spentAtStart: typeof a.spentAtStart === "number" ? a.spentAtStart : 0,
+    }
+  } catch {
+    return null
+  }
+}
+
+function toPeriod(r: Row): AfkPeriodRow {
+  return {
+    id: Number(r.id),
+    projectId: String(r.project_id),
+    since: Number(r.since),
+    until: num(r.until),
+    budgetUsd: num(r.budget_usd),
+    spentAtStart: Number(r.spent_at_start ?? 0),
+    costByModelAtStart: parseCostByModel(r.cost_by_model_at_start),
+    endedAt: num(r.ended_at),
+    endReason: (str(r.end_reason) as AfkEndReason | null) ?? null,
+    spentUsd: num(r.spent_usd),
+    costByModel: r.cost_by_model === null || r.cost_by_model === undefined ? null : parseCostByModel(r.cost_by_model),
   }
 }
 
@@ -460,6 +533,8 @@ function toDraft(r: Row): Draft {
     currentStep: num(r.current_step),
     planNote: str(r.plan_note),
     revises: str(r.revises),
+    hold: bool(r.hold),
+    sentBy: r.sent_by === "user" || r.sent_by === "afk" ? r.sent_by : null,
   }
 }
 
@@ -648,6 +723,8 @@ const DRAFT_COLUMNS: Partial<Record<keyof Draft, string>> = {
   currentStep: "current_step",
   planNote: "plan_note",
   revises: "revises",
+  hold: "hold",
+  sentBy: "sent_by",
 }
 
 const REPORT_COLUMNS: Partial<Record<keyof Report, string>> = {
@@ -686,6 +763,7 @@ export class Db {
     this.db = new DatabaseSync(file)
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
     this.migrate()
+    this.migrateAutoDispatch()
     restrict(file)
   }
 
@@ -712,12 +790,13 @@ export class Db {
 
   // ---------------------------------------------------------------- projects
 
-  insertProject(p: ProjectRecord) {
+  insertProject(p: Omit<ProjectRecord, "afk"> & { afk?: AfkState | null }) {
     this.db
       .prepare(
         "INSERT INTO projects (id, name, repo_path, settings, account_id, created_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
       )
       .run(p.id, p.name, p.repoPath, JSON.stringify(p.settings), p.accountId, p.createdAt, p.archivedAt)
+    if (p.afk) this.updateProject(p.id, { afk: p.afk })
   }
 
   /** Proyectos creados antes de que hubiera cuentas: pasan a la cuenta por defecto. */
@@ -725,7 +804,9 @@ export class Db {
     this.db.prepare("UPDATE projects SET account_id = ? WHERE account_id IS NULL").run(accountId)
   }
 
-  updateProject(id: string, patch: Partial<Pick<ProjectRecord, "name" | "settings" | "archivedAt" | "accountId">>) {
+  updateProject(id: string, patch: Partial<Pick<ProjectRecord, "name" | "settings" | "archivedAt" | "accountId" | "afk">>) {
+    if (patch.afk !== undefined)
+      this.db.prepare("UPDATE projects SET afk = ? WHERE id = ?").run(patch.afk ? JSON.stringify(patch.afk) : null, id)
     if (patch.name !== undefined)
       this.db.prepare("UPDATE projects SET name = ? WHERE id = ?").run(patch.name, id)
     if (patch.settings !== undefined)
@@ -736,6 +817,68 @@ export class Db {
       this.db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(patch.archivedAt, id)
     if (patch.accountId !== undefined)
       this.db.prepare("UPDATE projects SET account_id = ? WHERE id = ?").run(patch.accountId, id)
+  }
+
+  // --------------------------------------------------------------------- afk
+
+  /** Lo que gastó el proyecto hasta ahora: la suma del costo de todas sus sesiones (también las archivadas). */
+  projectCost(projectId: string): { usd: number; byModel: Record<string, number> } {
+    const rows = this.db.prepare("SELECT cost_usd, cost_by_model FROM sessions WHERE project_id = ?").all(projectId) as Row[]
+    let usd = 0
+    const byModel: Record<string, number> = {}
+    for (const r of rows) {
+      usd += Number(r.cost_usd ?? 0)
+      for (const [m, v] of Object.entries(parseCostByModel(r.cost_by_model))) byModel[m] = (byModel[m] ?? 0) + v
+    }
+    return { usd, byModel }
+  }
+
+  insertAfkPeriod(p: Omit<AfkPeriodRow, "id" | "endedAt" | "endReason" | "spentUsd" | "costByModel">) {
+    this.db
+      .prepare("INSERT INTO afk_periods (project_id, since, until, budget_usd, spent_at_start, cost_by_model_at_start) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(p.projectId, p.since, p.until, p.budgetUsd, p.spentAtStart, JSON.stringify(p.costByModelAtStart))
+  }
+
+  /** Cambia el límite de tiempo o de plata del período abierto (volver a ponerse AFK sin salir). */
+  updateOpenAfkPeriod(projectId: string, patch: { until: number | null; budgetUsd: number | null }) {
+    this.db.prepare("UPDATE afk_periods SET until = ?, budget_usd = ? WHERE project_id = ? AND ended_at IS NULL").run(patch.until, patch.budgetUsd, projectId)
+  }
+
+  closeAfkPeriod(projectId: string, end: { endedAt: number; endReason: AfkEndReason; spentUsd: number; costByModel: Record<string, number> }) {
+    this.db
+      .prepare("UPDATE afk_periods SET ended_at = ?, end_reason = ?, spent_usd = ?, cost_by_model = ? WHERE project_id = ? AND ended_at IS NULL")
+      .run(end.endedAt, end.endReason, end.spentUsd, JSON.stringify(end.costByModel), projectId)
+  }
+
+  /** El período más reciente del proyecto (el abierto, si hay uno). */
+  lastAfkPeriod(projectId: string): AfkPeriodRow | null {
+    const r = this.db.prepare("SELECT * FROM afk_periods WHERE project_id = ? ORDER BY since DESC, id DESC LIMIT 1").get(projectId) as Row | undefined
+    return r ? toPeriod(r) : null
+  }
+
+  /** Los proyectos con AFK activo. */
+  listAfkProjects(): ProjectRecord[] {
+    return (this.db.prepare("SELECT * FROM projects WHERE afk IS NOT NULL AND archived_at IS NULL").all() as Row[]).map(toProject)
+  }
+
+  /**
+   * Un proyecto que tenía autoDispatch en true pasa a AFK sin límites, y la opción se borra de sus ajustes.
+   * Idempotente: sin autoDispatch en los ajustes no hace nada.
+   */
+  private migrateAutoDispatch() {
+    const rows = this.db.prepare("SELECT * FROM projects WHERE json_extract(settings, '$.autoDispatch') IS NOT NULL").all() as Row[]
+    for (const r of rows) {
+      const p = toProject(r)
+      const raw = JSON.parse(String(r.settings ?? "{}")) as Record<string, unknown>
+      const wasOn = raw.autoDispatch === true
+      delete raw.autoDispatch
+      this.db.prepare("UPDATE projects SET settings = ? WHERE id = ?").run(JSON.stringify(raw), p.id)
+      if (!wasOn || p.afk) continue
+      const cost = this.projectCost(p.id)
+      const afk: AfkState = { since: Date.now(), until: null, budgetUsd: null, spentAtStart: cost.usd }
+      this.updateProject(p.id, { afk })
+      this.insertAfkPeriod({ projectId: p.id, since: afk.since, until: null, budgetUsd: null, spentAtStart: cost.usd, costByModelAtStart: cost.byModel })
+    }
   }
 
   // ---------------------------------------------------------------- accounts
@@ -876,6 +1019,7 @@ export class Db {
       this.db.prepare("DELETE FROM reports WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM project_messages WHERE from_project_id = ? OR to_project_id = ?").run(id, id)
       this.db.prepare("DELETE FROM drafts WHERE project_id = ?").run(id)
+      this.db.prepare("DELETE FROM afk_periods WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM credentials WHERE environment_id IN (SELECT id FROM environments WHERE project_id = ?)").run(id)
       this.db.prepare("DELETE FROM environments WHERE project_id = ?").run(id)
@@ -1156,8 +1300,8 @@ export class Db {
       .prepare(
         `INSERT INTO drafts (id, project_id, kind, target_session_id, new_session, title, prompt, state,
           created_by, created_at, updated_at, decided_at, edited, revision, subagents, fresh,
-          model, effort, steps, plan_state, current_step, plan_note, revises)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          model, effort, steps, plan_state, current_step, plan_note, revises, hold, sent_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         d.id,
@@ -1182,7 +1326,9 @@ export class Db {
         d.planState,
         d.currentStep,
         d.planNote,
-        d.revises
+        d.revises,
+        d.hold ? 1 : 0,
+        d.sentBy
       )
   }
 

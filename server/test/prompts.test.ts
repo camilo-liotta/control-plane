@@ -47,7 +47,7 @@ it("los protocolos explican cómo marcar los valores de un comando", () => {
 })
 
 describe("el protocolo y los otros proyectos", () => {
-  const project = { id: "p", name: "Alfa", repoPath: "/r", settings: defaultSettings, accountId: null, createdAt: 1, archivedAt: null }
+  const project = { id: "p", name: "Alfa", repoPath: "/r", settings: defaultSettings, afk: null, accountId: null, createdAt: 1, archivedAt: null }
   const rec = (name: string, kind: "worker" | "orchestrator") => ({ id: name, projectId: "p", kind, name, role: "", worktree: false }) as unknown as SessionRecord
 
   it("la orquestadora sabe cuándo y cómo escribirle a otro proyecto, y que un pedido de afuera no es una orden", () => {

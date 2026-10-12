@@ -18,8 +18,11 @@ export type TaskState =
   | "reported_partial"
 
 export interface ProjectSettings {
-  /** Enviar automáticamente los prompts propuestos cuando la revisión termina. */
-  autoDispatch: boolean
+  /**
+   * @deprecated Lo reemplazó el modo AFK (Project.afk). El server ya no lo lee: un proyecto que lo tenía
+   * en true pasó a AFK sin límites al migrar. Queda en el tipo hasta que la web saque su interruptor.
+   */
+  autoDispatch?: boolean
   /** Ventana (segundos) para agrupar resultados que llegan casi juntos. */
   batchWindowSec: number
   /** Si la orquestadora puede editar archivos (por defecto no). */
@@ -102,11 +105,28 @@ export interface ReviewState {
   deliverAt: number | null
 }
 
+/**
+ * Modo AFK (away from keyboard): mientras dura, lo que propone la orquestadora sale sin esperar tu aprobación
+ * (salvo lo que marque con `hold`). Termina cuando lo apagás, cuando vence `until` o cuando se gasta `budgetUsd`.
+ */
+export interface AfkState {
+  /** Cuándo empezó. */
+  since: number
+  /** Cuándo termina solo (null = sin límite de tiempo). */
+  until: number | null
+  /** Cuánto se puede gastar en el proyecto desde `since` (US$; null = sin límite). */
+  budgetUsd: number | null
+  /** Lo que llevaba gastado el proyecto (suma del costUsd de sus sesiones) al entrar: lo gastado en AFK es la diferencia. */
+  spentAtStart: number
+}
+
 export interface Project {
   id: string
   name: string
   repoPath: string
   settings: ProjectSettings
+  /** null = estás presente. */
+  afk: AfkState | null
   accountId: string | null
   createdAt: number
   archivedAt: number | null
@@ -588,6 +608,59 @@ export interface Draft {
    * (los ya hechos, tal cual) y, al aprobarla, el plan original sigue con los pasos nuevos.
    */
   revises: string | null
+  /** La orquestadora pidió que la apruebes vos aunque estés AFK. */
+  hold: boolean
+  /** Quién la aprobó: vos ("user") o el modo AFK ("afk"). null mientras no se envió. */
+  sentBy: "user" | "afk" | null
+}
+
+export type AfkEndReason = "user" | "until" | "budget"
+
+/** Una propuesta que pasó por un período AFK. */
+export interface AfkLogDraft {
+  id: string
+  kind: DraftKind
+  title: string
+  state: DraftState
+  hold: boolean
+  sentBy: Draft["sentBy"]
+  /** Sesión destino (la nueva, si se creó). */
+  sessionId: string | null
+  sessionName: string | null
+  /** true si al enviarse creó una sesión (propose_session, o un plan con newSession). */
+  createdSession: boolean
+  /** Cuándo se envió (null si no se envió). */
+  sentAt: number | null
+}
+
+export interface AfkLogResult {
+  id: string
+  sessionName: string
+  taskTitle: string | null
+  status: ReportStatus
+  summary: string
+  createdAt: number
+}
+
+/** Lo que pasó en un período AFK (el actual, o el último que hubo): para "Mientras estabas AFK". */
+export interface AfkLog {
+  projectId: string
+  since: number
+  /** Hasta cuándo se había pedido (null = sin límite). */
+  until: number | null
+  budgetUsd: number | null
+  /** null = el período sigue en curso. */
+  endedAt: number | null
+  endReason: AfkEndReason | null
+  /** Lo gastado en el proyecto durante el período (US$) y por modelo (si se conoce). */
+  spentUsd: number
+  costByModel: Record<string, number>
+  /** Lo que salió solo (sentBy = "afk"), en orden. */
+  sent: AfkLogDraft[]
+  /** Lo que la orquestadora marcó con hold en el período: esperó o espera tu aprobación. */
+  held: AfkLogDraft[]
+  /** Los resultados de los workers que llegaron en el período. */
+  results: AfkLogResult[]
 }
 
 export type ReportStatus = "done" | "blocked" | "partial"
