@@ -157,7 +157,8 @@ describe("modo AFK", () => {
     assert.equal(view.afk?.spentAtStart, 3.5)
     assert.ok(view.afk!.since <= Date.now())
     assert.deepEqual(db.getProject(projectId)!.afk, view.afk)
-    assert.match(sessions.notices(orq.id).at(-1)!, /^El usuario está AFK hasta las \d\d:\d\d \(presupuesto US\$ 5\): tus propuestas salen solas, salvo las que marques con hold\.$/)
+    // Con la hora a secas si es hoy, y con el día si el `until` cae después de medianoche.
+    assert.match(sessions.notices(orq.id).at(-1)!, /^El usuario está AFK hasta (las|el .+ a las) \d\d:\d\d \(presupuesto US\$ 5\): tus propuestas salen solas, salvo las que marques con hold\.$/)
     const sent = hub.messages.filter((m) => m.type === "project")
     assert.equal(sent.at(-1)!.type === "project" && sent.at(-1)!.project.afk?.budgetUsd, 5)
   })
