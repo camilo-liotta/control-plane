@@ -129,11 +129,13 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   // Llegaste desde "Hay una propuesta lista": la vista baja hasta la primera propuesta lista del
   // chat. Si no está entre los mensajes cargados, se ve en el panel (en pantallas chicas, se abre).
   // En el panel, la sección de propuestas puede estar plegada: se abre sola antes de buscarla.
+  // Con `item` (desde la marca de un paso de un plan) busca esa propuesta en vez de la primera lista.
   useEffect(() => {
     if (pendingReveal?.kind !== "proposals" || pendingReveal.id !== sessionId || !events) return
+    const target = pendingReveal.item ? `[data-draft-id="${CSS.escape(pendingReveal.item)}"]` : '[data-draft-state="ready"]'
     let inner = 0
     const raf = requestAnimationFrame(() => {
-      const inChat = content.current?.querySelector<HTMLElement>('[data-draft-state="ready"]')
+      const inChat = content.current?.querySelector<HTMLElement>(target)
       if (inChat) {
         stick.current = false
         reveal(inChat)
@@ -142,9 +144,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
       }
       usePanelSections.getState().reveal("proposals")
       inner = requestAnimationFrame(() => {
-        const inPanel = document.querySelector<HTMLElement>('aside [data-draft-state="ready"]')
+        const inPanel = document.querySelector<HTMLElement>(`aside ${target}`)
         if (inPanel?.offsetParent) reveal(inPanel)
-        else if (document.querySelector('[data-draft-state="ready"]') || inPanel) setPanelOpen(true)
+        else if (document.querySelector(target) || inPanel) setPanelOpen(true)
         setUi({ reveal: null })
       })
     })

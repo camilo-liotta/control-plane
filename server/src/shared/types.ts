@@ -661,6 +661,8 @@ export type TimelineEvent =
       tokens?: number
       /** Lo que costó este turno por modelo (id resuelto, ej. claude-sonnet-5-5), de mayor a menor; incluye a los subagentes. */
       models?: { model: string; usd: number }[]
+      /** El modelo de la sesión en este turno (sin sus subagentes), según el init del CLI. */
+      model?: string
       terminalReason?: string
       error?: string
     }

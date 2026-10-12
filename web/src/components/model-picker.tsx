@@ -19,16 +19,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { api } from "@/lib/api"
-import { modelLabel } from "@/lib/files"
+import { EFFORTS, effortName, findModel, modelLabel, projectDefaults } from "@/lib/models"
 import { useModels, useStore } from "@/lib/store"
 
 const DEFAULT = "__default"
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 /** El nombre del modelo que usa la sesión, para el botón y el menú. */
 export function useModelLabel(session: Session) {
   const models = useModels()
-  const projectModel = useStore((s) => s.projects[session.projectId]?.settings.defaultModel ?? null)
+  const settings = useStore((s) => s.projects[session.projectId]?.settings)
+  const projectModel = settings ? projectDefaults(settings, session.kind).model : null
   return modelLabel(models, session.currentModel, session.model ?? projectModel)
 }
 
@@ -41,7 +41,7 @@ export function ModelPicker({ session }: { session: Session }) {
         <Button size="sm" variant="secondary" className="gap-1.5" title="Cambiar modelo y esfuerzo" aria-label={`Modelo: ${label}. Cambiar modelo y esfuerzo`}>
           <Cpu className="text-muted-foreground" />
           <span className="hidden max-w-32 truncate xl:inline">{label}</span>
-          {session.effort && <span className="hidden text-xs text-muted-foreground 2xl:inline">· {session.effort}</span>}
+          {session.effort && <span className="hidden text-xs text-muted-foreground 2xl:inline">· {effortName(session.effort)}</span>}
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
@@ -56,7 +56,7 @@ export function ModelPicker({ session }: { session: Session }) {
 export function ModelChoices({ session }: { session: Session }) {
   const models = useModels()
   const selected = models.find((m) => m.value === session.model)
-  const efforts = (selected ?? models.find((m) => m.resolved === session.currentModel))?.efforts ?? EFFORTS
+  const efforts = (selected ?? findModel(models, session.currentModel))?.efforts ?? EFFORTS
   const running = session.status !== "stopped" && session.status !== "error"
 
   const change = async (patch: { model?: string | null; effort?: string | null }, ok: string) => {
@@ -97,13 +97,13 @@ export function ModelChoices({ session }: { session: Session }) {
               value={session.effort ?? DEFAULT}
               onValueChange={(v) => {
                 const effort = v === DEFAULT ? null : v
-                void change({ effort }, effort ? `Esfuerzo cambiado a ${effort}` : "Esfuerzo cambiado al de tu configuración")
+                void change({ effort }, effort ? `Esfuerzo cambiado a ${effortName(effort)}` : "Esfuerzo cambiado al de tu configuración")
               }}
             >
               <DropdownMenuRadioItem value={DEFAULT}>El de tu configuración</DropdownMenuRadioItem>
               {efforts.map((e) => (
                 <DropdownMenuRadioItem key={e} value={e}>
-                  {e}
+                  {effortName(e)}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>

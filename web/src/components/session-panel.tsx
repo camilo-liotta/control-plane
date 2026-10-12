@@ -1,5 +1,5 @@
 import { Blocks, Check, ChevronRight, Copy, TerminalSquare } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 
 import type { Attachment, Project, Report, Session } from "@shared/types"
 
@@ -17,6 +17,7 @@ import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import { basename, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
+import { costsByModel, effortName, modelLabel, projectDefaults } from "@/lib/models"
 import { openDrafts, projectReports, useModels, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
@@ -114,7 +115,12 @@ export function SessionPanel({ session, project }: { session: Session; project: 
   }, [session.id, isOrch, Object.keys(allReports).length, historyTry])
 
   const readyCount = drafts.filter((d) => d.state === "ready").length
-  const model = models.find((m) => m.value === (session.model ?? project.settings.defaultModel))
+  const defaults = projectDefaults(project.settings, session.kind)
+  const modelText = session.model || defaults.model || session.currentModel ? modelLabel(models, session.currentModel, session.model ?? defaults.model) : "El de tu configuración"
+  const effort = session.effort ?? defaults.effort
+  const costParts = costsByModel(models, session.costByModel ?? {})
+  // Lo gastado antes de que se guardara el detalle por modelo (sesiones de versiones anteriores).
+  const costRest = session.costUsd - costParts.reduce((a, p) => a + p.usd, 0)
   const resume = `cd ${session.cwd} && claude --resume ${session.claudeSessionId}`
 
   return (
@@ -218,11 +224,11 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           <ChevronRight className="text-muted-foreground" />
         </Button>
       </Section>
-      <Section id="details" title="Detalles" summary={model?.label ?? session.model ?? undefined}>
+      <Section id="details" title="Detalles" summary={modelText}>
         <dl>
           {session.role && <Detail label="Rol">{session.role}</Detail>}
-          <Detail label="Modelo">{model?.label ?? session.model ?? project.settings.defaultModel ?? "El de tu configuración"}</Detail>
-          <Detail label="Esfuerzo">{session.effort ?? project.settings.defaultEffort ?? "El de tu configuración"}</Detail>
+          <Detail label="Modelo">{modelText}</Detail>
+          <Detail label="Esfuerzo">{effort ? effortName(effort) : "El de tu configuración"}</Detail>
           <Detail label="Carpeta" hint={session.cwd}>
             {basename(session.cwd)}
           </Detail>
@@ -230,6 +236,25 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           <Detail label="Costo" hint="Lo que costaría por API. Con tu plan no se cobra aparte: sirve para comparar cuánto trabajó cada sesión.">
             {usd(session.costUsd)} (equivalente API)
           </Detail>
+          {costParts.length > 0 && (
+            <div className="grid grid-cols-[5.5rem_1fr] gap-2 pb-1 text-2xs text-muted-foreground">
+              <dt className="sr-only">Costo por modelo</dt>
+              <dd className="col-start-2 grid grid-cols-[auto_1fr] gap-x-3 whitespace-nowrap">
+                {costParts.map((p) => (
+                  <Fragment key={p.name}>
+                    <span>{p.name}</span>
+                    <span className="font-mono tabular-nums">{usd(p.usd)}</span>
+                  </Fragment>
+                ))}
+                {costRest > 0.005 && (
+                  <>
+                    <span title="Lo que gastó antes de que el dashboard guardara el costo de cada modelo">sin detalle</span>
+                    <span className="font-mono tabular-nums">{usd(costRest)}</span>
+                  </>
+                )}
+              </dd>
+            </div>
+          )}
           {session.tokens && session.tokens.total > 0 && (
             <>
               <Detail label="Tokens" hint={`${tokensFull(session.tokens.total)} tokens en total (incluye subagentes)`}>

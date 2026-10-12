@@ -1,5 +1,6 @@
-import { Brain, ChevronRight, Compass, Info, ListTree, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
+import { Brain, ChevronRight, Compass, Info, ListOrdered, ListTree, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
+import { useLocation } from "wouter"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
@@ -17,8 +18,9 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
 import { clock, duration, tokens as tokensShort, usd } from "@/lib/format"
+import { costsByModel, modelName } from "@/lib/models"
 import { reportStatusView } from "@/lib/status"
-import { useStore, type PartialBlock } from "@/lib/store"
+import { useModels, useStore, type PartialBlock } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 import { failed } from "@/lib/errors"
@@ -62,11 +64,42 @@ export function buildItems(events: StoredEvent[]): Item[] {
   return items
 }
 
+/** "Paso 2 de 4 · plan «X»" encima del mensaje de un paso: lleva a la tarjeta del plan, en el chat de la orquestadora. */
+function PlanMark({ plan, planTitle, sessionId }: { plan: NonNullable<Ev<"user">["event"]["plan"]>; planTitle?: string; sessionId: string }) {
+  const [, navigate] = useLocation()
+  const draft = useStore((s) => s.drafts[plan.draftId])
+  // Los drafts viejos no vienen en el snapshot: la orquestadora sale del proyecto de esta sesión.
+  const orchestrator = useStore((s) => {
+    const pid = draft?.projectId ?? s.sessions[sessionId]?.projectId
+    return pid ? Object.values(s.sessions).find((x) => x.projectId === pid && x.kind === "orchestrator" && !x.archivedAt) : undefined
+  })
+  const title = planTitle ?? draft?.title
+  const label = `Paso ${plan.step + 1} de ${plan.total}${title ? ` · plan «${title}»` : ""}`
+  const open = () => {
+    if (!orchestrator) return
+    useUi.getState().set({ reveal: { kind: "proposals", id: orchestrator.id, item: plan.draftId, at: Date.now() } })
+    navigate(`/p/${orchestrator.projectId}/s/${orchestrator.id}`)
+  }
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={!orchestrator}
+      title={orchestrator ? (plan.title ? `Paso ${plan.step + 1}: ${plan.title}` : undefined) : "La orquestadora de este plan ya no está"}
+      className="flex max-w-[85%] items-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:text-foreground"
+    >
+      <ListOrdered className="size-3.5 shrink-0" />
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
+
 function UserBubble({ ev }: { ev: Ev<"user"> }) {
   const { event } = ev
   return (
     <div className="flex flex-col items-end gap-1">
-      {event.origin === "draft" && (
+      {event.plan && <PlanMark plan={event.plan} planTitle={event.draftTitle} sessionId={ev.sessionId} />}
+      {event.origin === "draft" && !event.plan && (
         <span className="flex max-w-[85%] items-center gap-1.5 text-xs text-muted-foreground">
           <Compass className="size-3.5 shrink-0" />
           <span className="truncate" title={event.draftTitle ?? undefined}>
@@ -153,19 +186,40 @@ function TurnEnd({ ev }: { ev: Ev<"turn_end"> }) {
   const { ok, durationMs, costUsd, error, terminalReason, tokens } = ev.event
   const aborted = Boolean(terminalReason?.startsWith("aborted"))
   const failed = !ok && !aborted
+  const models = useModels()
+  // Lo que costó el turno, por modelo: el principal a la vista y el detalle (subagentes en otro modelo) en el title.
+  const parts = costsByModel(models, ev.event.models ?? [])
+  // El de la sesión primero, aunque un subagente en otro modelo haya gastado más.
+  const main = ev.event.model ? parts.findIndex((p) => p.name === modelName(models, ev.event.model!)) : -1
+  if (main > 0) parts.unshift(...parts.splice(main, 1))
+  const turnUsd = parts.reduce((a, p) => a + p.usd, 0)
+  const detail = [
+    error,
+    parts.length > 1 ? parts.map((p) => `${p.name}: ${usd(p.usd)}`).join(" · ") : null,
+    parts.length && costUsd > 0 ? `${usd(costUsd)} acumulado en la sesión` : null,
+  ]
+    .filter(Boolean)
+    .join("\n")
   return (
-    <div className="flex items-center gap-3 py-1 text-muted-foreground" title={error ?? undefined}>
+    <div className="flex items-center gap-3 py-1 text-muted-foreground" title={detail || undefined}>
       <div className="h-px flex-1 bg-border" />
       <span className="turn-rule flex items-center gap-1">
         {failed && <OctagonAlert className="size-3 text-status-error" />}
         <span className={cn(failed && "font-medium text-status-error")}>
           {aborted ? "Interrumpido" : ok ? "Turno terminado" : "Terminó con error"}
         </span>
+        {parts.length > 0 && (
+          <span>
+            · {parts[0]!.name}
+            {parts.length > 1 && <span className="text-muted-foreground/70"> +{parts.length - 1}</span>}
+          </span>
+        )}
         <span>
           · {duration(durationMs)}
           {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
-          {costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
+          {!parts.length && costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
         </span>
+        {parts.length > 0 && <span>· <span className="font-mono tabular-nums">{usd(turnUsd)}</span></span>}
       </span>
       <div className="h-px flex-1 bg-border" />
       {error && <span className="sr-only">{error}</span>}
@@ -271,6 +325,7 @@ function ToolItem({ call, root, live }: { call: ToolCall; root?: string; live: b
       return <ReportCall call={call} />
     case "mcp__control-plane__propose_prompt":
     case "mcp__control-plane__propose_session":
+    case "mcp__control-plane__propose_plan":
       return <ProposalCall call={call} root={root} live={live} />
     case "Agent":
     case "Task":
@@ -548,6 +603,7 @@ const CARD_TOOLS = new Set([
   "mcp__control-plane__report_result",
   "mcp__control-plane__propose_prompt",
   "mcp__control-plane__propose_session",
+  "mcp__control-plane__propose_plan",
   "Agent",
   "Task",
 ])

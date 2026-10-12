@@ -142,6 +142,9 @@ describe("lo gastado en una sesión", () => {
     await until(() => db.getSession(s.id)!.costUsd > 1)
     assert.deepEqual(r6(db.getSession(s.id)!.costByModel), { "claude-x": 1, "claude-y": 0.1 })
     assert.deepEqual(turnModels(), [["claude-x 0.25"], ["claude-x 0.25", "claude-y 0.05"], ["claude-x 0.25"], [], ["claude-x 0.25", "claude-y 0.05"]])
+    // Después del /clear el CLI informó su modelo (init): el fin de turno dice cuál es el de la sesión.
+    const last = db.listEvents(s.id).map((e) => e.event).filter((e) => e.kind === "turn_end").at(-1)
+    assert.equal(last?.kind === "turn_end" && last.model, "claude-x")
     await sessions.stop(s.id)
   })
 
