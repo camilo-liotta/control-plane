@@ -9,7 +9,15 @@ import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import type { Hub } from "../src/hub.ts"
 import { Orchestration } from "../src/orchestration.ts"
 import type { SessionManager, SendOptions } from "../src/sessions.ts"
-import type { ServerMessage, SessionStatus } from "../src/shared/types.ts"
+import type { ModelOption, ServerMessage, SessionStatus, TimelineEvent } from "../src/shared/types.ts"
+
+/** Lo que devuelve el initialize de Claude Code, recortado. */
+const CATALOG: ModelOption[] = [
+  { value: "default", label: "Default (recommended)", efforts: ["low", "medium", "high", "xhigh", "max"] },
+  { value: "opus", label: "Opus 5.5", efforts: ["low", "medium", "high", "xhigh", "max"], resolved: "claude-opus-5-5" },
+  { value: "sonnet", label: "Sonnet 5.5", efforts: ["low", "medium", "high"], resolved: "claude-sonnet-5-5" },
+  { value: "haiku", label: "Haiku 5.5", efforts: [], resolved: "claude-haiku-5-5" },
+]
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -24,6 +32,10 @@ class FakeHub {
 class FakeSessions extends EventEmitter {
   statuses = new Map<string, SessionStatus>()
   sent: { id: string; text: string; opts: SendOptions }[] = []
+  /** En qué orden pasaron las cosas: clear, model:x, effort:y, send. */
+  log: string[] = []
+  events: { id: string; event: TimelineEvent }[] = []
+  meta: { models: ModelOption[] } = { models: CATALOG }
   db: Db
   constructor(db: Db) {
     super()
@@ -33,6 +45,7 @@ class FakeSessions extends EventEmitter {
     return this.statuses.get(id) ?? "idle"
   }
   async send(id: string, text: string, opts: SendOptions) {
+    this.log.push("send")
     this.sent.push({ id, text, opts })
     this.statuses.set(id, "working")
     return { id: this.sent.length, sessionId: id, ts: Date.now(), event: opts.event ?? { kind: "notice", level: "info", text } }
@@ -43,11 +56,23 @@ class FakeSessions extends EventEmitter {
   cleared: string[] = []
   async clearConversation(id: string) {
     this.cleared.push(id)
+    this.log.push("clear")
     this.sent.push({ id, text: "/clear", opts: { origin: "control" } })
   }
   async start() {}
+  async setModel(id: string, model: string | null) {
+    this.log.push(`model:${model}`)
+    this.db.updateSession(id, { model })
+  }
+  async setEffort(id: string, effort: string | null) {
+    this.log.push(`effort:${effort}`)
+    this.db.updateSession(id, { effort })
+  }
+  addEvent(id: string, event: TimelineEvent) {
+    this.events.push({ id, event })
+  }
   create(input: Partial<SessionRecord> & { projectId: string; kind: "worker"; name: string; role: string; cwd: string }) {
-    const rec = session(input.projectId, input.name, "worker")
+    const rec = { ...session(input.projectId, input.name, "worker"), model: input.model ?? null, effort: input.effort ?? null }
     this.db.insertSession(rec)
     return rec
   }
@@ -302,5 +327,95 @@ describe("cola de resultados", () => {
     assert.equal(orch.reviewState(projectId).queued, 0)
     sessions.endTurn(orq)
     assert.equal(db.listReports({ projectId, states: ["reviewed"] }).length, 2)
+  })
+
+  it("valida el modelo y el esfuerzo contra el catálogo, con las opciones en el error", () => {
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "gpt" }), /No existe el modelo "gpt"\. Modelos: opus \(Opus 5\.5: low/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "max" }), /Sonnet 5\.5 no tiene esfuerzo "max"\. Esfuerzos: low, medium, high/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "haiku", effort: "low" }), /Haiku 5\.5 no tiene niveles de esfuerzo/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", effort: "turbo" }), /no existe/)
+    // El id completo vale y queda como lo conoce el catálogo.
+    const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "claude-sonnet-5-5", effort: "Medium" })
+    assert.match(reply, /con Sonnet 5\.5 · esfuerzo medio/)
+    const [d] = db.listDrafts({ projectId })
+    assert.equal(d!.model, "sonnet")
+    assert.equal(d!.effort, "medium")
+    // Solo el esfuerzo: se valida contra el modelo que ya tiene la sesión.
+    db.updateSession(a.id, { model: "sonnet" })
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", effort: "xhigh" }), /Sonnet 5\.5 no tiene esfuerzo/)
+  })
+
+  it("al enviar: primero de cero, después el modelo y el esfuerzo, y al final el prompt", async () => {
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Tests", prompt: "Escribí los tests", fresh: true, model: "sonnet", effort: "medium" })
+    sessions.endTurn(orq)
+    const [ready] = db.listDrafts({ projectId, states: ["ready"] })
+    await orch.sendDraft(ready!.id, {})
+    assert.deepEqual(sessions.log, ["clear", "model:sonnet", "effort:medium", "send"])
+    assert.equal(db.getSession(a.id)!.model, "sonnet")
+    const notice = sessions.events.find((e) => e.id === a.id && e.event.kind === "notice")
+    assert.deepEqual(notice?.event, { kind: "notice", level: "info", text: "Modelo: Sonnet 5.5 · esfuerzo medio, para «Tests»" })
+    // Lo que vuelve a la orquestadora dice con qué salió.
+    sessions.endTurn(orq)
+    orch.report(a, { status: "done", summary: "ok" })
+    await sleep(400)
+    assert.match(sessions.sent.at(-1)!.text, /Aprobó d_\w+ → BACKEND \(empezando de cero\), con Sonnet 5\.5 · esfuerzo medio: "Tests"/)
+  })
+
+  it("sin modelo ni esfuerzo, la sesión sigue con lo que tiene y no hay aviso", async () => {
+    db.updateSession(a.id, { model: "opus", effort: "high" })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+    sessions.endTurn(orq)
+    await orch.sendDraft(db.listDrafts({ projectId, states: ["ready"] })[0]!.id, {})
+    assert.deepEqual(sessions.log, ["send"])
+    assert.equal(sessions.events.length, 0)
+    assert.equal(db.getSession(a.id)!.model, "opus")
+  })
+
+  it("el usuario puede cambiar el modelo y el esfuerzo al aprobar", async () => {
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Refactor", prompt: "P", model: "sonnet", effort: "medium" })
+    sessions.endTurn(orq)
+    const [ready] = db.listDrafts({ projectId, states: ["ready"] })
+    assert.throws(() => orch.editDraft(ready!.id, { effort: "max" }), /Sonnet 5\.5 no tiene esfuerzo "max"/)
+    const edited = orch.editDraft(ready!.id, { model: "opus" })
+    assert.equal(edited.model, "opus")
+    assert.equal(edited.effort, "medium")
+    const sent = await orch.sendDraft(ready!.id, { effort: "max" })
+    assert.equal(sent.edited, true)
+    assert.equal(sent.effort, "max")
+    assert.deepEqual(sessions.log, ["model:opus", "effort:max", "send"])
+    sessions.endTurn(orq)
+    orch.report(a, { status: "done", summary: "ok" })
+    await sleep(400)
+    assert.match(sessions.sent.at(-1)!.text, /Aprobó con cambios d_\w+ → BACKEND, con Opus 5\.5 · esfuerzo máximo/)
+  })
+
+  it("update_proposal cambia o saca el modelo", () => {
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "haiku" })
+    const [d] = db.listDrafts({ projectId })
+    assert.throws(() => orch.updateProposal(orq, { id: d!.id, effort: "low" }), /Haiku 5\.5 no tiene niveles/)
+    orch.updateProposal(orq, { id: d!.id, model: "sonnet", effort: "high" })
+    assert.equal(db.getDraft(d!.id)!.model, "sonnet")
+    orch.updateProposal(orq, { id: d!.id, model: null, effort: null })
+    assert.equal(db.getDraft(d!.id)!.model, null)
+    assert.match(orch.listProposals(projectId), /T"/)
+    orch.updateProposal(orq, { id: d!.id, model: "opus", effort: "xhigh" })
+    assert.match(orch.listProposals(projectId), /modelo opus, esfuerzo xhigh/)
+  })
+
+  it("una sesión nueva arranca con el modelo de la propuesta", async () => {
+    orch.proposeSession(orq, { name: "docs", role: "Docs", title: "Docs", prompt: "Escribí", model: "haiku" })
+    sessions.endTurn(orq)
+    await orch.sendDraft(db.listDrafts({ projectId, states: ["ready"] })[0]!.id, {})
+    assert.equal(db.listSessions().find((s) => s.name === "DOCS")!.model, "haiku")
+  })
+
+  it("el modelo de los workers vale para los que no tienen uno propio, no para la orquestadora", () => {
+    db.updateProject(projectId, { settings: { ...defaultSettings, defaultModel: "opus", workerModel: "sonnet", workerEffort: "medium" } })
+    assert.equal(orch.effectiveModel(a), "sonnet")
+    assert.equal(orch.effectiveEffort(a), "medium")
+    assert.equal(orch.effectiveModel(orq), "opus")
+    assert.equal(orch.effectiveModel({ ...a, model: "haiku" }), "haiku")
+    db.updateProject(projectId, { settings: { ...defaultSettings, defaultModel: "opus" } })
+    assert.equal(orch.effectiveModel(a), "opus")
   })
 })
