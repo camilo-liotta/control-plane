@@ -161,7 +161,7 @@ describe("mensajes entre proyectos: las herramientas MCP", () => {
   })
 
   it("resume_plan y cancel_plan no tocan los planes de otro proyecto", async () => {
-    orchestration.plans.propose(orqB, { newSession: { name: "W-B", role: "r" }, title: "Plan de Beta", steps: [{ title: "uno", prompt: "hacé algo" }] })
+    orchestration.plans.propose(orqB, { newSession: { name: "W-B", role: "r" }, title: "Plan de Beta", steps: [{ title: "uno", prompt: "hacé algo", model: "sonnet", effort: "medium" }] })
     const plan = db.listDrafts({ projectId: "pb" }).find((d) => d.kind === "plan")!
     db.updateDraft(plan.id, { state: "sent", planState: "paused" })
     for (const tool of ["resume_plan", "cancel_plan"]) {

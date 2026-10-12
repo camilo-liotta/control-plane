@@ -6,7 +6,7 @@ import type { Hub } from "./hub.ts"
 import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
-import { checkModelChoice, choiceLabel, sessionChoice } from "./shared/models.ts"
+import { checkModelChoice, choiceLabel, findModel, sessionChoice } from "./shared/models.ts"
 import type { BatchProjectMessage, Draft, Project, ProjectMessage, Report, ReportStatus, ReviewState, SessionStatus, SubagentSpec } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
 
@@ -211,6 +211,35 @@ export class Orchestration {
   /** Lo que usaría un worker nuevo del proyecto. */
   newWorkerModel(projectId: string): string | null {
     return sessionChoice(this.db.getProject(projectId)?.settings, { kind: "worker", model: null, effort: null }).model
+  }
+
+  /**
+   * propose_prompt, propose_session y cada paso de propose_plan exigen modelo y esfuerzo: sin ellos, la sesión
+   * seguía con el que tenía (Opus) y la orquestadora nunca elegía. El error dice cómo corregirse sola, y le llega
+   * aunque el esquema que tiene guardado de la herramienta sea el viejo (sin esos campos).
+   */
+  requireChoice(
+    model: string | null | undefined,
+    effort: string | null | undefined,
+    where: { tool: string; target: SessionRecord | null; projectId: string }
+  ) {
+    const wanted = model?.trim() || null
+    const level = effort?.trim() || null
+    const option = wanted ? findModel(this.sessions.meta.models, wanted) : undefined
+    // Un modelo sin niveles de esfuerzo (haiku) no necesita effort.
+    // (Un modelo que el catálogo no conoce lo rechaza checkChoice, con la lista de los que hay.)
+    const needsEffort = !wanted ? true : option ? !option.efforts || option.efforts.length > 0 : this.sessions.meta.models.length === 0
+    const missing = [!wanted && "model", !level && needsEffort && "effort"].filter(Boolean) as string[]
+    if (!missing.length) return
+    const current = where.target ? this.effectiveModel(where.target) : this.newWorkerModel(where.projectId)
+    const currentEffort = where.target ? this.effectiveEffort(where.target) : null
+    const label = choiceLabel(this.sessions.meta.models, current, currentEffort) || "el modelo por defecto"
+    const subject = where.target ? `La sesión ${where.target.name} está con ${label}` : `Una sesión nueva arranca con ${label}`
+    throw new Error(
+      `Falta ${missing.join(" y ")}. ${subject}. Elegí según el trabajo: sonnet (medium o high) para implementar un pedido claro, haiku (low) para lo mecánico, opus solo para diseño, depuración difícil o revisión. ${
+        current ? `Si querés que siga igual, pasá model: "${current}"${currentEffort ? ` y effort: "${currentEffort}"` : ""}. ` : ""
+      }Tu esquema de ${where.tool} puede estar desactualizado: volvé a cargarlo con ToolSearch (select:mcp__control-plane__${where.tool}).`
+    )
   }
 
   /** Valida el modelo y el esfuerzo de una propuesta contra el catálogo de Claude Code. */
@@ -641,6 +670,7 @@ export class Orchestration {
       throw new Error(`No existe la sesión "${input.session}". Sesiones worker: ${names}. Si hace falta una nueva, usá propose_session.`)
     }
     this.assertNoPlan(target)
+    this.requireChoice(input.model, input.effort, { tool: "propose_prompt", target, projectId: orch.projectId })
     const choice = this.checkChoice(input.model, input.effort, this.effectiveModel(target))
     const d: Draft = {
       id: shortId("d_"),
@@ -677,6 +707,7 @@ export class Orchestration {
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
     if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}. Elegí otro nombre o usá propose_prompt.`)
+    this.requireChoice(input.model, input.effort, { tool: "propose_session", target: null, projectId: orch.projectId })
     const choice = this.checkChoice(input.model, input.effort, this.newWorkerModel(orch.projectId))
     const d: Draft = {
       id: shortId("d_"),

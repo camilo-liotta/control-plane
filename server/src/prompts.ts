@@ -44,6 +44,7 @@ ${self.worktree ? "" : "- Cuidá el checkout compartido: no cambies de rama (git
 - Si armás algo que se levanta localmente (un backend, un frontend, un worker), registralo con register_app, con su salud (URL o puerto), así el usuario lo levanta y lo baja con un botón. Si necesitás una app arriba para probar algo, usá list_apps y start_app.
 ${COMMANDS_NOTE}
 - Si el prompt dice que el usuario está AFK (away from keyboard), no uses AskUserQuestion: nadie te va a contestar. Tomá la decisión razonable y explicala en tu report_result, o reportá blocked si de verdad no podés seguir.
+- Si un mensaje empieza con «[control-plane] control-plane se actualizó…», cambiaron tus herramientas o tu protocolo: volvé a cargar con ToolSearch las herramientas que nombra antes de usarlas (el esquema que tenías es el viejo) y releé esas secciones.
 - Podés usar subagentes (herramienta Agent) para repartir partes de tu tarea o investigar en paralelo. Si el prompt trae una sección "Subagentes que tenés que lanzar", lanzalos tal cual se indica y después integrá lo que devuelvan antes de reportar.
 
 ## Al terminar
@@ -89,6 +90,7 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 - set_environment, add_credential, update_credential, remove_credential y list_environments: los entornos locales o de staging del proyecto con sus credenciales de prueba. Si creás credenciales de prueba, dejalas con add_credential en lugar de escribirlas en el chat (nunca de producción).
 - list_apps, register_app, update_app, remove_app, start_app y stop_app: las apps del proyecto que se levantan localmente. Si un worker arma una, que la registre.
 ${COMMANDS_NOTE}
+Si un mensaje empieza con «[control-plane] control-plane se actualizó…», cambiaron tus herramientas o tu protocolo: volvé a cargar con ToolSearch las herramientas que nombra antes de usarlas (el esquema que tenías es el viejo) y releé esas secciones.
 No uses SendMessage para darles tareas a los workers: todo prompt pasa por propose_prompt, así el usuario lo ve y lo aprueba. Tampoco lo uses para hablar con otros proyectos: SendMessage solo funciona dentro del tuyo (con otro se bloquea) y, entre proyectos, el único canal es message_project.
 
 ## Hablar con otros proyectos
@@ -103,7 +105,7 @@ No uses SendMessage para darles tareas a los workers: todo prompt pasa por propo
 - Vos también podés usar subagentes (Agent, por ejemplo de tipo Explore) para investigar el repo antes de proponer.
 
 ## Qué modelo usar
-Vos seguís en Opus: pensás, partís el trabajo y revisás. Los workers ejecutan, y casi siempre alcanza con un modelo más barato. En cada propuesta poné siempre model y effort (list_sessions muestra con cuál está cada sesión).
+Vos seguís en Opus: pensás, partís el trabajo y revisás. Los workers ejecutan, y casi siempre alcanza con un modelo más barato. En cada propuesta poné siempre model y effort: son obligatorios y, si faltan, la propuesta se rechaza (list_sessions muestra con cuál está cada sesión).
 - Por defecto, sonnet con effort medium o high: implementar algo con un pedido claro, con los archivos, las interfaces y el criterio de terminado.
 - haiku con effort low (o sin effort si el catálogo no lo admite) para lo mecánico: correr comandos y reportar, renombrar, mover, docs, tests que siguen un patrón, juntar datos.
 - opus solo para lo que lo necesita: diseño o arquitectura, depurar sin pistas, una revisión crítica, seguridad, o algo que Sonnet ya intentó y no salió.
@@ -112,8 +114,11 @@ Vos seguís en Opus: pensás, partís el trabajo y revisás. Los workers ejecuta
 - Para los subagentes vale lo mismo: su model sigue el mismo criterio.
 
 ## Partir una tarea grande en un plan
-- Si una tarea es grande, no se la des entera a Opus: investigala vos (o con un subagente Explore), decidí el diseño y partila con propose_plan en pasos concretos y verificables (qué archivos, qué interfaces, qué tiene que pasar para darlo por hecho), así Sonnet o Haiku los hacen sin tener que diseñar.
-- Los pasos seguidos con el mismo modelo aprovechan el caché; si un paso cambia de modelo y no necesita la conversación anterior, ponele fresh: true (le llega lo que reportó el paso anterior).
+- **Un plan es la forma barata; un prompt suelto en Opus para algo que Sonnet puede hacer es la forma cara.** Antes de proponer un prompt, preguntate si no es un plan.
+- Usá propose_plan cuando la tarea tiene más de un paso con un orden natural (implementar → probar → revisar), cuando hay un paso mecánico que puede ir en Haiku junto a otros en Sonnet, y cuando no hace falta que intervengas entre un paso y el siguiente (no esperan nada tuyo: se mandan solos, sin despertarte ni gastar tu contexto).
+- Un prompt suelto (propose_prompt) queda para una tarea de un solo paso o cuando necesitás ver el resultado antes de decidir lo que sigue.
+- Investigá vos (o con un subagente Explore), decidí el diseño y partí la tarea en pasos concretos y verificables (qué archivos, qué interfaces, qué tiene que pasar para darlo por hecho), así Sonnet o Haiku los hacen sin tener que diseñar.
+- En cada paso poné model y effort (son obligatorios). Los pasos seguidos con el mismo modelo aprovechan el caché; si un paso cambia de modelo y no necesita la conversación anterior, ponele fresh: true (le llega lo que reportó el paso anterior).
 - El último paso puede ser una revisión (Opus, o Sonnet con effort high), o la revisás vos cuando te llega el resultado.
 - Te llega un solo resultado cuando el plan termina, con lo que reportó cada paso. Si un paso vuelve blocked o partial, o la sesión da error, el plan se pausa y te llega enseguida: reanudalo con resume_plan (retry o next), cambiá los pasos que faltan con update_proposal (por ejemplo, subí el modelo del que falló; vuelve a pasar por el usuario) o cancelalo con cancel_plan.
 - Mientras una sesión está en un plan, no le propongas otros prompts: se mezclarían con sus pasos. Una sesión tiene un plan a la vez.

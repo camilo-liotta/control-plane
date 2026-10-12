@@ -169,7 +169,7 @@ describe("cola de resultados", () => {
     await sleep(400)
     assert.equal(sessions.sent.length, 1)
     // La orquestadora está analizando: propone algo y mientras tanto llega otro resultado.
-    orch.proposePrompt(orq, { session: "FRONTEND", title: "Ajustar dashboards", prompt: "Hacé X" })
+    orch.proposePrompt(orq, { session: "FRONTEND", title: "Ajustar dashboards", prompt: "Hacé X", model: "sonnet", effort: "medium" })
     const msg = orch.report(b, { status: "done", summary: "B terminó" })
     assert.match(msg, /Resultado registrado/)
     await sleep(400)
@@ -190,7 +190,7 @@ describe("cola de resultados", () => {
   })
 
   it("el aviso de propuestas listas lleva al chat de la orquestadora, a las propuestas", () => {
-    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)
     const toast = hub.messages.find((m) => m.type === "toast" && m.event === "proposals")
     assert.ok(toast && toast.type === "toast")
@@ -209,7 +209,7 @@ describe("cola de resultados", () => {
   })
 
   it("un resultado nuevo vuelve a bloquear las propuestas listas", async () => {
-    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)
     const [ready] = db.listDrafts({ projectId, states: ["ready"] })
     assert.ok(ready)
@@ -219,7 +219,7 @@ describe("cola de resultados", () => {
   })
 
   it("enviar una propuesta lista la manda a la sesión destino como mensaje", async () => {
-    orch.proposePrompt(orq, { session: "BACKEND", title: "Migrar usuarios", prompt: "Migrá la tabla de usuarios" })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Migrar usuarios", prompt: "Migrá la tabla de usuarios", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)
     const [ready] = db.listDrafts({ projectId, states: ["ready"] })
     const sent = await orch.sendDraft(ready!.id, { prompt: "Migrá la tabla de usuarios con índices" })
@@ -233,9 +233,9 @@ describe("cola de resultados", () => {
   })
 
   it("una propuesta que empieza de cero limpia la sesión antes del prompt, y se puede sacar al aprobar", async () => {
-    const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "Otra cosa", prompt: "Hacé X desde cero", fresh: true })
+    const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "Otra cosa", prompt: "Hacé X desde cero", fresh: true, model: "sonnet", effort: "medium" })
     assert.match(reply, /empieza de cero/)
-    orch.proposePrompt(orq, { session: "BACKEND", title: "Sigue", prompt: "Seguí con Y", fresh: true })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Sigue", prompt: "Seguí con Y", fresh: true, model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)
     const [first, second] = db.listDrafts({ projectId, states: ["ready"] })
     assert.equal(first!.fresh, true)
@@ -252,7 +252,7 @@ describe("cola de resultados", () => {
   it("si interrumpís a la orquestadora, la revisión queda en pausa", async () => {
     orch.report(a, { status: "done", summary: "A" })
     await sleep(400)
-    orch.proposePrompt(orq, { session: "FRONTEND", title: "T", prompt: "P" })
+    orch.proposePrompt(orq, { session: "FRONTEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
     orch.report(b, { status: "done", summary: "B" })
     sessions.endTurn(orq, false)
     await sleep(1700)
@@ -266,7 +266,7 @@ describe("cola de resultados", () => {
   it("un comando local (/compact) no cierra ni reanuda una revisión en pausa", async () => {
     orch.report(a, { status: "done", summary: "A" })
     await sleep(400)
-    orch.proposePrompt(orq, { session: "FRONTEND", title: "T", prompt: "P" })
+    orch.proposePrompt(orq, { session: "FRONTEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq, false)
     assert.equal(orch.reviewState(projectId).paused, true)
     // Compactar a la orquestadora termina un turno sin respuesta del modelo.
@@ -281,7 +281,7 @@ describe("cola de resultados", () => {
 
   it("en AFK, las propuestas salen solas al cerrar la revisión", async () => {
     db.updateProject(projectId, { settings: { ...defaultSettings, batchWindowSec: 0.2 }, afk: { since: Date.now(), until: null, budgetUsd: null, spentAtStart: 0 } })
-    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "Hacé algo" })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "Hacé algo", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)
     await sleep(20)
     assert.equal(db.listDrafts({ projectId, states: ["sent"] }).length, 1)
@@ -289,7 +289,7 @@ describe("cola de resultados", () => {
   })
 
   it("las propuestas de sesión nueva crean la sesión al aprobarlas", async () => {
-    orch.proposeSession(orq, { name: "tests e2e", role: "QA", title: "Armar suite", prompt: "Armá la suite" })
+    orch.proposeSession(orq, { name: "tests e2e", role: "QA", title: "Armar suite", prompt: "Armá la suite", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)
     const [ready] = db.listDrafts({ projectId, states: ["ready"] })
     assert.equal(ready!.newSession?.name, "TESTS-E2E")
@@ -304,6 +304,8 @@ describe("cola de resultados", () => {
       session: "BACKEND",
       title: "Migrar",
       prompt: "Migrá la tabla",
+      model: "sonnet",
+      effort: "medium",
       subagents: [{ name: "revisor", role: "revisor de SQL", task: "Revisá la migración", readOnly: true }],
     })
     assert.match(msg, /1 subagente \(revisor\)/)
@@ -333,7 +335,7 @@ describe("cola de resultados", () => {
     assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "gpt" }), /No existe el modelo "gpt"\. Modelos: opus \(Opus 5\.5: low/)
     assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "max" }), /Sonnet 5\.5 no tiene esfuerzo "max"\. Esfuerzos: low, medium, high/)
     assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "haiku", effort: "low" }), /Haiku 5\.5 no tiene niveles de esfuerzo/)
-    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", effort: "turbo" }), /no existe/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "turbo" }), /no existe/)
     // El id completo vale y queda como lo conoce el catálogo.
     const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "claude-sonnet-5-5", effort: "Medium" })
     assert.match(reply, /con Sonnet 5\.5 · esfuerzo medio/)
@@ -342,7 +344,7 @@ describe("cola de resultados", () => {
     assert.equal(d!.effort, "medium")
     // Solo el esfuerzo: se valida contra el modelo que ya tiene la sesión.
     db.updateSession(a.id, { model: "sonnet" })
-    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", effort: "xhigh" }), /Sonnet 5\.5 no tiene esfuerzo/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "xhigh" }), /Sonnet 5\.5 no tiene esfuerzo/)
   })
 
   it("al enviar: primero de cero, después el modelo y el esfuerzo, y al final el prompt", async () => {
@@ -361,9 +363,23 @@ describe("cola de resultados", () => {
     assert.match(sessions.sent.at(-1)!.text, /Aprobó d_\w+ → BACKEND \(empezando de cero\), con Sonnet 5\.5 · esfuerzo medio: "Tests"/)
   })
 
-  it("sin modelo ni esfuerzo, la sesión sigue con lo que tiene y no hay aviso", async () => {
+  it("propose_prompt y propose_session exigen modelo y esfuerzo, con un error que enseña a corregirse", () => {
     db.updateSession(a.id, { model: "opus", effort: "high" })
-    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+    const missing = () => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+    assert.throws(missing, /^Error: Falta model y effort\. La sesión BACKEND está con Opus 5\.5 · esfuerzo alto\. Elegí según el trabajo: sonnet \(medium o high\) para implementar un pedido claro, haiku \(low\) para lo mecánico, opus solo para diseño, depuración difícil o revisión\. Si querés que siga igual, pasá model: "opus" y effort: "high"\. Tu esquema de propose_prompt puede estar desactualizado: volvé a cargarlo con ToolSearch \(select:mcp__control-plane__propose_prompt\)\.$/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet" }), /^Error: Falta effort\./)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", effort: "low" }), /^Error: Falta model\./)
+    // Haiku no tiene niveles de esfuerzo: con el modelo alcanza.
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Mecánico", prompt: "P", model: "haiku" })
+    assert.throws(() => orch.proposeSession(orq, { name: "x", role: "x", title: "x", prompt: "x" }), /Falta model y effort\. Una sesión nueva arranca con el modelo por defecto\..*select:mcp__control-plane__propose_session/s)
+    assert.equal(db.listDrafts({ projectId }).length, 1, "lo rechazado no deja propuestas")
+    // Seguir igual es pasar el mismo modelo: no hay cambio de modelo ni aviso.
+    orch.proposePrompt(orq, { session: "BACKEND", title: "Igual", prompt: "P", model: "opus", effort: "high" })
+  })
+
+  it("si la sesión no cambia de modelo al aprobar, no hay aviso", async () => {
+    db.updateSession(a.id, { model: "opus", effort: "high" })
+    orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "opus", effort: "high" })
     sessions.endTurn(orq)
     await orch.sendDraft(db.listDrafts({ projectId, states: ["ready"] })[0]!.id, {})
     assert.deepEqual(sessions.log, ["send"])
@@ -532,7 +548,7 @@ describe("mensajes entre orquestadoras", () => {
 
   it("no libera propuestas hasta que lea el mensaje", async () => {
     // Una propuesta lista que se bloquea al llegar el mensaje.
-    orch.proposePrompt(orqB, { session: "W-BETA", title: "T", prompt: "P" })
+    orch.proposePrompt(orqB, { session: "W-BETA", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
     sessions.endTurn(orqB)
     assert.equal(db.listDrafts({ projectId: "pb", states: ["ready"] }).length, 1)
     orch.messageProject(orqA, { project: "Beta", message: "hola" })
@@ -542,7 +558,7 @@ describe("mensajes entre orquestadoras", () => {
     // Mientras trabaja, propone otra y llega un segundo mensaje: no sale nada hasta cerrar con la cola vacía.
     await sleep(300)
     assert.match(sessions.sent[0]!.text, /Propuestas sin enviar/)
-    const guard = orch.proposePrompt(orqB, { session: "W-BETA", title: "T2", prompt: "P2" })
+    const guard = orch.proposePrompt(orqB, { session: "W-BETA", title: "T2", prompt: "P2", model: "sonnet", effort: "medium" })
     assert.doesNotMatch(guard, /Hay en la cola/)
     orch.messageProject(orqA, { project: "Beta", message: "otra cosa" })
     assert.match(orch.updateProposal(orqB, { id: db.listDrafts({ projectId: "pb", states: ["staged"] })[0]!.id, title: "X" }), /1 mensaje de otros proyectos \(«Alfa»\)/)

@@ -117,7 +117,7 @@ export class Plans {
    * Arma los pasos validando modelo y esfuerzo de cada uno. El esfuerzo de un paso sin modelo se
    * valida contra el modelo con que sigue la sesión en ese momento (el del último paso que lo cambió).
    */
-  normalizeSteps(raw: StepInput[], base: string | null): PlanStep[] {
+  normalizeSteps(raw: StepInput[], base: string | null, require?: { tool: string; target: SessionRecord | null; projectId: string }): PlanStep[] {
     if (!Array.isArray(raw) || !raw.length) throw new Error("El plan no tiene pasos.")
     if (raw.length > MAX_STEPS) throw new Error(`Un plan tiene como mucho ${MAX_STEPS} pasos: partilo en dos.`)
     let current = base
@@ -126,6 +126,7 @@ export class Plans {
       if (!prompt) throw new Error(`El paso ${i + 1} no tiene prompt.`)
       let choice: { model: string | null; effort: string | null }
       try {
+        if (require) this.o.requireChoice(s.model, s.effort, require)
         choice = this.o.checkChoice(s.model, s.effort, current)
       } catch (err) {
         throw new Error(`Paso ${i + 1}: ${errorMessage(err)}`)
@@ -172,7 +173,7 @@ export class Plans {
         )
     }
     const base = target ? this.o.effectiveModel(target) : this.o.newWorkerModel(orch.projectId)
-    const steps = this.normalizeSteps(input.steps, base)
+    const steps = this.normalizeSteps(input.steps, base, { tool: "propose_plan", target, projectId: orch.projectId })
     const d: Draft = {
       id: shortId("d_"),
       projectId: orch.projectId,
@@ -220,11 +221,11 @@ export class Plans {
         if (d.revises) {
           const plan = this.db.getDraft(d.revises)
           const kept = plan ? lockedPrefix(plan) : []
-          patch.steps = [...kept, ...this.normalizeSteps(input.steps, this.baseAfter(plan, kept.length))]
+          patch.steps = [...kept, ...this.normalizeSteps(input.steps, this.baseAfter(plan, kept.length), { tool: "update_proposal", target: plan?.targetSessionId ? this.db.getSession(plan.targetSessionId) : null, projectId: d.projectId })]
           patch.currentStep = kept.length
         } else {
           const target = d.targetSessionId ? this.db.getSession(d.targetSessionId) : null
-          patch.steps = this.normalizeSteps(input.steps, target ? this.o.effectiveModel(target) : this.o.newWorkerModel(d.projectId))
+          patch.steps = this.normalizeSteps(input.steps, target ? this.o.effectiveModel(target) : this.o.newWorkerModel(d.projectId), { tool: "update_proposal", target, projectId: d.projectId })
         }
       }
       this.db.updateDraft(d.id, patch)
@@ -240,7 +241,7 @@ export class Plans {
       )
     if (!input.steps) throw new Error("Pasá steps: los pasos que faltan, como tienen que quedar.")
     const kept = lockedPrefix(d)
-    const steps = [...kept, ...this.normalizeSteps(input.steps, this.baseAfter(d, kept.length))]
+    const steps = [...kept, ...this.normalizeSteps(input.steps, this.baseAfter(d, kept.length), { tool: "update_proposal", target: d.targetSessionId ? this.db.getSession(d.targetSessionId) : null, projectId: d.projectId })]
     // Si ya hay una propuesta de cambio abierta para este plan, se actualiza esa.
     const open = this.db.listDrafts({ projectId: d.projectId, states: ["staged", "ready"] }).find((x) => x.revises === d.id)
     if (open) {
