@@ -113,8 +113,8 @@ describe("archivos de lanzamiento: el ciclo de vida de la sesión", () => {
   })
 
   it("se escriben al arrancar (con el token de la sesión), se borran al detenerla y vuelven al relanzarla", async () => {
-    const token = db.getSession(id)!.mcpToken
     await sessions.start(id)
+    const token = db.getSession(id)!.mcpToken
     const mcp = path.join(root, id, "mcp.json")
     assert.ok(JSON.parse(fs.readFileSync(mcp, "utf8")).mcpServers["control-plane"].url.endsWith(`/mcp/${token}`))
     assert.equal(mode(mcp), 0o600)
@@ -125,6 +125,23 @@ describe("archivos de lanzamiento: el ciclo de vida de la sesión", () => {
 
     await sessions.start(id)
     assert.ok(fs.existsSync(mcp))
+  })
+
+  it("cada lanzamiento usa un token nuevo, y el anterior deja de valer (MCP y hooks consultan db.getSessionByToken)", async () => {
+    await sessions.stop(id)
+    const tokens: string[] = []
+    const urlOf = () => JSON.parse(fs.readFileSync(path.join(root, id, "mcp.json"), "utf8")).mcpServers["control-plane"].url as string
+    for (let i = 0; i < 3; i++) {
+      await sessions.start(id)
+      const t = db.getSession(id)!.mcpToken
+      tokens.push(t)
+      assert.ok(urlOf().endsWith(`/mcp/${t}`), "el archivo lleva el token vigente")
+      assert.equal(fs.readFileSync(path.join(root, id, "hook-compact.url"), "utf8"), `http://127.0.0.1/hooks/${t}/compact`)
+      await sessions.stop(id)
+    }
+    assert.equal(new Set(tokens).size, 3)
+    for (const t of tokens.slice(0, -1)) assert.equal(db.getSessionByToken(t), null)
+    assert.equal(db.getSessionByToken(tokens.at(-1)!)?.id, id)
   })
 
   it("al archivar la sesión no queda nada, también si ya estaba detenida", async () => {

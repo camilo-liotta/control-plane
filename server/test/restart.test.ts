@@ -89,6 +89,7 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
   }
 
   it("guarda las vivas al apagar y, al volver, retoma cada una según cómo estaba", async () => {
+    let tokensBefore: Record<string, string> = {}
     const { idle, working, asking, stopped } = await liveSessions()
     const restart = restartOf(sessions)
     const preview = restart.preview()
@@ -101,6 +102,7 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
     // El apagado ordenado: primero anota, después cierra.
     const saved = restart.onShutdown()
     await sessions.shutdown()
+    tokensBefore = Object.fromEntries([idle, working, asking].map((s) => [s.id, db.getSession(s.id)!.mcpToken]))
     assert.deepEqual(
       Object.fromEntries(saved!.sessions.map((s) => [s.id, s.status])),
       { [idle.id]: "idle", [working.id]: "working", [asking.id]: "needs_input" }
@@ -114,6 +116,13 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
     assert.equal(result.resumed.length, 3)
     assert.equal(fs.existsSync(path.join(dir, RESUME_FILE)), false, "la lista se borra: otro reinicio no la repite")
     for (const s of [idle, working, asking]) assert.ok(sessions.isRunning(s.id), `${s.name} volvió a arrancar`)
+    // Las retomadas tienen token nuevo: el del proceso anterior ya no vale.
+    for (const s of [idle, working, asking]) {
+      const now = db.getSession(s.id)!.mcpToken
+      assert.notEqual(now, tokensBefore[s.id], `${s.name} tiene token nuevo`)
+      assert.equal(db.getSessionByToken(tokensBefore[s.id]!), null)
+      assert.equal(db.getSessionByToken(now)?.id, s.id)
+    }
     assert.equal(sessions.isRunning(stopped.id), false)
 
     // La que trabajaba recibe el pedido de seguir (en el chat se ve de dónde vino).
