@@ -816,10 +816,10 @@ export class SessionManager extends EventEmitter<{
         case "cost":
           // total_cost_usd y modelUsage siguen desde lo que Claude Code restauró al reanudar: se suma solo lo nuevo.
           // modelUsage también es acumulado: lo de cada turno sale de restarle el total anterior.
-          this.decideRestored(rt, action.totalUsd, action.tokens)
+          this.decideRestored(rt, action.totalUsd, null)
           const restoredByModel = rt.restored.applies ? rt.restored.byModel : {}
           rt.turnModels = costsSince(action.byModel, rt.seenByModel ?? restoredByModel)
-          rt.seenByModel = action.byModel
+          if (Object.keys(action.byModel).length) rt.seenByModel = action.byModel
           rt.lastTotals = { usd: action.totalUsd, tokens: action.tokens ?? rt.lastTotals.tokens, byModel: action.byModel }
           this.db.updateSession(id, {
             ...(action.totalUsd > 0 ? { costUsd: rt.spentBefore.usd + this.processUsd(rt, action.totalUsd) } : {}),
@@ -1311,8 +1311,10 @@ export class SessionManager extends EventEmitter<{
 
   /** Cambia el modelo: queda guardado y, si la sesión está corriendo, aplica desde el próximo turno. */
   async setModel(id: string, model: string | null) {
-    this.update(id, { model })
     const rt = this.runtimes.get(id)
+    // El modelo que informó el proceso ya no vale: hasta el próximo turno se ve el elegido.
+    if (rt) rt.currentModel = null
+    this.update(id, { model })
     if (rt && !rt.proc.exited) await rt.proc.request("set_model", { model }, 15_000)
   }
 

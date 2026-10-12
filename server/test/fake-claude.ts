@@ -44,17 +44,19 @@ if (flag("--resume") && process.env.FAKE_STRICT_RESUME === "1" && !fs.existsSync
   process.exit(1)
 }
 let usd = 0
-// Con "HAIKU" en el mensaje, una parte del turno va a otro modelo (claude-y), como un subagente.
+// Con "HAIKU" en el mensaje, una parte del turno va a otro modelo (SUB), como un subagente.
+const MAIN = process.env.FAKE_MODEL ?? "claude-x"
+const SUB = process.env.FAKE_SUB_MODEL ?? "claude-y"
 let sub = 0
 let tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
-const usage = () => ({ "claude-x": { ...tok, costUSD: usd - sub }, ...(sub ? { "claude-y": { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: sub } } : {}) })
+const usage = () => ({ [MAIN]: { ...tok, costUSD: usd - sub }, ...(sub ? { [SUB]: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: sub } } : {}) })
 try {
   for (const l of fs.readFileSync(file, "utf8").split("\n")) {
     if (!l.includes('"cost-state"')) continue
     const j = JSON.parse(l)
     usd = j.totalCostUSD
-    tok = j.modelUsage["claude-x"]
-    sub = j.modelUsage["claude-y"]?.costUSD ?? 0
+    tok = j.modelUsage[MAIN] ?? tok
+    sub = j.modelUsage[SUB]?.costUSD ?? 0
   }
 } catch {}
 let full = process.env.FAKE_FULL === "1"
@@ -96,7 +98,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
     full = false
     out({ type: "conversation_reset", new_conversation_id: "otro-" + Math.random().toString(36).slice(2, 8), session_id: before, trigger: "clear" })
-    out({ type: "system", subtype: "init", cwd: process.cwd(), model: "claude-x", mcp_servers: [], tools: [] })
+    out({ type: "system", subtype: "init", cwd: process.cwd(), model: MAIN, mcp_servers: [], tools: [] })
     out({ type: "result", subtype: "success", is_error: false, result: "", total_cost_usd: 0, usage: {}, modelUsage: {} })
     state("idle")
     continue
