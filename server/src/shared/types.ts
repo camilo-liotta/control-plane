@@ -148,6 +148,8 @@ export interface Session {
   lastActivity: string | null
   lastActivityAt: number | null
   costUsd: number
+  /** Lo gastado por cada modelo (US$ por id resuelto, ej. claude-sonnet-5-5), incluidos los subagentes. */
+  costByModel: Record<string, number>
   createdAt: number
   archivedAt: number | null
   pending: PendingRequest | null
@@ -657,6 +659,8 @@ export type TimelineEvent =
       costUsd: number
       /** Tokens de este turno (entrada + salida + caché). */
       tokens?: number
+      /** Lo que costó este turno por modelo (id resuelto, ej. claude-sonnet-5-5), de mayor a menor; incluye a los subagentes. */
+      models?: { model: string; usd: number }[]
       terminalReason?: string
       error?: string
     }

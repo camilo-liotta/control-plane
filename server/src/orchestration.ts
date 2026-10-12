@@ -863,7 +863,7 @@ export async function importSession(
   for (const e of events) db.insertEvent(rec.id, e.ts, e.event)
   // Lo que ya había gastado la conversación (Claude Code lo guarda en el transcript y lo sigue sumando).
   const spent = lastCostState(project.repoPath, input.claudeSessionId, target?.configDir)
-  if (spent) db.updateSession(rec.id, { costUsd: spent.usd, ...(spent.tokens ? { tokens: spent.tokens } : {}) })
+  if (spent) db.updateSession(rec.id, { costUsd: spent.usd, costByModel: spent.byModel, ...(spent.tokens ? { tokens: spent.tokens } : {}) })
   sessions.addEvent(rec.id, {
     kind: "notice",
     level: "info",
