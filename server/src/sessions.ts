@@ -4,6 +4,7 @@ import path from "node:path"
 
 import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
+import { removeSessionRunDir, sessionRunDir } from "./claude/run-files.ts"
 import { lastCostState, transcriptDir, type RestoredSpend } from "./claude/local.ts"
 import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
 import { findLostConversation } from "./claude/recover.ts"
@@ -183,6 +184,8 @@ export interface SessionManagerOptions {
   attachments: AttachmentStore
   mcpUrlFor: (token: string) => string
   hookUrlFor: (token: string) => string
+  /** Donde se escriben, en 0600, los archivos de cada lanzamiento (<home>/run, ver claude/run-files.ts). */
+  runRoot: string
   launchFor: (session: SessionRecord) => LaunchContext
   accountIdFor: (session: SessionRecord) => string
   /** Si la conversación está viva fuera del dashboard (terminal o segundo plano). */
@@ -222,6 +225,7 @@ export class SessionManager extends EventEmitter<{
   private attachments: AttachmentStore
   private mcpUrlFor: (token: string) => string
   private hookUrlFor: (token: string) => string
+  private runRoot: string
   private launchFor: (session: SessionRecord) => LaunchContext
   private accountIdFor: (session: SessionRecord) => string
   private liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
@@ -241,6 +245,7 @@ export class SessionManager extends EventEmitter<{
     this.attachments = opts.attachments
     this.mcpUrlFor = opts.mcpUrlFor
     this.hookUrlFor = opts.hookUrlFor
+    this.runRoot = opts.runRoot
     this.launchFor = opts.launchFor
     this.accountIdFor = opts.accountIdFor
     this.liveElsewhere = opts.liveElsewhere
@@ -552,6 +557,7 @@ export class SessionManager extends EventEmitter<{
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
       hookUrl: this.hookUrlFor(rec.mcpToken),
+      runDir: sessionRunDir(this.runRoot, rec.id),
       protocol: built.protocol,
       orchestratorCanEdit: built.orchestratorCanEdit,
       model: built.model,
@@ -977,6 +983,8 @@ export class SessionManager extends EventEmitter<{
     if (this.runtimes.get(id) !== rt) return
     this.endTurn(id, rt)
     this.runtimes.delete(id)
+    // Sin proceso no hace falta lo que leía (los tokens); un relanzamiento lo vuelve a escribir.
+    this.dropRunFiles(id)
     for (const requestId of [...rt.pendingControl.keys()]) this.cancelControl(rt, requestId)
     // Los subagentes mueren con su sesión.
     for (const sub of rt.subagents.values()) {
@@ -1356,7 +1364,16 @@ export class SessionManager extends EventEmitter<{
   async archive(id: string) {
     this.emit("archiving", id)
     await this.stop(id)
+    this.dropRunFiles(id)
     this.update(id, { archivedAt: now(), status: "stopped" })
+  }
+
+  private dropRunFiles(id: string) {
+    try {
+      removeSessionRunDir(this.runRoot, id)
+    } catch {
+      // se limpian igual al arrancar el server
+    }
   }
 
   /** Mientras se borra un proyecto, ninguna de sus sesiones arranca (ni por un prompt ni por un reintento). */

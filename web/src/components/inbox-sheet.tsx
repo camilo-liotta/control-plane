@@ -56,13 +56,14 @@ const rowClass = "flex min-h-11 items-center gap-2.5 px-3 py-2 transition-colors
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-function summary(b: Bucket) {
+/** `afk`: el proyecto está AFK, y lo que queda listo es lo que espera tu vuelta (con hold), no "propuestas listas". */
+function summary(b: Bucket, afk: boolean) {
   const blocking = b.todo.filter((t) => t.blocking).length
   return [
     b.needs.length && plural(b.needs.length, "te necesita", "te necesitan"),
     blocking && plural(blocking, "tarea te espera", "tareas te esperan"),
     b.todo.length - blocking && plural(b.todo.length - blocking, "tarea", "tareas"),
-    b.ready.length && plural(b.ready.length, "propuesta lista", "propuestas listas"),
+    b.ready.length && (afk ? plural(b.ready.length, "espera tu vuelta", "esperan tu vuelta") : plural(b.ready.length, "propuesta lista", "propuestas listas")),
     b.staged.length && `${b.staged.length} en preparación`,
     b.paused.length && plural(b.paused.length, "plan en pausa", "planes en pausa"),
     b.queue.length && `${b.queue.length} en la cola`,
@@ -187,7 +188,7 @@ export function InboxSheet() {
                         </TonePill>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">{summary(b)}</p>
+                    <p className="text-xs text-muted-foreground">{summary(b, Boolean(projects[b.projectId]?.afk))}</p>
                   </div>
                 </div>
                 <CollapsibleContent className="space-y-5 pl-6">

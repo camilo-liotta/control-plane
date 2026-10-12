@@ -11,6 +11,7 @@ import { lastCostState } from "../src/claude/local.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { ExternalSession } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 describe("una conversación abierta en otro lado", () => {
   let dir: string
@@ -32,6 +33,7 @@ describe("una conversación abierta en otro lado", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => {
         launched++
         throw new Error("no debería lanzarse")
@@ -83,6 +85,7 @@ describe("lo gastado en una sesión", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

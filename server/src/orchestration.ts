@@ -887,7 +887,6 @@ export class Orchestration {
     }
     this.db.insertProjectMessage(m)
     const fromName = this.db.getProject(from.projectId)?.name ?? "?"
-    this.sessions.addEvent(from.id, { kind: "notice", level: "info", text: `Mensaje a la orquestadora de «${target.name}» (${m.id}${replyTo ? `, en respuesta a ${replyTo}` : ""})` })
     this.hub.broadcast({
       type: "toast",
       level: "info",

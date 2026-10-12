@@ -1,13 +1,17 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
+import fs from "node:fs"
 import http from "node:http"
 import type { AddressInfo } from "node:net"
+import path from "node:path"
 import { describe, it } from "node:test"
 
 import { buildLaunch } from "../src/claude/args.ts"
+import { sessionRunDir, writePrivateFile } from "../src/claude/run-files.ts"
 import { config } from "../src/config.ts"
 import type { SessionRecord } from "../src/db.ts"
 import { decideSend, SEND_DENIED, type SendGuardDeps } from "../src/send-guard.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 let n = 0
 function rec(projectId: string, name: string, kind: "worker" | "orchestrator" = "worker"): SessionRecord {
@@ -174,13 +178,14 @@ describe("cerrojo de SendMessage: el hook en las sesiones", () => {
     buildLaunch(rec("pa", "S", kind), {
       mcpUrl: "http://127.0.0.1:4700/mcp/tok",
       hookUrl: "http://127.0.0.1:4700/hooks/tok",
+      runDir: sessionRunDir(tmpRunRoot(), "s_x"),
       protocol: "p",
       orchestratorCanEdit: false,
       model: null,
       effort: null,
     })
   const settingsOf = (args: string[]) =>
-    JSON.parse(args[args.indexOf("--settings") + 1]!) as { disableAllHooks?: boolean; hooks: Record<string, { matcher?: string; hooks: { command: string; timeout: number }[] }[]> }
+    JSON.parse(fs.readFileSync(args[args.indexOf("--settings") + 1]!, "utf8")) as { disableAllHooks?: boolean; hooks: Record<string, { matcher?: string; hooks: { command: string; timeout: number }[] }[]> }
 
   it("los argumentos de lanzamiento traen el PreToolUse de SendMessage, y el de compactación sigue", () => {
     for (const kind of ["worker", "orchestrator"] as const) {
@@ -188,9 +193,14 @@ describe("cerrojo de SendMessage: el hook en las sesiones", () => {
       const pre = hooks.PreToolUse!
       assert.equal(pre.length, 1)
       assert.equal(pre[0]!.matcher, "SendMessage")
-      assert.match(pre[0]!.hooks[0]!.command, /\/hooks\/tok\/send-message" --deny-on-error$/)
+      // La URL con el token no va en el comando: el script la lee del archivo que dice el "@ruta".
+      const file = (command: string) => /"@([^"]+)"/.exec(command)![1]!
+      assert.match(pre[0]!.hooks[0]!.command, /hook-send-message\.url" --deny-on-error$/)
+      assert.equal(fs.readFileSync(file(pre[0]!.hooks[0]!.command), "utf8"), "http://127.0.0.1:4700/hooks/tok/send-message")
       assert.ok(pre[0]!.hooks[0]!.timeout <= 60)
-      assert.match(hooks.PreCompact![0]!.hooks[0]!.command, /\/hooks\/tok\/compact"$/)
+      assert.match(hooks.PreCompact![0]!.hooks[0]!.command, /hook-compact\.url"$/)
+      assert.equal(fs.readFileSync(file(hooks.PreCompact![0]!.hooks[0]!.command), "utf8"), "http://127.0.0.1:4700/hooks/tok/compact")
+      assert.doesNotMatch(JSON.stringify(hooks), /hooks\/tok/)
       assert.ok(hooks.PostCompact)
     }
   })
@@ -202,6 +212,18 @@ describe("cerrojo de SendMessage: el hook en las sesiones", () => {
   /** Corre el script del hook como lo corre Claude Code: el evento por stdin, la decisión por stdout. */
   const runHook = (url: string, ...flags: string[]) =>
     spawnSync(process.execPath, [config.compactHook, url, ...flags], { input: JSON.stringify({ tool_name: "SendMessage" }), encoding: "utf8", timeout: 20_000 })
+
+  it("el script lee la URL de un archivo (\"@ruta\") y, si no se puede leer, deniega", () => {
+    const dir = sessionRunDir(tmpRunRoot(), "s_h")
+    const file = path.join(dir, "u.url")
+    writePrivateFile(file, "http://127.0.0.1:1/hooks/x/send-message\n")
+    const unreachable = runHook(`@${file}`, "--deny-on-error")
+    assert.match(unreachable.stdout, /"permissionDecision":"deny"/, "llegó a la URL del archivo y, sin server, deniega")
+    const missing = runHook(`@${path.join(dir, "no-existe.url")}`, "--deny-on-error")
+    assert.equal(missing.status, 0)
+    assert.match(missing.stdout, /"permissionDecision":"deny"/)
+    assert.equal(runHook(`@${path.join(dir, "no-existe.url")}`).stdout, "", "la compactación no se bloquea")
+  })
 
   it("el script deniega si el dashboard no contesta (--deny-on-error) y la compactación sigue como siempre", () => {
     const closed = runHook("http://127.0.0.1:1/hooks/x/send-message", "--deny-on-error")

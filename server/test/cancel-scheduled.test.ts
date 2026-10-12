@@ -12,6 +12,7 @@ import { SessionManager } from "../src/sessions.ts"
 import { CANCEL_GRACE_MS, cancelMessage, cancelState } from "../src/shared/cancel-scheduled.ts"
 import type { StoredEvent, TimelineEvent } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 describe("el pedido de cancelar lo programado", () => {
   it("arma un mensaje corto según qué hay que cancelar, y dice que lo pidió el usuario desde el panel", () => {
@@ -122,6 +123,7 @@ describe("pedirle a una sesión de verdad que cancele (con el Claude falso)", ()
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

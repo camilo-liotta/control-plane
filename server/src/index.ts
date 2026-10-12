@@ -14,6 +14,7 @@ import { AttachmentStore } from "./attachments.ts"
 import { Compaction } from "./compaction.ts"
 import { config, repoUrl, version } from "./config.ts"
 import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
+import { cleanRunRoot, runRootOf } from "./claude/run-files.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
 import { Apps } from "./apps.ts"
@@ -107,6 +108,10 @@ async function main() {
     liveCache.set(accountId, { at: Date.now(), list })
     return list
   }
+  // Los archivos con los tokens de cada lanzamiento (0600, ver claude/run-files.ts): ninguna sesión corre
+  // todavía, así que lo que haya quedado de antes (un corte, un proceso que no pudo limpiar) sobra.
+  const runRoot = runRootOf(config.home)
+  cleanRunRoot(runRoot)
   const asExternal = (l: LiveSession): ExternalSession => ({ pid: l.pid ?? null, kind: l.kind === "background" ? "background" : "interactive", id: l.id ?? null })
 
   const sessions = new SessionManager({
@@ -115,6 +120,7 @@ async function main() {
     attachments,
     mcpUrlFor: (token) => `${baseUrl}/mcp/${token}`,
     hookUrlFor: (token) => `${baseUrl}/hooks/${token}`,
+    runRoot,
     launchFor,
     accountIdFor: (s) => accounts.forProject(s.projectId).id,
     liveElsewhere: async (s) => {

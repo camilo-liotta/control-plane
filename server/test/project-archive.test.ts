@@ -12,6 +12,7 @@ import { archiveProject, restoreProject, RESTORE_WINDOW_MS, type ArchiveProjectD
 import { SessionManager } from "../src/sessions.ts"
 import type { ServerMessage } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 class SpyHub extends Hub {
   messages: ServerMessage[] = []
@@ -40,6 +41,7 @@ describe("archivar y restaurar un proyecto", () => {
       attachments,
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: {}, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

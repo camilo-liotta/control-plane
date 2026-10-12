@@ -548,6 +548,21 @@ describe("modo AFK", () => {
       assert.ok(!after.sent.some((d) => d.title === "Después") && !after.held.some((d) => d.title === "Después"))
     })
 
+    it("en «espera tu aprobación» solo quedan las que siguen sin enviar: una con hold que el usuario aprobó después ya no", async () => {
+      afk.start(projectId)
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Sigue", prompt: "S", hold: true })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Aprobada", prompt: "A", hold: true })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Descartada", prompt: "D", hold: true })
+      await release()
+      const byTitle = (t: string) => db.listDrafts({ projectId }).find((d) => d.title === t)!
+      assert.deepEqual(afk.log(projectId)!.held.map((d) => d.title).sort(), ["Aprobada", "Descartada", "Sigue"])
+      await orch.sendDraft(byTitle("Aprobada").id, {})
+      orch.discardDraft(byTitle("Descartada").id)
+      const log = afk.log(projectId)!
+      assert.deepEqual(log.held.map((d) => d.title), ["Sigue"])
+      assert.ok(!log.sent.some((d) => d.title === "Aprobada"), "lo aprobó el usuario, no salió solo")
+    })
+
     it("cada período tiene su registro: el último reemplaza al anterior", () => {
       afk.start(projectId)
       afk.stop(projectId)

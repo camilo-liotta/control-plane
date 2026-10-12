@@ -136,7 +136,8 @@ export class Afk {
     // Una propuesta ya del período si se creó o se envió dentro de él (un plan de antes puede avanzar en AFK, pero no cuenta).
     const drafts = this.db.listDrafts({ projectId }).filter((d) => d.createdAt >= from && d.createdAt <= to)
     const sent = drafts.filter((d) => d.sentBy === "afk" && d.state === "sent").sort((a, b) => (a.decidedAt ?? 0) - (b.decidedAt ?? 0))
-    const held = drafts.filter((d) => d.sentBy !== "afk" && d.state !== "discarded" && (d.hold || d.state === "staged" || d.state === "ready"))
+    // Lo que sigue sin enviar (con hold, o que no pudo salir solo): una propuesta que el usuario aprobó después ya no espera.
+    const held = drafts.filter((d) => d.state === "staged" || d.state === "ready")
     const results = this.db
       .listReports({ projectId })
       .filter((r) => r.createdAt >= from && r.createdAt <= to)

@@ -11,6 +11,7 @@ import { Db, defaultSettings } from "../src/db.ts"
 import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 describe("reparar las sesiones que un /clear viejo dejó sin conversación", () => {
   let dir: string
@@ -29,6 +30,7 @@ describe("reparar las sesiones que un /clear viejo dejó sin conversación", () 
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir, FAKE_STRICT_RESUME: "1" }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
