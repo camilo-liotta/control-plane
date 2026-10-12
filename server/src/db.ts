@@ -544,7 +544,7 @@ function toProjectMessage(r: Row): ProjectMessageRow {
   }
 }
 
-type ReportRow = Omit<Report, "sessionName">
+export type ReportRow = Omit<Report, "sessionName">
 
 function toReport(r: Row): ReportRow {
   return {

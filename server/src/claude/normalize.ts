@@ -233,6 +233,10 @@ export function toolActivity(name: string, input: Record<string, unknown>): stri
       return `Propuso una sesión nueva: ${String(input.name ?? "")}`
     case "mcp__control-plane__read_results":
       return "Leyendo la cola de resultados"
+    case "mcp__control-plane__list_projects":
+      return "Mirando los otros proyectos"
+    case "mcp__control-plane__message_project":
+      return `Mensaje a la orquestadora de «${String(input.project ?? "otro proyecto")}»`
     default:
       return name.startsWith("mcp__") ? name.split("__").slice(2).join("__") : name
   }

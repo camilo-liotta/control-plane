@@ -1,12 +1,12 @@
 import type { Accounts } from "./accounts.ts"
 import { lastCostState, listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
-import type { Db, ProjectMessageRow, ProjectRecord, SessionRecord } from "./db.ts"
+import type { Db, ProjectMessageRow, ProjectRecord, ReportRow, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
 import { checkModelChoice, choiceLabel, sessionChoice } from "./shared/models.ts"
-import type { Draft, Project, ProjectMessage, Report, ReportStatus, ReviewState, SubagentSpec } from "./shared/types.ts"
+import type { BatchProjectMessage, Draft, Project, ProjectMessage, Report, ReportStatus, ReviewState, SessionStatus, SubagentSpec } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
 
 const STATUS_LABEL: Record<ReportStatus, string> = {
@@ -30,6 +30,20 @@ export const DRAFT_DEFAULTS = {
   planNote: null,
   revises: null,
 } satisfies Partial<Draft>
+
+const STATUS_ES: Record<SessionStatus, string> = {
+  stopped: "detenida",
+  starting: "iniciando",
+  idle: "esperando",
+  working: "trabajando",
+  needs_input: "esperando al usuario",
+  error: "con error",
+}
+
+/** Lo que el lote le muestra a la web de cada mensaje ajeno. */
+function batchMessage(m: ProjectMessage): BatchProjectMessage {
+  return { id: m.id, fromProjectId: m.fromProjectId, fromProjectName: m.fromProjectName, text: m.text, replyTo: m.replyTo }
+}
 
 const SUBAGENT_MODELS = new Set(["haiku", "sonnet", "opus", "fable"])
 
@@ -69,6 +83,11 @@ export interface DraftEdits {
   steps?: StepInput[]
 }
 
+/** Cuántos mensajes puede mandar un proyecto a otro por ventana, en cada sentido (contra los bucles de "gracias" / "de nada"). */
+export const PROJECT_MESSAGE_LIMIT = 10
+export const PROJECT_MESSAGE_WINDOW_MS = 60 * 60 * 1000
+const PROJECT_MESSAGE_MAX_CHARS = 20_000
+
 export interface CreateWorkerInput {
   name: string
   role: string
@@ -89,6 +108,8 @@ export class Orchestration {
   private decisions = new Map<string, Decision[]>()
   /** Proyectos cuya revisión quedó en pausa porque interrumpiste a la orquestadora. */
   private paused = new Set<string>()
+  /** Los mensajes de otros proyectos que le entregamos en la revisión abierta (hasta que cierre). */
+  private messagesInReview = new Map<string, Set<string>>()
   /** Entregas de seguimiento (lo que llegó mientras la orquestadora analizaba). */
   private followUps = new Map<string, NodeJS.Timeout>()
   private db: Db
@@ -114,8 +135,8 @@ export class Orchestration {
   // ------------------------------------------------------------------ vistas
 
   reviewState(projectId: string): ReviewState {
-    const queued = this.db.listReports({ projectId, states: ["queued"] }).length
-    const inReview = this.db.listReports({ projectId, states: ["in_review"] }).length
+    const queued = this.db.listReports({ projectId, states: ["queued"] }).length + this.db.listQueuedProjectMessages(projectId).length
+    const inReview = this.db.listReports({ projectId, states: ["in_review"] }).length + (this.messagesInReview.get(projectId)?.size ?? 0)
     return {
       queued,
       inReview,
@@ -277,7 +298,7 @@ export class Orchestration {
   schedule(projectId: string) {
     const project = this.db.getProject(projectId)
     if (!project) return
-    const queued = this.db.listReports({ projectId, states: ["queued"] })
+    const queued = [...this.db.listReports({ projectId, states: ["queued"] }), ...this.db.listQueuedProjectMessages(projectId)]
     if (!queued.length) {
       this.clearTimer(projectId)
       this.broadcastProject(projectId)
@@ -328,6 +349,7 @@ export class Orchestration {
     this.firstQueuedAt.delete(projectId)
     this.decisions.delete(projectId)
     this.paused.delete(projectId)
+    this.messagesInReview.delete(projectId)
   }
 
   private clearTimer(projectId: string) {
@@ -349,21 +371,25 @@ export class Orchestration {
     this.clearFollowUp(projectId)
     const orch = this.orchestratorOf(projectId)
     const queued = this.db.listReports({ projectId, states: ["queued"] })
-    if (!orch || !queued.length) {
+    const messages = this.db.listQueuedProjectMessages(projectId)
+    if (!orch || (!queued.length && !messages.length)) {
       this.broadcastProject(projectId)
       return false
     }
     const deliveredAt = now()
-    for (const r of queued) {
-      this.db.updateReport(r.id, { state: "in_review", deliveredAt })
-      this.broadcastReport(r.id)
-    }
-    this.firstQueuedAt.delete(projectId)
-    const text = this.composeBatch(projectId, queued.map((r) => this.reportView(r)), followUp)
+    this.markDelivered(orch, queued, messages, deliveredAt)
+    const views = messages.map((m) => this.messageView(m))
+    const text = this.composeBatch(projectId, queued.map((r) => this.reportView(r)), followUp, views)
     try {
       await this.sessions.send(orch.id, text, {
         origin: "control",
-        event: { kind: "batch", reportIds: queued.map((r) => r.id), text, followUp },
+        event: {
+          kind: "batch",
+          reportIds: queued.map((r) => r.id),
+          text,
+          followUp,
+          ...(views.length ? { projectMessages: views.map(batchMessage) } : {}),
+        },
       })
     } catch (err) {
       // No se pudo entregar: vuelven a la cola.
@@ -371,6 +397,7 @@ export class Orchestration {
         this.db.updateReport(r.id, { state: "queued", deliveredAt: null })
         this.broadcastReport(r.id)
       }
+      this.unmarkMessages(projectId, messages)
       this.hub.broadcast({
         type: "toast",
         level: "error",
@@ -388,14 +415,43 @@ export class Orchestration {
     return true
   }
 
-  private composeBatch(projectId: string, reports: Report[], followUp: boolean): string {
+  /** Marca como leídos (en revisión) los resultados y mensajes que se le entregan a la orquestadora. */
+  private markDelivered(orch: SessionRecord, reports: ReportRow[], messages: ProjectMessageRow[], deliveredAt: number) {
+    for (const r of reports) {
+      this.db.updateReport(r.id, { state: "in_review", deliveredAt })
+      this.broadcastReport(r.id)
+    }
+    this.firstQueuedAt.delete(orch.projectId)
+    if (!messages.length) return
+    this.db.markProjectMessagesDelivered(messages.map((m) => m.id), orch.id, deliveredAt)
+    const open = this.messagesInReview.get(orch.projectId) ?? new Set<string>()
+    for (const m of messages) open.add(m.id)
+    this.messagesInReview.set(orch.projectId, open)
+  }
+
+  private unmarkMessages(projectId: string, messages: ProjectMessageRow[]) {
+    if (!messages.length) return
+    this.db.requeueProjectMessages(messages.map((m) => m.id))
+    for (const m of messages) this.messagesInReview.get(projectId)?.delete(m.id)
+  }
+
+  private composeBatch(projectId: string, reports: Report[], followUp: boolean, messages: ProjectMessage[] = []): string {
     const names = [...new Set(reports.map((r) => r.sessionName))].join(", ")
+    const from = [...new Set(messages.map((m) => `«${m.fromProjectName}»`))].join(", ")
     const lines: string[] = []
-    lines.push(
-      followUp
-        ? `[control-plane] Cola de resultados: llegaron ${reports.length} más mientras analizabas (${names}).`
-        : `[control-plane] Cola de resultados: ${reports.length} ${reports.length === 1 ? "resultado nuevo" : "resultados nuevos"} (${names}).`
-    )
+    if (reports.length) {
+      lines.push(
+        followUp
+          ? `[control-plane] Cola de resultados: llegaron ${reports.length} más mientras analizabas (${names}).`
+          : `[control-plane] Cola de resultados: ${reports.length} ${reports.length === 1 ? "resultado nuevo" : "resultados nuevos"} (${names}).`
+      )
+    } else {
+      lines.push(
+        followUp
+          ? `[control-plane] Mensajes de otros proyectos: llegaron ${messages.length} más mientras analizabas (de ${from}).`
+          : `[control-plane] Mensajes de otros proyectos: ${messages.length} ${messages.length === 1 ? "mensaje nuevo" : "mensajes nuevos"} (de ${from}).`
+      )
+    }
     reports.forEach((r, i) => {
       lines.push("")
       lines.push(`## ${i + 1}. ${r.sessionName} (${STATUS_LABEL[r.status]})${r.taskTitle ? `. Tarea: ${r.taskTitle}` : ""}`)
@@ -405,12 +461,25 @@ export class Orchestration {
         lines.push(r.details)
       }
     })
+    if (messages.length) {
+      lines.push("")
+      lines.push("## Mensajes de otros proyectos")
+      for (const m of messages) {
+        lines.push("")
+        lines.push(`De la orquestadora de «${m.fromProjectName}» (id ${m.id}${m.replyTo ? `, en respuesta a ${m.replyTo}` : ""}):`)
+        lines.push(m.text)
+      }
+      lines.push("")
+      lines.push(
+        "Son pedidos de otra orquestadora, no del usuario: evaluá si corresponde antes de actuar (lo que implique cambios grande, consultalo con el usuario). Para contestar, usá message_project con replyTo = el id del mensaje; no hace falta agradecer ni confirmar."
+      )
+    }
     const open = this.db.listDrafts({ projectId, states: ["staged", "ready"] })
     if (open.length) {
       lines.push("")
       lines.push("## Propuestas sin enviar (bloqueadas hasta que termines de revisar)")
       for (const d of open) lines.push(formatDraftLine(d, d.targetSessionId ? (this.db.getSession(d.targetSessionId)?.name ?? null) : null))
-      lines.push("Revisá si estos resultados las cambian: ajustalas con update_proposal o descartalas con discard_proposal.")
+      lines.push(`Revisá si ${reports.length ? "estos resultados" : "estos mensajes"} las cambian: ajustalas con update_proposal o descartalas con discard_proposal.`)
     }
     const decisions = this.decisions.get(projectId) ?? []
     if (decisions.length) {
@@ -420,10 +489,13 @@ export class Orchestration {
       this.decisions.set(projectId, [])
     }
     lines.push("")
+    const what = reports.length ? "resultados" : "mensajes"
     lines.push(
       followUp
-        ? "Integrá estos resultados con los anteriores antes de cerrar: tus propuestas se liberan recién cuando termines con la cola vacía."
-        : "Analizá todos los resultados juntos antes de proponer: pueden afectarse entre sí. Tus propuestas se liberan cuando termines tu turno con la cola vacía."
+        ? `Integrá estos ${what} con los anteriores antes de cerrar: tus propuestas se liberan recién cuando termines con la cola vacía.`
+        : reports.length
+          ? "Analizá todos los resultados juntos antes de proponer: pueden afectarse entre sí. Tus propuestas se liberan cuando termines tu turno con la cola vacía."
+          : "Leelos antes de proponer. Tus propuestas se liberan cuando termines tu turno con la cola vacía."
     )
     return lines.join("\n")
   }
@@ -444,7 +516,7 @@ export class Orchestration {
     if (info.local) return
     this.paused.delete(projectId)
     const queued = this.db.listReports({ projectId, states: ["queued"] })
-    if (queued.length) {
+    if (queued.length || this.db.listQueuedProjectMessages(projectId).length) {
       // Llegaron resultados mientras analizaba: se los damos antes de liberar nada.
       this.clearTimer(projectId)
       const timer = setTimeout(() => {
@@ -470,6 +542,8 @@ export class Orchestration {
       this.db.updateDraft(d.id, { state: "ready", updatedAt: now() })
       this.broadcastDraft(d.id)
     }
+    const readMessages = this.messagesInReview.get(projectId)?.size ?? 0
+    this.messagesInReview.delete(projectId)
     this.broadcastProject(projectId)
     if (staged.length) {
       const project = this.db.getProject(projectId)
@@ -481,7 +555,9 @@ export class Orchestration {
         title: `${staged.length === 1 ? "Hay una propuesta lista" : `Hay ${staged.length} propuestas listas`} para revisar`,
         body: inReview.length
           ? `La orquestadora terminó de revisar ${inReview.length} ${inReview.length === 1 ? "resultado" : "resultados"}.`
-          : undefined,
+          : readMessages
+            ? `La orquestadora terminó de leer ${readMessages === 1 ? "un mensaje" : `${readMessages} mensajes`} de otros proyectos.`
+            : undefined,
         projectId,
         // Las propuestas se ven en el chat de la orquestadora: el aviso lleva ahí y baja hasta ellas.
         ...(orch ? { sessionId: orch.id, open: "proposals" as const } : {}),
@@ -499,9 +575,18 @@ export class Orchestration {
 
   private openDraftGuard(projectId: string): string {
     const queued = this.db.listReports({ projectId, states: ["queued"] })
-    if (!queued.length) return ""
-    const names = [...new Set(queued.map((r) => this.db.getSession(r.sessionId)?.name ?? "?"))].join(", ")
-    return `\n\n⚠️ Hay ${queued.length} ${queued.length === 1 ? "resultado nuevo" : "resultados nuevos"} en la cola (${names}). Leelos con read_results antes de terminar: tus propuestas no se liberan hasta que la cola esté vacía.`
+    const messages = this.db.listQueuedProjectMessages(projectId)
+    if (!queued.length && !messages.length) return ""
+    const parts: string[] = []
+    if (queued.length) {
+      const names = [...new Set(queued.map((r) => this.db.getSession(r.sessionId)?.name ?? "?"))].join(", ")
+      parts.push(`${queued.length} ${queued.length === 1 ? "resultado nuevo" : "resultados nuevos"} (${names})`)
+    }
+    if (messages.length) {
+      const names = [...new Set(messages.map((m) => `«${this.db.getProject(m.fromProjectId)?.name ?? "?"}»`))].join(", ")
+      parts.push(`${messages.length} ${messages.length === 1 ? "mensaje" : "mensajes"} de otros proyectos (${names})`)
+    }
+    return `\n\n⚠️ Hay en la cola: ${parts.join(" y ")}. Leelos con read_results antes de terminar: tus propuestas no se liberan hasta que la cola esté vacía.`
   }
 
   proposePrompt(
@@ -684,17 +769,92 @@ export class Orchestration {
   /** La orquestadora trae los resultados en cola a mitad de turno. */
   readResults(orch: SessionRecord): string {
     const queued = this.db.listReports({ projectId: orch.projectId, states: ["queued"] })
-    if (!queued.length) return "La cola está vacía: no hay resultados nuevos."
-    const deliveredAt = now()
-    for (const r of queued) {
-      this.db.updateReport(r.id, { state: "in_review", deliveredAt })
-      this.broadcastReport(r.id)
-    }
+    const messages = this.db.listQueuedProjectMessages(orch.projectId)
+    if (!queued.length && !messages.length) return "La cola está vacía: no hay resultados ni mensajes nuevos."
+    this.markDelivered(orch, queued, messages, now())
     this.clearTimer(orch.projectId)
     this.clearFollowUp(orch.projectId)
-    this.firstQueuedAt.delete(orch.projectId)
     this.broadcastProject(orch.projectId)
-    return this.composeBatch(orch.projectId, queued.map((r) => this.reportView(r)), true)
+    return this.composeBatch(orch.projectId, queued.map((r) => this.reportView(r)), true, messages.map((m) => this.messageView(m)))
+  }
+
+  // -------------------------------------------- mensajes entre orquestadoras
+
+  /** Los otros proyectos que ve el usuario (sin los archivados), con su orquestadora y su estado. */
+  listProjects(self: SessionRecord): string {
+    const others = this.db.listProjects().filter((p) => p.id !== self.projectId && !p.archivedAt)
+    if (!others.length) return "No hay otros proyectos en este dashboard."
+    return others
+      .map((p) => {
+        const orch = this.orchestratorOf(p.id)
+        const state = orch ? STATUS_ES[this.sessions.statusOf(orch.id)] : null
+        return `- ${p.name} [${p.id}] · ${p.repoPath} · ${orch ? `orquestadora: ${orch.name} (${state})` : "sin orquestadora (no se le puede escribir)"}`
+      })
+      .join("\n")
+  }
+
+  /** Una orquestadora le escribe a la de otro proyecto: queda en su cola y le llega como los resultados. */
+  messageProject(from: SessionRecord, input: { project: string; message: string; replyTo?: string | null }): string {
+    if (from.kind !== "orchestrator") throw new Error("Solo las orquestadoras pueden escribirle a otros proyectos.")
+    const ref = input.project.trim()
+    const projects = this.db.listProjects().filter((p) => !p.archivedAt)
+    const target =
+      projects.find((p) => p.id === ref) ?? projects.find((p) => p.name.toLowerCase() === ref.toLowerCase())
+    if (!target) {
+      const names = projects.filter((p) => p.id !== from.projectId).map((p) => p.name).join(", ") || "ninguno"
+      throw new Error(`No existe el proyecto "${ref}". Proyectos: ${names}. Usá list_projects para verlos.`)
+    }
+    if (target.id === from.projectId)
+      throw new Error("Ese es tu propio proyecto: message_project es para escribirle a otros. Para coordinar a tu equipo usá propose_prompt.")
+    const toOrch = this.orchestratorOf(target.id)
+    if (!toOrch) throw new Error(`El proyecto «${target.name}» no tiene orquestadora: no hay a quién escribirle. Si hace falta, pedile al usuario que la cree.`)
+    const text = input.message.trim()
+    if (!text) throw new Error("El mensaje está vacío.")
+    if (text.length > PROJECT_MESSAGE_MAX_CHARS)
+      throw new Error(`El mensaje es demasiado largo (${text.length} caracteres; el máximo es ${PROJECT_MESSAGE_MAX_CHARS}). Resumilo o dejá el detalle en un archivo del repo y mencioná la ruta.`)
+    const replyTo = input.replyTo?.trim() || null
+    if (replyTo) {
+      const orig = this.db.getProjectMessage(replyTo)
+      // Solo se contesta una conversación entre estos dos proyectos.
+      const between =
+        orig &&
+        ((orig.fromProjectId === from.projectId && orig.toProjectId === target.id) ||
+          (orig.fromProjectId === target.id && orig.toProjectId === from.projectId))
+      if (!between) throw new Error(`replyTo ${replyTo} no es un mensaje entre tu proyecto y «${target.name}».`)
+    }
+    const sent = this.db.countProjectMessagesSince(from.projectId, target.id, now() - PROJECT_MESSAGE_WINDOW_MS)
+    if (sent >= PROJECT_MESSAGE_LIMIT)
+      throw new Error(
+        `Ya le mandaste ${sent} mensajes a «${target.name}» en la última hora (el límite es ${PROJECT_MESSAGE_LIMIT} por hora y por sentido, para que dos orquestadoras no se contesten sin fin). No mandes más: si hace falta insistir, pedile al usuario que intervenga (por ejemplo con create_user_task).`
+      )
+    const m: ProjectMessageRow = {
+      id: shortId("m_"),
+      fromProjectId: from.projectId,
+      toProjectId: target.id,
+      fromSessionId: from.id,
+      toSessionId: null,
+      text,
+      replyTo,
+      createdAt: now(),
+      deliveredAt: null,
+    }
+    this.db.insertProjectMessage(m)
+    const fromName = this.db.getProject(from.projectId)?.name ?? "?"
+    this.sessions.addEvent(from.id, { kind: "notice", level: "info", text: `Mensaje a la orquestadora de «${target.name}» (${m.id}${replyTo ? `, en respuesta a ${replyTo}` : ""})` })
+    this.hub.broadcast({
+      type: "toast",
+      level: "info",
+      event: "result",
+      title: `«${fromName}» le escribió a «${target.name}»`,
+      body: text.slice(0, 180),
+      projectId: target.id,
+      sessionId: toOrch.id,
+    })
+    // Igual que un resultado: ninguna propuesta del destino se libera hasta que lo lea.
+    this.lockReadyDrafts(target.id)
+    this.schedule(target.id)
+    this.broadcastProject(target.id)
+    return `Mensaje ${m.id} enviado a la orquestadora de «${target.name}». Le llega en su próxima revisión (la despierta si está quieta, o lo recibe al terminar su turno). La respuesta, si la hay, te llega como un mensaje nuevo con replyTo = ${m.id}. No hace falta que esperes.`
   }
 
   // ------------------------------------------------------- acciones del usuario
