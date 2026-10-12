@@ -29,6 +29,7 @@ import { Terminals } from "./terminal/manager.ts"
 import { registerTerminal } from "./terminal/routes.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
+import { decideSend, SEND_DENIED, type SendDecision, type SendGuardDeps } from "./send-guard.ts"
 import { SessionManager } from "./sessions.ts"
 import { Overview } from "./overview.ts"
 import { CliUsage } from "./cli-usage.ts"
@@ -112,7 +113,7 @@ async function main() {
     hub,
     attachments,
     mcpUrlFor: (token) => `${baseUrl}/mcp/${token}`,
-    hookUrlFor: (token) => `${baseUrl}/hooks/${token}/compact`,
+    hookUrlFor: (token) => `${baseUrl}/hooks/${token}`,
     launchFor,
     accountIdFor: (s) => accounts.forProject(s.projectId).id,
     liveElsewhere: async (s) => {
@@ -252,6 +253,41 @@ async function main() {
       .hook(req.params.token, req.body && typeof req.body === "object" ? req.body : {}, onClose)
       .catch(() => "")
     return reply.type("text/plain; charset=utf-8").send(text)
+  })
+
+  // El cerrojo de SendMessage (PreToolUse): solo deja escribirle a sesiones del propio proyecto.
+  // Responde 200 vacío para dejar pasar, o el JSON con el deny; ante cualquier error, deniega.
+  const sendGuard: SendGuardDeps = {
+    sessions: () => db.listSessions(),
+    pids: () => sessions.pids(),
+    agentNames: (id) => sessions.agentNames(id),
+    live: async (s) => {
+      const a = accounts.forProject(s.projectId)
+      return listLiveSessions({ bin: accounts.bin(a), env: accounts.env(a), configDir: accounts.dir(a) }, { all: true })
+    },
+    socketOf: (s, pid) => {
+      try {
+        const file = path.join(accounts.dir(accounts.forProject(s.projectId)), "sessions", `${pid}.json`)
+        const reg = JSON.parse(fs.readFileSync(file, "utf8")) as { messagingSocketPath?: unknown }
+        return typeof reg.messagingSocketPath === "string" ? reg.messagingSocketPath : null
+      } catch {
+        return null
+      }
+    },
+  }
+  app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/send-message", async (req, reply) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {}
+    const input = body.tool_input && typeof body.tool_input === "object" ? (body.tool_input as Record<string, unknown>) : {}
+    let decision: SendDecision
+    try {
+      decision = await decideSend(sendGuard, db.getSessionByToken(req.params.token) ?? null, input)
+    } catch {
+      decision = { allow: false, reason: SEND_DENIED.unresolved(String(input.to ?? "")) }
+    }
+    if (decision.allow) return reply.type("text/plain; charset=utf-8").send("")
+    return reply.type("application/json").send({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: decision.reason },
+    })
   })
 
   if (fs.existsSync(config.webDist)) {

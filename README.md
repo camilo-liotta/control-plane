@@ -436,7 +436,7 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
 - **Costo**: Claude Code guarda en el transcript el costo acumulado de cada conversación (entradas `cost-state`) y al reanudarla sigue sumando desde ahí; `/clear` lo vuelve a cero. El dashboard lee esa base antes de lanzar cada proceso y suma solo lo nuevo, así no cuenta nada dos veces.
 - **Conversaciones abiertas en otro lado**: antes de reanudar una sesión, el server mira las sesiones vivas de Claude Code de esa cuenta (`claude agents`). Si la conversación está abierta en una terminal o en segundo plano, no lanza otro proceso y lo muestra en la sesión.
 - **Skills con IA**: `claude -p` sin herramientas (o con `Read`, `Grep` y `Glob` sobre el repo), sin MCP, sin hooks y con `--no-session-persistence`. La búsqueda pide la respuesta con `--json-schema`.
-- **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una.
+- **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una. Solo dentro del proyecto: un hook `PreToolUse` en cada sesión consulta al server (`server/src/send-guard.ts`) y bloquea el mensaje a una sesión de otro proyecto o de afuera del dashboard, también con `--dangerously-skip-permissions`. Entre proyectos, solo las orquestadoras, con `message_project`.
 - **La orquestadora no edita archivos** por defecto (se lanza sin `Edit`/`Write`); lo podés habilitar por proyecto.
 - **Mismo checkout** por defecto, como cuando trabajás con terminales. Al crear una sesión podés marcar **Worktree aparte** para que trabaje en su propia rama.
 

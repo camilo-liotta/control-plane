@@ -5,6 +5,9 @@ import type { SessionRecord } from "../db.ts"
 /** Tiempo máximo del hook (segundos): el modo "esperarme" responde antes (compactWaitMin ≤ 45). */
 const HOOK_TIMEOUT_SEC = 3600
 
+/** Tiempo máximo del hook de SendMessage (segundos); el script deniega antes si el server no contesta. */
+const SEND_HOOK_TIMEOUT_SEC = 30
+
 export interface LaunchSpec {
   args: string[]
   env: NodeJS.ProcessEnv
@@ -18,7 +21,7 @@ export function buildLaunch(
   session: SessionRecord,
   opts: {
     mcpUrl: string
-    /** Adonde avisa el hook de compactación (PreCompact/PostCompact). */
+    /** Base de los hooks de la sesión en el server: .../compact (PreCompact/PostCompact) y .../send-message (PreToolUse). */
     hookUrl: string
     protocol: string
     orchestratorCanEdit: boolean
@@ -51,7 +54,7 @@ export function buildLaunch(
     "--mcp-config",
     JSON.stringify({ mcpServers: { "control-plane": { type: "http", url: opts.mcpUrl } } }),
     "--settings",
-    JSON.stringify({ crossSessionInbound: "accept", hooks: compactHooks(opts.hookUrl) }),
+    JSON.stringify({ crossSessionInbound: "accept", hooks: sessionHooks(opts.hookUrl) }),
   ]
   if (opts.model) args.push("--model", opts.model)
   if (opts.effort) args.push("--effort", opts.effort)
@@ -70,13 +73,18 @@ export function buildLaunch(
   return { args, env }
 }
 
-/** Hooks con los que el dashboard participa de la compactación (se suman a los del usuario). */
-function compactHooks(url: string) {
-  const command = `${quote(process.execPath)} ${quote(config.compactHook)} ${quote(url)}`
-  const hook = { type: "command", command, timeout: HOOK_TIMEOUT_SEC }
+/**
+ * Los hooks con los que el dashboard participa de la sesión (se suman a los del usuario): la compactación
+ * y el cerrojo de SendMessage, que solo deja escribirle a sesiones del propio proyecto.
+ */
+function sessionHooks(base: string) {
+  const command = (url: string, ...flags: string[]) => [quote(process.execPath), quote(config.compactHook), quote(url), ...flags].join(" ")
+  const hook = { type: "command", command: command(`${base}/compact`), timeout: HOOK_TIMEOUT_SEC }
   return {
     PreCompact: [{ hooks: [hook] }],
     PostCompact: [{ hooks: [{ ...hook, timeout: 30 }] }],
+    // Falla cerrado: si el server no contesta, el script deniega (ver compact-hook.mjs).
+    PreToolUse: [{ matcher: "SendMessage", hooks: [{ type: "command", command: command(`${base}/send-message`, "--deny-on-error"), timeout: SEND_HOOK_TIMEOUT_SEC }] }],
   }
 }
 

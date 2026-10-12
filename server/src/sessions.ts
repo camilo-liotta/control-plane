@@ -390,6 +390,20 @@ export class SessionManager extends EventEmitter<{
     return rt && !rt.proc.exited ? rt.lostConversation : null
   }
 
+  /** Los pid de los procesos de Claude Code que lanzó el dashboard, con la sesión a la que pertenece cada uno. */
+  pids(): Map<number, string> {
+    const out = new Map<number, string>()
+    for (const [id, rt] of this.runtimes) if (!rt.proc.exited && rt.proc.pid) out.set(rt.proc.pid, id)
+    return out
+  }
+
+  /** Los nombres de los subagentes que la sesión lanzó con la herramienta Agent. */
+  agentNames(id: string): string[] {
+    const rt = this.runtimes.get(id)
+    if (!rt) return []
+    return [...rt.agentCalls.values()].map((c) => c.input.name).filter((n): n is string => typeof n === "string" && n.trim() !== "")
+  }
+
   isRunning(id: string) {
     const rt = this.runtimes.get(id)
     return Boolean(rt && !rt.proc.exited)
