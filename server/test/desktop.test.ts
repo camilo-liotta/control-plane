@@ -63,7 +63,7 @@ describe("resumen de escritorio", () => {
       db: {
         listProjects: () => [{ id: "p1", name: "Uno" }, { id: "p2", name: "Dos" }] as never,
         listDrafts: (opts) => {
-          assert.deepEqual(opts?.states, ["ready"])
+          assert.deepEqual(opts?.states, ["ready", "sent"])
           return [draft("d1", "p1", "ready"), draft("d2", "p3", "ready")]
         },
         // Solo suman las abiertas que frenan a una sesión, como en la web.
