@@ -31,7 +31,7 @@ export interface ClaudeTarget {
 }
 
 /** Sesiones de Claude Code vivas de una cuenta (las del dashboard y las de tus terminales). */
-export async function listLiveSessions(target?: ClaudeTarget): Promise<LiveSession[]> {
+export async function listLiveSessions(target?: ClaudeTarget, opts: { all?: boolean } = {}): Promise<LiveSession[]> {
   try {
     const { stdout } = await run(target?.bin ?? config.claudeBin, ["agents", "--json"], {
       timeout: 10_000,
@@ -39,7 +39,7 @@ export async function listLiveSessions(target?: ClaudeTarget): Promise<LiveSessi
       env: childEnv(target?.env ?? {}),
     })
     const list = JSON.parse(stdout) as LiveSession[]
-    return Array.isArray(list) ? list.filter((s) => s.pid) : []
+    return Array.isArray(list) ? (opts.all ? list : list.filter((s) => s.pid)) : []
   } catch {
     return []
   }
