@@ -16,6 +16,7 @@ import path from "node:path"
  *   "SENDMSG <a quién>" hace un SendMessage pasando por el hook PreToolUse de --settings, como Claude Code (y muestra si lo frenó);
  *   "SUBAGENTE" cierra el turno con un subagente en segundo plano que sigue andando;
  * - como el de verdad, --resume de una conversación sin transcript sale con "No conversation found";
+ * - con FAKE_LOG_INPUT=<archivo> anota cada mensaje de usuario que recibe;
  * - con FALLA1 en el --name, el primer arranque sale con error (los siguientes andan).
  */
 const SCRIPT = String.raw`#!/usr/bin/env node
@@ -93,7 +94,11 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   }
   if (msg.type !== "user") continue
   const c = msg.message?.content
-  const text = typeof c === "string" ? c : (c?.find?.((b) => b.type === "text")?.text ?? "")
+  const raw = typeof c === "string" ? c : (c?.find?.((b) => b.type === "text")?.text ?? "")
+  // El aviso de control-plane que se antepone a lo primero que recibe una sesión después de actualizar no es parte de lo que le piden.
+  const text = raw.startsWith("[control-plane] control-plane se actualizó") ? raw.split("\n\n").slice(1).join("\n\n") : raw
+  // Con FAKE_LOG_INPUT=<archivo>, anota cada mensaje de usuario que recibe (para ver lo que de verdad le llega al modelo).
+  if (process.env.FAKE_LOG_INPUT) fs.appendFileSync(process.env.FAKE_LOG_INPUT, JSON.stringify(raw) + "\n")
   state("running")
   // Como Claude Code 2.1.285: el conversation_reset sale con el session_id de antes y un
   // new_conversation_id que no es el del transcript; el id nuevo es el session_id de lo que sigue.

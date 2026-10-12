@@ -331,8 +331,8 @@ describe("modo AFK", () => {
   })
 
   const STEPS = [
-    { title: "Uno", prompt: "Primer paso", model: "sonnet" },
-    { title: "Dos", prompt: "Segundo paso" },
+    { title: "Uno", prompt: "Primer paso", model: "sonnet", effort: "medium" },
+    { title: "Dos", prompt: "Segundo paso", model: "sonnet", effort: "medium" },
   ]
   const drafts = (states?: ("staged" | "ready" | "sent" | "discarded")[]) => db.listDrafts({ projectId, states })
   /** El worker BACKEND reporta y termina el turno (avanza el plan). */
@@ -349,8 +349,8 @@ describe("modo AFK", () => {
   describe("qué sale solo", () => {
     it("en AFK sale todo al terminar la revisión: prompt, sesión nueva, plan, plan con sesión nueva, y lleva el encabezado", async () => {
       afk.start(projectId)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Prompt", prompt: "Hacé algo" })
-      orch.proposeSession(orq, { name: "tests", role: "QA", title: "Suite", prompt: "Armá la suite" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Prompt", prompt: "Hacé algo", model: "sonnet", effort: "medium" })
+      orch.proposeSession(orq, { name: "tests", role: "QA", title: "Suite", prompt: "Armá la suite", model: "sonnet", effort: "medium" })
       orch.plans.propose(orq, { session: "BACKEND", title: "Plan", steps: STEPS })
       orch.plans.propose(orq, { newSession: { name: "docs", role: "Docs" }, title: "Plan nuevo", steps: STEPS })
       assert.equal(drafts(["staged"]).length, 4)
@@ -380,7 +380,7 @@ describe("modo AFK", () => {
       await finishStep("blocked", "Se trabó")
       await sleep(150) // el resultado le llega a la orquestadora
       assert.equal(db.getDraft(plan.id)!.planState, "paused")
-      orch.updateProposal(orq, { id: plan.id, steps: [{ title: "Otro", prompt: "Otro", model: "sonnet" }] })
+      orch.updateProposal(orq, { id: plan.id, steps: [{ title: "Otro", prompt: "Otro", model: "sonnet", effort: "medium" }] })
       await release()
       const rev = drafts().find((d) => d.revises === plan.id)!
       assert.equal(rev.state, "sent")
@@ -393,10 +393,10 @@ describe("modo AFK", () => {
 
     it("lo marcado con hold espera al usuario, con un aviso que lo dice", async () => {
       afk.start(projectId)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Libre", prompt: "Libre" })
-      const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "Caro", prompt: "Caro", hold: true })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Libre", prompt: "Libre", model: "sonnet", effort: "medium" })
+      const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "Caro", prompt: "Caro", hold: true, model: "sonnet", effort: "medium" })
       assert.match(reply, /AFK, pero la marcaste con hold/)
-      orch.proposeSession(orq, { name: "caja", role: "Caja", title: "Caja", prompt: "Caja", hold: true })
+      orch.proposeSession(orq, { name: "caja", role: "Caja", title: "Caja", prompt: "Caja", hold: true, model: "sonnet", effort: "medium" })
       orch.plans.propose(orq, { session: "BACKEND", title: "Plan hold", steps: STEPS, hold: true })
       await release()
       const byTitle = (t: string) => drafts().find((d) => d.title === t)!
@@ -426,7 +426,7 @@ describe("modo AFK", () => {
       afk.start(projectId)
       orch.messageProject(orq2, { project: "Demo", message: "Necesitamos un endpoint" })
       await sleep(400) // el mensaje le llega a ORQ en un lote
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Pedido ajeno", prompt: "Hacelo" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Pedido ajeno", prompt: "Hacelo", model: "sonnet", effort: "medium" })
       await release()
       const [d] = drafts()
       assert.equal(d!.state, "ready")
@@ -437,7 +437,7 @@ describe("modo AFK", () => {
 
     it("update_proposal cambia el hold, y la respuesta dice qué va a pasar", async () => {
       afk.start(projectId)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
       const d = drafts()[0]!
       assert.match(orch.updateProposal(orq, { id: d.id, hold: true }), /con hold: la tiene que aprobar él/)
       assert.equal(db.getDraft(d.id)!.hold, true)
@@ -447,17 +447,17 @@ describe("modo AFK", () => {
     })
 
     it("sin AFK nada sale solo, y las respuestas siguen diciendo que lo aprueba el usuario", async () => {
-      const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+      const reply = orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
       assert.match(reply, /después la aprueba el usuario/)
       await release()
       assert.equal(drafts(["ready"]).length, 1)
       assert.equal(sessions.sent.length, 0)
-      assert.match(orch.proposeSession(orq, { name: "x", role: "x", title: "x", prompt: "x" }), /el usuario la tiene que aprobar para que se cree/)
+      assert.match(orch.proposeSession(orq, { name: "x", role: "x", title: "x", prompt: "x", model: "sonnet", effort: "medium" }), /el usuario la tiene que aprobar para que se cree/)
     })
 
     it("si el usuario vuelve antes de que se libere, ya no sale sola", async () => {
       afk.start(projectId)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" })
       afk.stop(projectId)
       await release()
       assert.equal(drafts(["ready"]).length, 1)
@@ -467,7 +467,7 @@ describe("modo AFK", () => {
 
     it("si una no se puede enviar, queda lista para el usuario y avisa", async () => {
       afk.start(projectId)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Rota", prompt: "P" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Rota", prompt: "P", model: "sonnet", effort: "medium" })
       db.updateSession(a.id, { archivedAt: Date.now() })
       await release()
       const [d] = drafts()
@@ -520,9 +520,9 @@ describe("modo AFK", () => {
   describe("registro", () => {
     it("guarda lo que se envió solo, lo que esperó, los resultados y el costo", async () => {
       afk.start(projectId, { budgetUsd: 50 })
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Sale", prompt: "P" })
-      orch.proposeSession(orq, { name: "tests", role: "QA", title: "Suite", prompt: "S" })
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Espera", prompt: "E", hold: true })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Sale", prompt: "P", model: "sonnet", effort: "medium" })
+      orch.proposeSession(orq, { name: "tests", role: "QA", title: "Suite", prompt: "S", model: "sonnet", effort: "medium" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Espera", prompt: "E", hold: true, model: "sonnet", effort: "medium" })
       await release()
       orch.report(a, { status: "done", summary: "Terminé lo de la sesión" })
       db.updateSession(a.id, { costUsd: 2, costByModel: { sonnet: 2 } })
@@ -542,7 +542,7 @@ describe("modo AFK", () => {
       // Lo de antes o después del período no cuenta.
       afk.stop(projectId)
       await sleep(5)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Después", prompt: "P" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Después", prompt: "P", model: "sonnet", effort: "medium" })
       const after = afk.log(projectId)!
       assert.equal(after.endReason, "user")
       assert.ok(!after.sent.some((d) => d.title === "Después") && !after.held.some((d) => d.title === "Después"))
@@ -550,9 +550,9 @@ describe("modo AFK", () => {
 
     it("en «espera tu aprobación» solo quedan las que siguen sin enviar: una con hold que el usuario aprobó después ya no", async () => {
       afk.start(projectId)
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Sigue", prompt: "S", hold: true })
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Aprobada", prompt: "A", hold: true })
-      orch.proposePrompt(orq, { session: "BACKEND", title: "Descartada", prompt: "D", hold: true })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Sigue", prompt: "S", hold: true, model: "sonnet", effort: "medium" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Aprobada", prompt: "A", hold: true, model: "sonnet", effort: "medium" })
+      orch.proposePrompt(orq, { session: "BACKEND", title: "Descartada", prompt: "D", hold: true, model: "sonnet", effort: "medium" })
       await release()
       const byTitle = (t: string) => db.listDrafts({ projectId }).find((d) => d.title === t)!
       assert.deepEqual(afk.log(projectId)!.held.map((d) => d.title).sort(), ["Aprobada", "Descartada", "Sigue"])

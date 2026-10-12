@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
+import type { Fingerprint } from "./fingerprint.ts"
 import type {
   AfkEndReason,
   AfkState,
@@ -337,6 +338,12 @@ const MIGRATIONS: string[] = [
   CREATE INDEX afk_periods_project ON afk_periods(project_id, since);
   -- Lo que ya estaba enviándose solo (autoDispatch) pasa a AFK sin límites en migrateAutoDispatch.
   UPDATE drafts SET sent_by = 'user' WHERE state = 'sent';
+  `,
+  `
+  CREATE TABLE session_fingerprints (
+    session_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
   `,
 ]
 
@@ -819,6 +826,24 @@ export class Db {
       this.db.prepare("UPDATE projects SET account_id = ? WHERE id = ?").run(patch.accountId, id)
   }
 
+  // ------------------------------------------------------------- huellas
+
+  /** Lo último que vio la sesión de sus herramientas y su protocolo (null: nunca se anotó). */
+  getFingerprint(sessionId: string): Fingerprint | null {
+    const r = this.db.prepare("SELECT data FROM session_fingerprints WHERE session_id = ?").get(sessionId) as Row | undefined
+    if (!r) return null
+    try {
+      const f = JSON.parse(String(r.data)) as Fingerprint
+      return f && typeof f.tools === "object" && typeof f.sections === "object" ? f : null
+    } catch {
+      return null
+    }
+  }
+
+  setFingerprint(sessionId: string, f: Fingerprint) {
+    this.db.prepare("INSERT INTO session_fingerprints (session_id, data) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET data = excluded.data").run(sessionId, JSON.stringify(f))
+  }
+
   // --------------------------------------------------------------------- afk
 
   /** Lo que gastó el proyecto hasta ahora: la suma del costo de todas sus sesiones (también las archivadas). */
@@ -991,6 +1016,7 @@ export class Db {
       this.db
         .prepare("UPDATE drafts SET state = 'discarded' WHERE target_session_id = ? AND state IN ('staged', 'ready')")
         .run(id)
+      this.db.prepare("DELETE FROM session_fingerprints WHERE session_id = ?").run(id)
       this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
       this.db.exec("COMMIT")
     } catch (err) {
@@ -1020,6 +1046,7 @@ export class Db {
       this.db.prepare("DELETE FROM project_messages WHERE from_project_id = ? OR to_project_id = ?").run(id, id)
       this.db.prepare("DELETE FROM drafts WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM afk_periods WHERE project_id = ?").run(id)
+      this.db.prepare(`DELETE FROM session_fingerprints WHERE session_id IN (${sessionIds})`).run(id)
       this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM credentials WHERE environment_id IN (SELECT id FROM environments WHERE project_id = ?)").run(id)
       this.db.prepare("DELETE FROM environments WHERE project_id = ?").run(id)

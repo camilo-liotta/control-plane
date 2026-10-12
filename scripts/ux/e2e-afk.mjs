@@ -159,10 +159,10 @@ try {
   check(1, "ponerse AFK con tiempo y presupuesto", started.afk?.budgetUsd === 5 && started.afk?.until === until1 && /presupuesto US\$ 5\)/.test(n1), n1)
 
   // 2: la orquestadora propone un prompt, un plan y una sesión nueva: salen solos.
-  const rPrompt = await tool(orq.id, "propose_prompt", { session: "W-API", title: "Agregar el endpoint de turnos", prompt: "Implementá GET /api/turnos" })
-  const rPlan = await tool(orq.id, "propose_plan", { session: "W-WEB", title: "Ficha del contrato", steps: [{ title: "Armar la vista", prompt: "Armá la vista" }, { title: "Conectar la API", prompt: "Conectá la API" }] })
-  const rSession = await tool(orq.id, "propose_session", { name: "QA", role: "Pruebas", title: "Suite de turnos", prompt: "Armá la suite" })
-  const rHold = await tool(orq.id, "propose_prompt", { session: "W-API", title: "Publicar la versión 1.2", prompt: "Publicá la versión", hold: true })
+  const rPrompt = await tool(orq.id, "propose_prompt", { session: "W-API", title: "Agregar el endpoint de turnos", prompt: "Implementá GET /api/turnos", model: "sonnet", effort: "medium" })
+  const rPlan = await tool(orq.id, "propose_plan", { session: "W-WEB", title: "Ficha del contrato", steps: [{ title: "Armar la vista", prompt: "Armá la vista", model: "sonnet", effort: "medium" }, { title: "Conectar la API", prompt: "Conectá la API", model: "sonnet", effort: "medium" }] })
+  const rSession = await tool(orq.id, "propose_session", { name: "QA", role: "Pruebas", title: "Suite de turnos", prompt: "Armá la suite", model: "sonnet", effort: "medium" })
+  const rHold = await tool(orq.id, "propose_prompt", { session: "W-API", title: "Publicar la versión 1.2", prompt: "Publicá la versión", model: "sonnet", effort: "medium", hold: true })
   await sleep(1500)
   const ds = await drafts()
   const byTitle = (t) => ds.find((d) => d.title === t)

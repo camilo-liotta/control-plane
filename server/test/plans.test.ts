@@ -167,7 +167,7 @@ describe("planes por pasos", () => {
 
   it("valida modelo y esfuerzo de cada paso, contra el modelo con que sigue la sesión", () => {
     assert.throws(
-      () => orch.plans.propose(orq, { session: "BACKEND", title: "X", steps: [{ title: "a", prompt: "a", model: "sonnet" }, { title: "b", prompt: "b", effort: "max" }] }),
+      () => orch.plans.propose(orq, { session: "BACKEND", title: "X", steps: [{ title: "a", prompt: "a", model: "sonnet", effort: "low" }, { title: "b", prompt: "b", model: "sonnet", effort: "max" }] }),
       /Paso 2: Sonnet 5\.5 no tiene esfuerzo "max"/
     )
     assert.throws(() => orch.plans.propose(orq, { session: "BACKEND", title: "X", steps: [] }), /no tiene pasos/)
@@ -176,6 +176,18 @@ describe("planes por pasos", () => {
     assert.match(reply, /3 pasos/)
     assert.equal(plan().planState, null)
     assert.deepEqual(plan().steps.map((s) => s.state), ["pending", "pending", "pending"])
+  })
+
+  it("cada paso exige modelo y esfuerzo, con un error que enseña a corregirse", () => {
+    const err = (steps: { title: string; prompt: string; model?: string; effort?: string }[]) => () => orch.plans.propose(orq, { session: "BACKEND", title: "X", steps })
+    assert.throws(err([{ title: "a", prompt: "a" }]), /Paso 1: Falta model y effort\. La sesión BACKEND está con el modelo por defecto\. Elegí según el trabajo: sonnet \(medium o high\).*select:mcp__control-plane__propose_plan/s)
+    assert.throws(err([{ title: "a", prompt: "a", model: "sonnet", effort: "low" }, { title: "b", prompt: "b", model: "sonnet" }]), /Paso 2: Falta effort\./)
+    assert.throws(err([{ title: "a", prompt: "a", effort: "low" }]), /Paso 1: Falta model\./)
+    // Haiku no tiene niveles: sin effort alcanza.
+    assert.match(orch.plans.propose(orq, { session: "BACKEND", title: "X", steps: [{ title: "a", prompt: "a", model: "haiku" }] }), /1 pasos/)
+    // En update_proposal los pasos que cambia también.
+    sessions.endTurn(orq)
+    assert.throws(() => orch.updateProposal(orq, { id: plan().id, steps: [{ title: "n", prompt: "n" }] }), /Falta model y effort.*select:mcp__control-plane__update_proposal/s)
   })
 
   it("avanza solo con cada done, sin despertar a la orquestadora, y entrega un solo resultado al final", async () => {
@@ -338,7 +350,7 @@ describe("planes por pasos", () => {
 
   it("con un plan en curso, la sesión no recibe otros prompts ni otro plan", async () => {
     await approved()
-    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P" }), /en medio del plan/)
+    assert.throws(() => orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "P", model: "sonnet", effort: "medium" }), /en medio del plan/)
     assert.throws(() => orch.plans.propose(orq, { session: "BACKEND", title: "Otro", steps: STEPS }), /ya tiene un plan en curso/)
   })
 
@@ -362,7 +374,7 @@ describe("planes por pasos", () => {
       id: plan().id,
       steps: [
         { title: "Tests otra vez", prompt: "Escribí los tests con cuidado", model: "opus", effort: "high" },
-        { title: "Revisión", prompt: "Revisá" },
+        { title: "Revisión", prompt: "Revisá", model: "sonnet", effort: "medium" },
       ],
     })
     assert.match(reply, /sigue desde el paso 2/)
@@ -394,7 +406,7 @@ describe("planes por pasos", () => {
     assert.equal(plan().planState, "running")
     await report("blocked", "No")
     await sleep(100)
-    orch.updateProposal(orq, { id: plan().id, steps: [{ title: "Otra", prompt: "Otra", model: "opus" }] })
+    orch.updateProposal(orq, { id: plan().id, steps: [{ title: "Otra", prompt: "Otra", model: "opus", effort: "high" }] })
     sessions.endTurn(orq)
     await sleep(10)
     assert.equal(plan().planState, "running")
@@ -497,7 +509,7 @@ describe("planes por pasos", () => {
     assert.equal(plan().planState, "paused", "un error antes de la primera respuesta también cuenta")
     await sleep(100)
     sessions.endTurn(orq)
-    orch.updateProposal(orq, { id: plan().id, steps: [{ title: "Tipos con Opus", prompt: "Sumá los tipos", model: "opus" }] })
+    orch.updateProposal(orq, { id: plan().id, steps: [{ title: "Tipos con Opus", prompt: "Sumá los tipos", model: "opus", effort: "high" }] })
     sessions.endTurn(orq)
     await orch.sendDraft(db.listDrafts({ projectId, states: ["ready"] })[0]!.id, {})
     assert.equal(plan().steps.length, 1)
@@ -595,7 +607,7 @@ describe("planes por pasos", () => {
   })
 
   it("dos aprobaciones a la vez de un plan para una sesión nueva crean una sola", async () => {
-    orch.plans.propose(orq, { newSession: { name: "docs", role: "" }, title: "Docs", steps: [{ title: "a", prompt: "a" }] })
+    orch.plans.propose(orq, { newSession: { name: "docs", role: "" }, title: "Docs", steps: [{ title: "a", prompt: "a", model: "sonnet", effort: "medium" }] })
     sessions.endTurn(orq)
     const id = plan().id
     const results = await Promise.allSettled([orch.sendDraft(id, {}), orch.sendDraft(id, {})])
@@ -606,7 +618,7 @@ describe("planes por pasos", () => {
   it("una revisión armada con el paso corriendo, que después se frenó, lo repite antes de los nuevos", async () => {
     await approved()
     orch.plans.userPause(plan().id)
-    orch.updateProposal(orq, { id: plan().id, steps: [{ title: "Nuevo", prompt: "Nuevo" }] })
+    orch.updateProposal(orq, { id: plan().id, steps: [{ title: "Nuevo", prompt: "Nuevo", model: "sonnet", effort: "medium" }] })
     await report("blocked", "No pude")
     assert.equal(db.listReports({ projectId }).length, 1, "lo que reporta el worker llega aunque estuviera pausado")
     await sleep(100)

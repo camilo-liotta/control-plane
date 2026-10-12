@@ -13,6 +13,7 @@ import type { Orchestration } from "./orchestration.ts"
 import type { StepInput } from "./plans.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { AppInput, AppStatus, AppView, ContextUsage, SessionStatus } from "./shared/types.ts"
+import { hash } from "./fingerprint.ts"
 import { errorMessage } from "./util.ts"
 
 const STATUS_ES: Record<SessionStatus, string> = {
@@ -66,11 +67,24 @@ const effortSchema = z
   .optional()
   .describe("Esfuerzo: low, medium, high, xhigh o max (los que soporte el modelo). Sin poner, sigue con el que tiene.")
 
+/** En propose_prompt, propose_session y cada paso de un plan: obligatorios (el server contesta con un error que enseña si faltan). */
+const requiredModelSchema = z
+  .string()
+  .optional()
+  .describe(
+    "OBLIGATORIO. Modelo con que sale: sonnet para implementar un pedido claro, haiku para lo mecánico, opus solo para diseño, depuración difícil o revisión (o un valor del catálogo). Queda en la sesión hasta que otra propuesta o el usuario lo cambien. Para que siga con el que tiene, pasá ese mismo (list_sessions lo muestra)."
+  )
+
+const requiredEffortSchema = z
+  .string()
+  .optional()
+  .describe("OBLIGATORIO (salvo con modelos sin niveles, como haiku). Esfuerzo: low, medium, high, xhigh o max (los que soporte el modelo). Por defecto, medium o high con sonnet.")
+
 const stepSchema = z.object({
   title: z.string().describe("Título corto del paso."),
   prompt: z.string().min(1).describe("Prompt del paso: concreto y verificable (archivos, interfaces, criterio de terminado), para que el worker no tenga que diseñar."),
-  model: modelSchema,
-  effort: effortSchema,
+  model: requiredModelSchema,
+  effort: requiredEffortSchema,
   fresh: z.boolean().optional().describe("true: la sesión empieza de cero antes de este paso; recibe lo que reportó el paso anterior."),
   subagents: subagentSchema,
 })
@@ -164,13 +178,20 @@ function wrap<A>(fn: (args: A) => string | Promise<string>) {
   }
 }
 
-/** Herramientas de control-plane que ve cada sesión según su rol. */
-function buildServer(
-  self: SessionRecord,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments; apps?: Apps }
-): McpServer {
+type McpDeps = { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments; apps?: Apps }
+
+/** Herramientas de control-plane que ve cada sesión según su rol. `record` anota el hash del esquema de cada una. */
+function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string, string>): McpServer {
   const { db, sessions, orchestration } = deps
   const server = new McpServer({ name: "control-plane", version })
+  if (record) {
+    const register = server.registerTool.bind(server) as (name: string, config: Record<string, unknown>, cb: unknown) => unknown
+    ;(server as { registerTool: unknown }).registerTool = (name: string, config: { description?: string; title?: string; inputSchema?: Record<string, z.ZodType> }, cb: unknown) => {
+      const schema = config.inputSchema ? z.toJSONSchema(z.object(config.inputSchema)) : null
+      record[name] = hash(JSON.stringify({ title: config.title, description: config.description, schema }))
+      return register(name, config, cb)
+    }
+  }
 
   server.registerTool(
     "list_sessions",
@@ -414,15 +435,15 @@ function buildServer(
       {
         title: "Proponer prompt",
         description:
-          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el usuario está AFK, salvo que lo marques con hold). Poné siempre model y effort: Sonnet para implementar un pedido claro, Haiku para lo mecánico, Opus solo si hace falta.",
+          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el usuario está AFK, salvo que lo marques con hold). model y effort son OBLIGATORIOS: sonnet (medium o high) para implementar un pedido claro, haiku (low) para lo mecánico, opus solo para diseño, depuración difícil o revisión. Sin ellos devuelve un error.",
         inputSchema: {
           session: z.string().describe("Nombre de la sesión destino, tal como aparece en list_sessions."),
           title: z.string().describe("Título corto de la tarea (se muestra en el dashboard)."),
           prompt: z.string().min(1).describe("Prompt completo y autocontenido para la sesión."),
           subagents: subagentSchema,
           fresh: freshSchema,
-          model: modelSchema,
-          effort: effortSchema,
+          model: requiredModelSchema,
+          effort: requiredEffortSchema,
           hold: holdSchema,
         },
       },
@@ -436,15 +457,15 @@ function buildServer(
       {
         title: "Proponer sesión nueva",
         description:
-          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba (o se crea sola si está AFK, salvo que la marques con hold). Poné model y effort: la sesión arranca con ellos.",
+          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba (o se crea sola si está AFK, salvo que la marques con hold). model y effort son OBLIGATORIOS (la sesión arranca con ellos): sonnet para implementar, haiku para lo mecánico, opus solo si hace falta.",
         inputSchema: {
           name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E)."),
           role: z.string().describe("Rol o responsabilidad de la sesión."),
           title: z.string().describe("Título corto de la primera tarea."),
           prompt: z.string().min(1).describe("Primer prompt, completo y autocontenido."),
           subagents: subagentSchema,
-          model: modelSchema,
-          effort: effortSchema,
+          model: requiredModelSchema,
+          effort: requiredEffortSchema,
           hold: holdSchema,
         },
       },
@@ -504,7 +525,7 @@ function buildServer(
             .optional()
             .describe("En vez de session: crear una sesión nueva para el plan (arranca con el modelo del primer paso)."),
           title: z.string().describe("Título del plan."),
-          steps: z.array(stepSchema).min(1).max(20).describe("Los pasos, en orden. Poné model y effort en cada uno."),
+          steps: z.array(stepSchema).min(1).max(20).describe("Los pasos, en orden. model y effort son OBLIGATORIOS en cada uno (sonnet para implementar, haiku para lo mecánico, opus solo para diseño o revisión)."),
           hold: holdSchema,
         },
       },
@@ -711,10 +732,20 @@ function toWebRequest(req: FastifyRequest): Request {
   })
 }
 
-export function registerMcp(
-  app: FastifyInstance,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments; apps?: Apps }
-) {
+/** El hash del esquema de cada herramienta que ve una sesión de ese rol (no cambia mientras corre el server). */
+export function toolHashes(self: SessionRecord, deps: McpDeps): Record<string, string> {
+  const cached = hashCache.get(self.kind)
+  if (cached) return cached
+  const out: Record<string, string> = {}
+  buildServer(self, deps, out)
+  hashCache.set(self.kind, out)
+  return out
+}
+const hashCache = new Map<string, Record<string, string>>()
+
+export function registerMcp(app: FastifyInstance, deps: McpDeps) {
+  // Para avisarle a cada sesión cuando cambian sus herramientas (ver SessionManager.send).
+  deps.sessions.toolHashes = (rec) => toolHashes(rec, deps)
   const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
     const self = deps.db.getSessionByToken(req.params.token)
     if (!self || self.archivedAt) return reply.code(404).send({ error: "sesión desconocida" })

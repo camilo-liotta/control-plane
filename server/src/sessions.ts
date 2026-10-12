@@ -32,6 +32,8 @@ import type {
   UsageInfo,
   UserOrigin,
 } from "./shared/types.ts"
+import { version } from "./config.ts"
+import { fingerprintNotice, sectionHashes, type Fingerprint } from "./fingerprint.ts"
 import { withSubagents } from "./prompts.ts"
 import type { LiveSession } from "./restart.ts"
 import { Schedules, SCHEDULE_TOOLS } from "./schedule.ts"
@@ -101,6 +103,10 @@ interface Runtime {
   resetFrom: string | null
   /** Se relanzó de cero porque Claude Code no encontró la conversación: el id que no encontró. */
   lostConversation: string | null
+  /** Lo que ve esta sesión desde que se lanzó (herramientas y protocolo): se compara con lo que vio antes en el primer mensaje. */
+  fingerprint: Fingerprint
+  /** Ya se le avisó (o no hacía falta) de lo que cambió desde la última vez. */
+  noticed: boolean
 }
 
 interface TurnInput {
@@ -210,6 +216,8 @@ export class SessionManager extends EventEmitter<{
   archiving: [string]
 }> {
   private runtimes = new Map<string, Runtime>()
+  /** El hash del esquema de cada herramienta MCP de una sesión (lo pone registerMcp). Sin esto no se avisa de herramientas. */
+  toolHashes: ((rec: SessionRecord) => Record<string, string>) | null = null
   private stoppedDetail = new Map<string, string>()
   private lastTexts = new Map<string, string | null>()
   /** Lo que programó cada sesión (crons, wakeups de /loop), armado de sus eventos. */
@@ -567,6 +575,13 @@ export class SessionManager extends EventEmitter<{
       effort: built.effort,
     })
     const proc = new ClaudeProcess(built.bin, args, rec.cwd, { ...env, ...built.env })
+    // Una sesión nueva arranca con la huella al día; una de antes (sin huella) la recibe en su primer mensaje.
+    const fingerprint: Fingerprint = {
+      version,
+      tools: this.toolHashes?.(rec) ?? {},
+      sections: sectionHashes(built.protocol),
+    }
+    if (!old.startedOnce && !this.db.getFingerprint(rec.id)) this.db.setFingerprint(rec.id, fingerprint)
     const rt: Runtime = {
       proc,
       normalizer: new StreamNormalizer((u) => rt.ownUuids.has(u)),
@@ -601,6 +616,8 @@ export class SessionManager extends EventEmitter<{
       resetPending: false,
       resetFrom: null,
       lostConversation,
+      fingerprint,
+      noticed: false,
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -1088,6 +1105,10 @@ export class SessionManager extends EventEmitter<{
       ...(opts.subagents?.length ? { subagents: opts.subagents } : {}),
       ...(opts.plan ? { plan: opts.plan } : {}),
     }
+    // Lo primero que recibe después de un lanzamiento: si cambiaron sus herramientas o su protocolo, un aviso para el modelo.
+    // No va a los comandos (/clear, /compact) ni se muestra en el chat: el evento se arma con el texto original.
+    const notice = !rt.noticed && !text.startsWith("/") ? fingerprintNotice(this.db.getFingerprint(id), rt.fingerprint) : null
+    if (notice) text = `${notice}\n\n${text}`
     // Primero sale al proceso y después se guarda: si no sale, no queda en el chat como enviado.
     // (La salida del proceso se lee en otro tick, así que el eco nunca llega antes que el evento.)
     if (!rt.proc.sendUser(files.length ? contentWithFiles(text, files) : text, u, rec.claudeSessionId))
@@ -1099,6 +1120,11 @@ export class SessionManager extends EventEmitter<{
     if (clientKey) {
       this.byClientId.set(clientKey, stored)
       if (this.byClientId.size > CLIENT_IDS_KEPT) this.byClientId.delete(this.byClientId.keys().next().value!)
+    }
+    if (!rt.noticed && !text.startsWith("/")) {
+      rt.noticed = true
+      this.db.setFingerprint(id, rt.fingerprint)
+      if (notice) this.addEvent(id, { kind: "notice", level: "info", text: "control-plane se actualizó: se le avisó a la sesión de sus herramientas y secciones nuevas." })
     }
     rt.turnInputs.push({ text, opts })
     // Hasta que el CLI avise, la mostramos trabajando.
