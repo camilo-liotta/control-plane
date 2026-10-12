@@ -1,4 +1,4 @@
-import { Bell, BellOff, BellRing, Blocks, ChevronRight, Inbox, Monitor, Moon, Plus, Search, Sun } from "lucide-react"
+import { Bell, BellOff, BellRing, Blocks, ChevronRight, ChevronsDownUp, ChevronsUpDown, Inbox, Monitor, Moon, MoreHorizontal, Plus, Search, Settings2, Sun } from "lucide-react"
 import { useEffect, useMemo } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
@@ -14,6 +14,7 @@ import { Lamp, SessionLamp } from "@/components/status"
 import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Sidebar,
@@ -92,7 +93,7 @@ function SessionLink({ session, active }: { session: Session; active: boolean })
 }
 
 function ProjectMenu({ project }: { project: Project }) {
-  const [location] = useLocation()
+  const [location, navigate] = useLocation()
   const sessions = useStore((s) => s.sessions)
   const drafts = useStore((s) => s.drafts)
   const setUi = useUi((s) => s.set)
@@ -131,14 +132,33 @@ function ProjectMenu({ project }: { project: Project }) {
             <span className="sr-only">{ready === 1 ? " propuesta lista" : " propuestas listas"}</span>
           </SidebarMenuBadge>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <SidebarMenuAction showOnHover aria-label={`Nueva sesión en ${project.name}`} onClick={() => setUi({ newSessionFor: project.id })}>
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuAction showOnHover aria-label={`Más acciones de ${project.name}`}>
+                  <MoreHorizontal />
+                </SidebarMenuAction>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="right">Más acciones</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent side="right" align="start" className="w-56">
+            <DropdownMenuItem onClick={() => setUi({ newSessionFor: project.id })}>
               <Plus />
-            </SidebarMenuAction>
-          </TooltipTrigger>
-          <TooltipContent side="right">Nueva sesión</TooltipContent>
-        </Tooltip>
+              Nueva sesión
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate(`${base}/tools`)}>
+              <Blocks />
+              Herramientas del proyecto
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
+              <Settings2 />
+              Ajustes del proyecto
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <CollapsibleContent>
           <SidebarMenuSub className="mr-0 ml-3.5 gap-0.5 pr-0 pl-2">
             {orchestrator && <SessionLink session={orchestrator} active={location === `${base}/s/${orchestrator.id}`} />}
@@ -372,6 +392,11 @@ export function AppSidebar() {
   const setUi = useUi((s) => s.set)
   const inbox = useInboxParts()
   const inboxTotal = useInboxCount()
+  const folded = useNav((s) => s.folded)
+  // Con algún proyecto desplegado, el botón pliega todos; con todos plegados, los despliega.
+  const anyOpen = projects.some((p) => !folded[p.id])
+  const FoldIcon = anyOpen ? ChevronsDownUp : ChevronsUpDown
+  const foldLabel = anyOpen ? "Plegar todos los proyectos" : "Desplegar todos los proyectos"
   const [location] = useLocation()
   // En móvil la barra es un panel encima de la página: se cierra al ir a otro lado.
   const { isMobile, setOpenMobile } = useSidebar()
@@ -426,6 +451,25 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup className="pt-1">
           <SidebarGroupLabel className="eyebrow">Proyectos</SidebarGroupLabel>
+          {projects.length > 1 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SidebarGroupAction
+                  aria-label={foldLabel}
+                  className="right-8"
+                  onClick={() =>
+                    useNav.getState().setAllFolded(
+                      projects.map((p) => p.id),
+                      anyOpen
+                    )
+                  }
+                >
+                  <FoldIcon />
+                </SidebarGroupAction>
+              </TooltipTrigger>
+              <TooltipContent side="right">{foldLabel}</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <SidebarGroupAction aria-label="Nuevo proyecto" onClick={() => setUi({ newProject: true })}>
