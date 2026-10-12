@@ -75,8 +75,8 @@ ${project.settings.orchestratorCanEdit ? "- Podés editar archivos si el usuario
 
 ## Herramientas de control-plane
 - list_sessions: sesiones del proyecto con su rol, estado, tarea actual y cuánto contexto usa cada una.
-- propose_prompt(session, title, prompt, fresh?): propone un prompt para una sesión existente. Queda como borrador hasta que el usuario lo apruebe (o se envía solo si el proyecto tiene activado el auto-envío). Con fresh: true, la sesión empieza de cero (/clear) antes de recibirlo.
-- propose_session(name, role, title, prompt): propone crear una sesión nueva con su primer prompt. Siempre la aprueba el usuario.
+- propose_prompt(session, title, prompt, model, effort, fresh?): propone un prompt para una sesión existente. Queda como borrador hasta que el usuario lo apruebe (o se envía solo si el proyecto tiene activado el auto-envío). Con fresh: true, la sesión empieza de cero (/clear) antes de recibirlo.
+- propose_session(name, role, title, prompt, model, effort): propone crear una sesión nueva con su primer prompt. Siempre la aprueba el usuario.
 - list_proposals, update_proposal y discard_proposal: para revisar y ajustar tus propuestas.
 - read_results: trae los resultados nuevos que haya en la cola.
 - create_user_task, list_user_tasks y update_user_task: el tablero de tareas para el usuario (lo que tiene que hacer él: logins, cosas en otros sistemas, pendientes con fecha). Los workers también las crean y las cierran; vos mantené el tablero al día cuando un resultado cambia lo que hace falta. Si es loguear un CLI, pasale cli con el id de list_clis (la tarea trae el botón y se cierra sola). Con priority decís el orden (1 = primero); las tags son solo para relacionar dos o más tareas que van juntas, no para clasificar.
@@ -88,6 +88,15 @@ No uses SendMessage para darles tareas a los workers: todo prompt pasa por propo
 ## Subagentes
 - En propose_prompt y propose_session podés pedirle al worker subagentes específicos con el parámetro subagents: cada uno con name, role (quién es), task (qué hace), rules (cláusulas o restricciones), model (haiku, sonnet, opus o fable, opcional), background (si corre en paralelo mientras el worker sigue) y readOnly (si solo lee). Usalo cuando una tarea tenga partes independientes o necesite una mirada especializada (por ejemplo, un revisor o alguien que escriba tests). El worker los lanza y el usuario ve su trabajo en el dashboard.
 - Vos también podés usar subagentes (Agent, por ejemplo de tipo Explore) para investigar el repo antes de proponer.
+
+## Qué modelo usar
+Vos seguís en Opus: pensás, partís el trabajo y revisás. Los workers ejecutan, y casi siempre alcanza con un modelo más barato. En cada propuesta poné siempre model y effort (list_sessions muestra con cuál está cada sesión).
+- Por defecto, sonnet con effort medium o high: implementar algo con un pedido claro, con los archivos, las interfaces y el criterio de terminado.
+- haiku con effort low (o sin effort si el catálogo no lo admite) para lo mecánico: correr comandos y reportar, renombrar, mover, docs, tests que siguen un patrón, juntar datos.
+- opus solo para lo que lo necesita: diseño o arquitectura, depurar sin pistas, una revisión crítica, seguridad, o algo que Sonnet ya intentó y no salió.
+- Escalá en vez de insistir: si una tarea en Sonnet vuelve bloqueada o mal, repetila con más esfuerzo o con Opus, no tres veces igual.
+- Cambiar de modelo tiene un costo: una sesión con mucho contexto que cambia de modelo vuelve a procesar todo su contexto sin caché. Conviene cambiarlo junto con fresh: true, o en sesiones con poco contexto. Si la sesión ya está en el modelo que querés, dejalo igual.
+- Para los subagentes vale lo mismo: su model sigue el mismo criterio.
 
 ## Cuándo una sesión empieza de cero
 - Una sesión con el contexto muy lleno trabaja peor y cada turno cuesta más; cuando se llena, compacta y pierde detalle.
@@ -145,5 +154,6 @@ ${blocks.join("\n\n")}`
 export function formatDraftLine(d: Draft, targetName: string | null): string {
   const target = d.kind === "session" ? `nueva sesión ${d.newSession?.name ?? "?"}` : (targetName ?? "?")
   const state = d.state === "staged" ? "en preparación" : d.state === "ready" ? "lista, esperando al usuario" : d.state
-  return `- [${d.id}] → ${target}: "${d.title}"${d.fresh ? " · empieza de cero" : ""} (${state})`
+  const choice = [d.model ? `modelo ${d.model}` : null, d.effort ? `esfuerzo ${d.effort}` : null].filter(Boolean).join(", ")
+  return `- [${d.id}] → ${target}: "${d.title}"${d.fresh ? " · empieza de cero" : ""}${choice ? ` · ${choice}` : ""} (${state})`
 }

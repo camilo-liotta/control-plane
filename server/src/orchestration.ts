@@ -4,6 +4,7 @@ import type { Db, ProjectRecord, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
+import { checkModelChoice, choiceLabel, sessionChoice } from "./shared/models.ts"
 import type { Draft, Project, Report, ReportStatus, ReviewState, SubagentSpec } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
 
@@ -53,6 +54,16 @@ export function normalizeSubagents(raw: unknown): SubagentSpec[] {
       readOnly: Boolean(s.readOnly),
     }
   }).filter((s) => s.task)
+}
+
+/** Lo que el usuario puede cambiar de una propuesta antes de aprobarla. model/effort: null = que la sesión siga con el que tiene. */
+export interface DraftEdits {
+  title?: string
+  prompt?: string
+  subagents?: unknown
+  fresh?: boolean
+  model?: string | null
+  effort?: string | null
 }
 
 export interface CreateWorkerInput {
@@ -142,6 +153,44 @@ export class Orchestration {
   findSessionByName(projectId: string, name: string): SessionRecord | null {
     const n = name.trim().toLowerCase()
     return this.db.listSessions().find((s) => s.projectId === projectId && s.name.toLowerCase() === n) ?? null
+  }
+
+  /** Con qué modelo corre una sesión si no se le cambia: el suyo, o el de los workers (o el del proyecto). */
+  effectiveModel(s: SessionRecord): string | null {
+    return sessionChoice(this.db.getProject(s.projectId)?.settings, s).model
+  }
+
+  effectiveEffort(s: SessionRecord): string | null {
+    return sessionChoice(this.db.getProject(s.projectId)?.settings, s).effort
+  }
+
+  /** Lo que usaría un worker nuevo del proyecto. */
+  private newWorkerModel(projectId: string): string | null {
+    return sessionChoice(this.db.getProject(projectId)?.settings, { kind: "worker", model: null, effort: null }).model
+  }
+
+  /** Valida el modelo y el esfuerzo de una propuesta contra el catálogo de Claude Code. */
+  checkChoice(model: string | null | undefined, effort: string | null | undefined, base: string | null) {
+    return checkModelChoice(this.sessions.meta.models, model, effort, base)
+  }
+
+  /**
+   * Antes de mandarle un prompt: le cambia el modelo y el esfuerzo si la propuesta pide otros (quedan
+   * guardados en la sesión) y deja una línea en su chat cuando cambia lo que va a usar.
+   */
+  private async applyChoice(target: SessionRecord, model: string | null, effort: string | null, title: string) {
+    const beforeModel = this.effectiveModel(target)
+    const beforeEffort = this.effectiveEffort(target)
+    if (model && model !== target.model) await this.sessions.setModel(target.id, model)
+    if (effort && effort !== target.effort) await this.sessions.setEffort(target.id, effort)
+    const afterModel = model ?? beforeModel
+    const afterEffort = effort ?? beforeEffort
+    if (afterModel === beforeModel && afterEffort === beforeEffort) return
+    const models = this.sessions.meta.models
+    const label = [afterModel ? choiceLabel(models, afterModel, null) : "el modelo por defecto", afterEffort ? choiceLabel(models, null, afterEffort) : null]
+      .filter(Boolean)
+      .join(" · ")
+    this.sessions.addEvent(target.id, { kind: "notice", level: "info", text: `Modelo: ${label}, para «${title}»` })
   }
 
   private noteDecision(projectId: string, text: string) {
@@ -425,12 +474,16 @@ export class Orchestration {
     return `\n\n⚠️ Hay ${queued.length} ${queued.length === 1 ? "resultado nuevo" : "resultados nuevos"} en la cola (${names}). Leelos con read_results antes de terminar: tus propuestas no se liberan hasta que la cola esté vacía.`
   }
 
-  proposePrompt(orch: SessionRecord, input: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean }): string {
+  proposePrompt(
+    orch: SessionRecord,
+    input: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null }
+  ): string {
     const target = this.findSessionByName(orch.projectId, input.session)
     if (!target || target.kind !== "worker") {
       const names = this.workersOf(orch.projectId).map((w) => w.name).join(", ") || "ninguna"
       throw new Error(`No existe la sesión "${input.session}". Sesiones worker: ${names}. Si hace falta una nueva, usá propose_session.`)
     }
+    const choice = this.checkChoice(input.model, input.effort, this.effectiveModel(target))
     const d: Draft = {
       id: shortId("d_"),
       projectId: orch.projectId,
@@ -449,18 +502,23 @@ export class Orchestration {
       subagents: normalizeSubagents(input.subagents),
       fresh: input.fresh === true,
       ...DRAFT_DEFAULTS,
+      ...choice,
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
     const subs = d.subagents.length ? ` Con ${d.subagents.length} ${d.subagents.length === 1 ? "subagente" : "subagentes"} (${d.subagents.map((s) => s.name).join(", ")}).` : ""
-    return `Propuesta ${d.id} creada para ${target.name}${d.fresh ? " (empieza de cero)" : ""}.${subs} Queda en preparación hasta que termines el turno; después la aprueba el usuario${this.db.getProject(orch.projectId)?.settings.autoDispatch ? " (el proyecto tiene auto-envío: se va a enviar sola)" : ""}.${this.openDraftGuard(orch.projectId)}`
+    return `Propuesta ${d.id} creada para ${target.name}${d.fresh ? " (empieza de cero)" : ""}${this.choiceNote(d)}.${subs} Queda en preparación hasta que termines el turno; después la aprueba el usuario${this.db.getProject(orch.projectId)?.settings.autoDispatch ? " (el proyecto tiene auto-envío: se va a enviar sola)" : ""}.${this.openDraftGuard(orch.projectId)}`
   }
 
-  proposeSession(orch: SessionRecord, input: { name: string; role: string; title: string; prompt: string; subagents?: unknown }): string {
+  proposeSession(
+    orch: SessionRecord,
+    input: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null }
+  ): string {
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
     if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}. Elegí otro nombre o usá propose_prompt.`)
+    const choice = this.checkChoice(input.model, input.effort, this.newWorkerModel(orch.projectId))
     const d: Draft = {
       id: shortId("d_"),
       projectId: orch.projectId,
@@ -479,16 +537,26 @@ export class Orchestration {
       subagents: normalizeSubagents(input.subagents),
       fresh: false,
       ...DRAFT_DEFAULTS,
+      ...choice,
     }
     this.db.insertDraft(d)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
-    return `Propuesta ${d.id} creada: sesión nueva ${name}. El usuario la tiene que aprobar para que se cree.${this.openDraftGuard(orch.projectId)}`
+    return `Propuesta ${d.id} creada: sesión nueva ${name}${this.choiceNote(d)}. El usuario la tiene que aprobar para que se cree.${this.openDraftGuard(orch.projectId)}`
   }
 
   updateProposal(
     orch: SessionRecord,
-    input: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown; fresh?: boolean }
+    input: {
+      id: string
+      title?: string
+      prompt?: string
+      session?: string
+      subagents?: unknown
+      fresh?: boolean
+      model?: string | null
+      effort?: string | null
+    }
   ): string {
     const d = this.db.getDraft(input.id)
     if (!d || d.projectId !== orch.projectId) throw new Error(`No existe la propuesta ${input.id}.`)
@@ -504,10 +572,31 @@ export class Orchestration {
       if (!target || target.kind !== "worker") throw new Error(`No existe la sesión "${input.session}".`)
       patch.targetSessionId = target.id
     }
+    if (input.model !== undefined || input.effort !== undefined) {
+      const choice = this.checkChoice(
+        input.model === undefined ? d.model : input.model,
+        input.effort === undefined ? d.effort : input.effort,
+        this.baseModelOf({ ...d, ...patch })
+      )
+      patch.model = choice.model
+      patch.effort = choice.effort
+    }
     this.db.updateDraft(d.id, patch)
     this.broadcastDraft(d.id)
     this.broadcastProject(orch.projectId)
-    return `Propuesta ${d.id} actualizada (revisión ${d.revision + 1}).${this.openDraftGuard(orch.projectId)}`
+    return `Propuesta ${d.id} actualizada (revisión ${d.revision + 1})${this.choiceNote(this.db.getDraft(d.id)!)}.${this.openDraftGuard(orch.projectId)}`
+  }
+
+  /** El modelo con que seguiría la sesión de una propuesta si no lo cambia: contra él se valida el esfuerzo. */
+  private baseModelOf(d: Pick<Draft, "kind" | "targetSessionId" | "projectId">): string | null {
+    const target = d.targetSessionId ? this.db.getSession(d.targetSessionId) : null
+    return target ? this.effectiveModel(target) : this.newWorkerModel(d.projectId)
+  }
+
+  /** ", con sonnet · esfuerzo medio" para las respuestas a la orquestadora. */
+  private choiceNote(d: Pick<Draft, "model" | "effort">): string {
+    const label = choiceLabel(this.sessions.meta.models, d.model, d.effort)
+    return label ? `, con ${label}` : ""
   }
 
   discardProposal(orch: SessionRecord, input: { id: string; reason?: string }): string {
@@ -560,7 +649,7 @@ export class Orchestration {
   /** Aprueba y envía una propuesta (con tus ediciones, si las hay). */
   async sendDraft(
     id: string,
-    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown; fresh?: boolean },
+    edits: DraftEdits & { name?: string; role?: string },
     auto = false
   ): Promise<Draft> {
     const d = this.db.getDraft(id)
@@ -572,37 +661,49 @@ export class Orchestration {
     const prompt = edits.prompt?.trim() || d.prompt
     const subagents = edits.subagents !== undefined ? normalizeSubagents(edits.subagents) : d.subagents
     const fresh = d.kind === "prompt" && (typeof edits.fresh === "boolean" ? edits.fresh : d.fresh)
+    const { model, effort } =
+      edits.model !== undefined || edits.effort !== undefined
+        ? this.checkChoice(edits.model === undefined ? d.model : edits.model, edits.effort === undefined ? d.effort : edits.effort, this.baseModelOf(d))
+        : { model: d.model, effort: d.effort }
     const edited =
       prompt !== d.prompt ||
       title !== d.title ||
       Boolean(edits.name || edits.role) ||
       JSON.stringify(subagents) !== JSON.stringify(d.subagents) ||
-      fresh !== d.fresh
+      fresh !== d.fresh ||
+      model !== d.model ||
+      effort !== d.effort
     const message = withSubagents(prompt, subagents)
+    const withChoice = choiceLabel(this.sessions.meta.models, model, effort)
     // La marcamos antes de mandar para que un doble click no la envíe dos veces.
-    this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now(), title, prompt, edited, subagents, fresh })
+    this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now(), title, prompt, edited, subagents, fresh, model, effort })
     try {
       if (d.kind === "prompt") {
         if (!d.targetSessionId) throw new Error("La propuesta no tiene sesión destino")
         const target = this.db.getSession(d.targetSessionId)
         if (!target || target.archivedAt) throw new Error("La sesión destino ya no existe")
         // Empezar de cero: /clear y, cuando Claude Code confirma la conversación nueva, el prompt.
+        // En orden: de cero, después el modelo y el esfuerzo, y recién ahí el prompt.
         if (fresh) await this.sessions.clearConversation(target.id)
+        await this.applyChoice(target, model, effort, title)
         this.sessions.update(target.id, { taskTitle: title, taskState: "assigned" })
         await this.sessions.send(target.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
         this.noteDecision(
           d.projectId,
-          `${auto ? "Se envió automáticamente" : edited ? "Aprobó con cambios" : "Aprobó"} ${d.id} → ${target.name}${fresh ? " (empezando de cero)" : ""}: "${title}"${edited ? `. Versión enviada:\n${prompt}` : ""}`
+          `${auto ? "Se envió automáticamente" : edited ? "Aprobó con cambios" : "Aprobó"} ${d.id} → ${target.name}${fresh ? " (empezando de cero)" : ""}${withChoice ? `, con ${withChoice}` : ""}: "${title}"${edited ? `. Versión enviada:\n${prompt}` : ""}`
         )
       } else {
         const name = sanitizeSessionName(edits.name || d.newSession?.name || "").toUpperCase()
         const role = (edits.role ?? d.newSession?.role ?? "").trim()
         if (!name) throw new Error("Falta el nombre de la sesión")
         if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}`)
-        const worker = await this.createWorker(d.projectId, { name, role })
+        const worker = await this.createWorker(d.projectId, { name, role, model, effort })
         this.sessions.update(worker.id, { taskTitle: title, taskState: "assigned" })
         await this.sessions.send(worker.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
-        this.noteDecision(d.projectId, `Creó la sesión ${name} (${d.id}) con el prompt "${title}"${edited ? " (con cambios)" : ""}`)
+        this.noteDecision(
+          d.projectId,
+          `Creó la sesión ${name} (${d.id})${withChoice ? `, con ${withChoice},` : ""} con el prompt "${title}"${edited ? " (con cambios)" : ""}`
+        )
       }
     } catch (err) {
       this.db.updateDraft(d.id, { state: "ready", decidedAt: null })
@@ -625,11 +726,16 @@ export class Orchestration {
     return this.db.getDraft(d.id)!
   }
 
-  editDraft(id: string, edits: { title?: string; prompt?: string; subagents?: unknown; fresh?: boolean }): Draft {
+  editDraft(id: string, edits: DraftEdits): Draft {
     const d = this.db.getDraft(id)
     if (!d) throw new Error("La propuesta no existe")
     if (d.state !== "ready") throw new Error("Solo se pueden editar propuestas listas")
+    const choice =
+      edits.model !== undefined || edits.effort !== undefined
+        ? this.checkChoice(edits.model === undefined ? d.model : edits.model, edits.effort === undefined ? d.effort : edits.effort, this.baseModelOf(d))
+        : null
     this.db.updateDraft(d.id, {
+      ...(choice ?? {}),
       title: edits.title?.trim() || d.title,
       prompt: edits.prompt?.trim() || d.prompt,
       ...(edits.subagents !== undefined ? { subagents: normalizeSubagents(edits.subagents) } : {}),

@@ -21,6 +21,7 @@ import { Editor } from "./editor.ts"
 import { localOnly, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
 import { registerRestart, Restart, resumeSummary } from "./restart.ts"
+import { sessionChoice } from "./shared/models.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
@@ -87,8 +88,7 @@ async function main() {
           ? orchestratorProtocol(project, s, workers)
           : workerProtocol(project, s, orch, workers.filter((w) => w.id !== s.id)),
       orchestratorCanEdit: project.settings.orchestratorCanEdit,
-      model: s.model ?? project.settings.defaultModel,
-      effort: s.effort ?? project.settings.defaultEffort,
+      ...sessionChoice(project.settings, s),
       env: accounts.env(account),
       bin: accounts.bin(account),
       accountId: account.id,

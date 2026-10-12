@@ -15,7 +15,7 @@ import { defaultSettings, type Db } from "./db.ts"
 import { projectFolder, type Editor } from "./editor.ts"
 import { PathResolver } from "./file-refs.ts"
 import type { Hub } from "./hub.ts"
-import { importSession, type Orchestration } from "./orchestration.ts"
+import { importSession, type DraftEdits, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
@@ -25,6 +25,7 @@ import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
 import type { Environments } from "./environments.ts"
 import type { SkillMarket } from "./skill-market.ts"
+import { checkModelChoice } from "./shared/models.ts"
 import type { AppInput, ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
@@ -368,6 +369,15 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
           settings.batchWindowSec = Math.min(600, Math.max(0, Number(settings.batchWindowSec) || 0))
           if (!["auto", "notify", "ask"].includes(settings.compactMode)) settings.compactMode = defaultSettings.compactMode
           settings.compactWaitMin = Math.min(45, Math.max(1, Math.round(Number(settings.compactWaitMin) || defaultSettings.compactWaitMin)))
+          // El de los workers se valida contra el catálogo; null = igual que el del proyecto.
+          const worker = checkModelChoice(
+            sessions.meta.models,
+            settings.workerModel ?? null,
+            settings.workerEffort ?? null,
+            settings.workerModel ?? settings.defaultModel ?? null
+          )
+          settings.workerModel = worker.model
+          settings.workerEffort = worker.effort
         }
         db.updateProject(p.id, { name: req.body.name?.trim() || undefined, settings })
         const view = orchestration.projectView(db.getProject(p.id)!)
@@ -917,7 +927,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ------------------------------------------------------------------ drafts
 
-  app.post<{ Params: { id: string }; Body: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown; fresh?: boolean } }>(
+  app.post<{ Params: { id: string }; Body: DraftEdits & { name?: string; role?: string } }>(
     "/api/drafts/:id/send",
     (req, reply) => guard(reply, () => orchestration.sendDraft(req.params.id, req.body ?? {}))
   )
@@ -926,7 +936,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => orchestration.discardDraft(req.params.id))
   )
 
-  app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string; subagents?: unknown; fresh?: boolean } }>("/api/drafts/:id", (req, reply) =>
+  app.patch<{ Params: { id: string }; Body: DraftEdits }>("/api/drafts/:id", (req, reply) =>
     guard(reply, () => orchestration.editDraft(req.params.id, req.body ?? {}))
   )
 

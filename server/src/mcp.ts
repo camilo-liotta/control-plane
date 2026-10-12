@@ -46,6 +46,20 @@ const freshSchema = z
     "true: la sesión empieza de cero (/clear) antes de este prompt. Para una tarea que no necesita lo que la sesión trae en contexto, con lo anterior cerrado. El prompt tiene que ser autocontenido."
   )
 
+const modelSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .describe(
+    "Modelo con que sale: haiku, sonnet, opus o fable (o un valor del catálogo). Queda en la sesión hasta que otra propuesta o el usuario lo cambien. Sin poner, la sesión sigue con el que tiene."
+  )
+
+const effortSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .describe("Esfuerzo: low, medium, high, xhigh o max (los que soporte el modelo). Sin poner, sigue con el que tiene.")
+
 const taskCliSchema = z
   .object({
     id: z.string().min(1).describe("El id del CLI en el catálogo, tal como lo da list_clis (gh, gcloud, aws, vercel…)."),
@@ -72,6 +86,13 @@ const tagsSchema = z
 function contextLine(ctx: ContextUsage | null): string | null {
   if (!ctx || !ctx.max) return null
   return `contexto: ${Math.round((ctx.tokens / ctx.max) * 100)}% (${Math.round(ctx.tokens / 1000)}k de ${Math.round(ctx.max / 1000)}k tokens)`
+}
+
+/** "modelo: sonnet, esfuerzo medium": lo que usa la sesión desde su próximo turno. */
+function choiceLine(orchestration: Orchestration, s: SessionRecord): string {
+  const model = orchestration.effectiveModel(s)
+  const effort = orchestration.effectiveEffort(s)
+  return `modelo: ${model ?? "el por defecto"}${effort ? `, esfuerzo ${effort}` : ""}`
 }
 
 const APP_STATUS_ES: Record<AppStatus, string> = {
@@ -154,6 +175,7 @@ function buildServer(
             s.role ? `rol: ${s.role}` : null,
             `estado: ${STATUS_ES[sessions.statusOf(s.id)]}`,
             s.taskTitle ? `tarea: ${s.taskTitle}` : null,
+            choiceLine(orchestration, s),
             contextLine(sessions.contextOf(s.id)),
             s.worktree ? "worktree propio" : null,
             last ? `último resultado: ${last.status} — ${last.summary.split("\n")[0]}` : null,
@@ -371,16 +393,18 @@ function buildServer(
       {
         title: "Proponer prompt",
         description:
-          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el proyecto tiene auto-envío).",
+          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el proyecto tiene auto-envío). Poné siempre model y effort: Sonnet para implementar un pedido claro, Haiku para lo mecánico, Opus solo si hace falta.",
         inputSchema: {
           session: z.string().describe("Nombre de la sesión destino, tal como aparece en list_sessions."),
           title: z.string().describe("Título corto de la tarea (se muestra en el dashboard)."),
           prompt: z.string().min(1).describe("Prompt completo y autocontenido para la sesión."),
           subagents: subagentSchema,
           fresh: freshSchema,
+          model: modelSchema,
+          effort: effortSchema,
         },
       },
-      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean }) =>
+      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null }) =>
         orchestration.proposePrompt(self, args)
       )
     )
@@ -390,16 +414,18 @@ function buildServer(
       {
         title: "Proponer sesión nueva",
         description:
-          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba.",
+          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba. Poné model y effort: la sesión arranca con ellos.",
         inputSchema: {
           name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E)."),
           role: z.string().describe("Rol o responsabilidad de la sesión."),
           title: z.string().describe("Título corto de la primera tarea."),
           prompt: z.string().min(1).describe("Primer prompt, completo y autocontenido."),
           subagents: subagentSchema,
+          model: modelSchema,
+          effort: effortSchema,
         },
       },
-      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown }) =>
+      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null }) =>
         orchestration.proposeSession(self, args)
       )
     )
@@ -408,7 +434,7 @@ function buildServer(
       "update_proposal",
       {
         title: "Actualizar propuesta",
-        description: "Modifica una propuesta que todavía no se envió (título, prompt o sesión destino).",
+        description: "Modifica una propuesta que todavía no se envió (título, prompt, sesión destino, modelo o esfuerzo). model o effort en null los sacan: la sesión sigue con el que tiene.",
         inputSchema: {
           id: z.string().describe("Id de la propuesta (ej. d_ab12cd)."),
           title: z.string().optional(),
@@ -416,9 +442,11 @@ function buildServer(
           session: z.string().optional().describe("Nueva sesión destino."),
           fresh: freshSchema,
           subagents: subagentSchema,
+          model: modelSchema,
+          effort: effortSchema,
         },
       },
-      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown; fresh?: boolean }) =>
+      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null }) =>
         orchestration.updateProposal(self, args)
       )
     )
