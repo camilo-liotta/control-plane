@@ -6,6 +6,7 @@ import type { Attachment, Project, Report, Session } from "@shared/types"
 import { FileChip, ImageThumb, isImage } from "@/components/attachments"
 import { SubagentList } from "@/components/timeline/subagents"
 import { DraftCard } from "@/components/draft-card"
+import { SessionPlanLine } from "@/components/plan-card"
 import { SessionCredentialsLine } from "@/components/project-environments"
 import { Section } from "@/components/panel-section"
 import { ReportCard } from "@/components/report-card"
@@ -155,6 +156,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
         </>
       ) : (
         <>
+          <SessionPlanLine session={session} className="mx-3 mt-3 mb-1" />
           <Section id="task" title="Tarea actual" summary={session.taskTitle ?? "sin tarea"}>
             <p className={session.taskTitle ? "leading-snug" : "text-xs text-muted-foreground"}>
               {session.taskTitle ?? "Sin tarea asignada. Cuando la orquestadora le mande una, aparece acá."}

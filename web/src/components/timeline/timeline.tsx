@@ -6,6 +6,7 @@ import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
 import { AttachmentList } from "@/components/attachments"
 import { DraftCard } from "@/components/draft-card"
+import { usePlanLink } from "@/components/plan-card"
 import { RefText } from "@/components/file-ref"
 import { SubagentSpecList } from "@/components/subagent-specs"
 import { TonePill } from "@/components/status"
@@ -64,7 +65,10 @@ export function buildItems(events: StoredEvent[]): Item[] {
   return items
 }
 
-/** "Paso 2 de 4 · plan «X»" encima del mensaje de un paso: lleva a la tarjeta del plan, en el chat de la orquestadora. */
+/**
+ * "Paso 2 de 4 · plan «X»" encima del mensaje de un paso: lleva a la tarjeta del plan (en el resumen
+ * del proyecto si sigue en curso; si no, en el chat de la orquestadora).
+ */
 function PlanMark({ plan, planTitle, sessionId }: { plan: NonNullable<Ev<"user">["event"]["plan"]>; planTitle?: string; sessionId: string }) {
   const [, navigate] = useLocation()
   const draft = useStore((s) => s.drafts[plan.draftId])
@@ -73,19 +77,27 @@ function PlanMark({ plan, planTitle, sessionId }: { plan: NonNullable<Ev<"user">
     const pid = draft?.projectId ?? s.sessions[sessionId]?.projectId
     return pid ? Object.values(s.sessions).find((x) => x.projectId === pid && x.kind === "orchestrator" && !x.archivedAt) : undefined
   })
+  const link = usePlanLink(draft)
   const title = planTitle ?? draft?.title
   const label = `Paso ${plan.step + 1} de ${plan.total}${title ? ` · plan «${title}»` : ""}`
   const open = () => {
-    if (!orchestrator) return
-    useUi.getState().set({ reveal: { kind: "proposals", id: orchestrator.id, item: plan.draftId, at: Date.now() } })
-    navigate(`/p/${orchestrator.projectId}/s/${orchestrator.id}`)
+    if (link?.onClick) {
+      link.onClick()
+      navigate(link.href)
+      return
+    }
+    // Plan terminado, o uno viejo que ya no viene en el snapshot: su tarjeta, en el chat de la orquestadora.
+    const orchId = draft?.createdBy ?? orchestrator?.id
+    if (!orchId) return
+    useUi.getState().set({ reveal: { kind: "proposals", id: orchId, item: plan.draftId, at: Date.now() } })
+    navigate(`/p/${draft?.projectId ?? orchestrator!.projectId}/s/${orchId}`)
   }
   return (
     <button
       type="button"
       onClick={open}
-      disabled={!orchestrator}
-      title={orchestrator ? (plan.title ? `Paso ${plan.step + 1}: ${plan.title}` : undefined) : "La orquestadora de este plan ya no está"}
+      disabled={!link && !orchestrator}
+      title={link || orchestrator ? (plan.title ? `Paso ${plan.step + 1}: ${plan.title}` : undefined) : "La orquestadora de este plan ya no está"}
       className="flex max-w-[85%] items-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:text-foreground"
     >
       <ListOrdered className="size-3.5 shrink-0" />
