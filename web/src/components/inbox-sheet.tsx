@@ -3,7 +3,6 @@ import { useEffect, useState } from "react"
 import { Link, useLocation } from "wouter"
 
 import { DraftCard } from "@/components/draft-card"
-import { planStuck } from "@/components/plan-card"
 import { ReportCard } from "@/components/report-card"
 import { PriorityBadge } from "@/components/user-tasks"
 import { SessionLamp, TonePill } from "@/components/status"
@@ -30,7 +29,7 @@ interface Bucket {
   /** Planes en pausa: esperan a la orquestadora o a vos. */
   paused: Draft[]
   queue: Report[]
-  /** Hay algo que te necesita: una sesión, una tarea que frena, una propuesta lista o un plan trabado. */
+  /** Hay algo que te necesita: una sesión, una tarea que frena, una propuesta lista o un plan en pausa. */
   urgent: boolean
   latest: number
 }
@@ -117,7 +116,7 @@ export function InboxSheet() {
 
   const counts = inboxCounts({ sessions: Object.values(sessions), drafts: Object.values(drafts), tasks: Object.values(tasks) })
   const groups = Object.values(byProject)
-  for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some(taskWaits) || b.paused.some(planStuck)
+  for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some(taskWaits) || b.paused.length > 0
   groups.sort(
     (a, b) =>
       Number(b.projectId === here) - Number(a.projectId === here) ||

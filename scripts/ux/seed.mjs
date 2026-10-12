@@ -106,31 +106,24 @@ await api("POST", `/api/sessions/${id("FACTURACION")}/compaction/draft`).catch((
 await mcp("ORQ-TURNOS", "propose_prompt", { session: "COSTOS", title: "Apagar las máquinas ociosas de staging", prompt: "Listá las máquinas de staging sin uso en 7 días y proponé cuáles apagar, con el ahorro estimado.", model: "sonnet", effort: "medium" })
 await mcp("ORQ-TURNOS", "propose_session", { name: "ALERTAS", role: "Alertas de presupuesto", title: "Alertas de presupuesto", prompt: "Configurá alertas al 50, 80 y 100% del presupuesto mensual.", model: "haiku" })
 
-// Planes: uno listo para enviar, uno en curso (paso 2 de 4) y uno en pausa porque un paso volvió bloqueado.
-await mcp("ORQ-DATOS", "propose_plan", { session: "INGESTA", title: "Ingesta de un proveedor nuevo", steps: [
-  { title: "Leer el formato del proveedor", prompt: "Mirá los CSV de ejemplo en samples/proveedor-c y escribí el esquema.", model: "haiku", effort: "low" },
-  { title: "Cargador y validaciones", prompt: "Armá el cargador con validaciones por fila y tests.", model: "sonnet", effort: "medium", fresh: true },
-  { title: "Revisar el resultado", prompt: "Revisá los rechazos de la primera carga y proponé ajustes." },
-] })
-const enCurso = draftId(await mcp("ORQ-PORTAL", "propose_plan", { session: "API", title: "Reintentos del webhook de pagos", steps: [
-  { title: "Cola de reintentos", prompt: "Armá la cola de reintentos con backoff exponencial.", model: "sonnet", effort: "high" },
-  { title: "Idempotencia", prompt: "Que un webhook repetido no marque dos veces la factura.", model: "sonnet", effort: "medium", fresh: true },
-  { title: "Alertas al tercer fallo", prompt: "Al tercer fallo, una alerta al canal de pagos.", model: "haiku", effort: "low" },
-  { title: "Documentar", prompt: "Actualizá el README de pagos.", model: "haiku" },
+// Planes: uno listo para enviar, uno en curso (paso 2 de 4, trabajando) y uno en pausa porque un paso
+// volvió bloqueado. Avanzan solos: el Claude falso reporta lo que pide el prompt ("REPORTA done").
+const listo = draftId(await mcp("ORQ-TURNOS", "propose_plan", { session: "MIGRACION-DB", title: "Reporte semanal de turnos", steps: [
+  { title: "Juntar los datos", prompt: "Armá la consulta de turnos dados, cancelados y ausentes por semana.", model: "haiku", effort: "low" },
+  { title: "El reporte", prompt: "Armá el reporte en PDF con los tres números y la tendencia.", model: "sonnet", effort: "medium", fresh: true },
+  { title: "Mandarlo los lunes", prompt: "Programá el envío los lunes a las 9." },
 ] }))
-const enPausa = draftId(await mcp("ORQ-TURNOS", "propose_plan", { session: "MIGRACION-DB", title: "Pasar turnos a Postgres 16", steps: [
-  { title: "Inventario de extensiones", prompt: "Listá las extensiones y si existen en Postgres 16.", model: "haiku", effort: "low" },
-  { title: "Migrar en staging", prompt: "Migrá la base de staging y corré los tests.", model: "sonnet", effort: "medium" },
+const enCurso = draftId(await mcp("ORQ-TURNOS", "propose_plan", { session: "COSTOS", title: "Bajar el costo de staging", steps: [
+  { title: "Inventario de máquinas", prompt: "Listá las máquinas de staging y su uso de 7 días. REPORTA done", model: "haiku", effort: "low" },
+  { title: "Apagado nocturno", prompt: "Programá el apagado nocturno de las máquinas sin uso. LENTO 3600 REPORTA done", model: "sonnet", effort: "medium", fresh: true },
+  { title: "Alertas de gasto", prompt: "Una alerta si el gasto diario sube más de 10%.", model: "haiku", effort: "low" },
+  { title: "Documentar", prompt: "Anotá en el README qué se apaga y cuándo.", model: "haiku" },
+] }))
+const enPausa = draftId(await mcp("ORQ-TURNOS", "propose_plan", { newSession: { name: "POSTGRES", role: "Pasar la base a Postgres 16" }, title: "Pasar turnos a Postgres 16", steps: [
+  { title: "Inventario de extensiones", prompt: "Listá las extensiones y si existen en Postgres 16. REPORTA done", model: "haiku", effort: "low" },
+  { title: "Migrar en staging", prompt: "Migrá la base de staging y corré los tests. REPORTA blocked", model: "sonnet", effort: "medium" },
   { title: "Medir", prompt: "Compará los tiempos de las consultas lentas antes y después.", model: "haiku", fresh: true },
 ] }))
-for (const id of [enCurso, enPausa].filter(Boolean)) await api("POST", `/api/drafts/${id}/send`).catch((e) => console.log("plan:", e.message))
-await sleep(2500)
-if (enCurso) await mcp("API", "report_result", { status: "done", summary: "La cola guarda los webhooks fallidos y reintenta a 1, 5 y 30 min.\nTests en src/payments/retry.test.ts." })
-if (enPausa) {
-  await mcp("MIGRACION-DB", "report_result", { status: "done", summary: "Todas las extensiones existen en 16, salvo una que cambia de nombre." })
-  await sleep(2500)
-  await mcp("MIGRACION-DB", "report_result", { status: "blocked", summary: "No tengo acceso de escritura a la base de staging. Hace falta el rol de administrador." })
-}
 await msg("ORQ-TURNOS", "hola")
 await mcp("ORQ-PORTAL", "propose_prompt", { session: "WEB", title: "Pantalla de recibos", prompt: "Armá la pantalla de recibos: lista por mes, estado y descarga en PDF." })
 await msg("ORQ-PORTAL", "LARGO: revisá lo que llegó")
@@ -138,6 +131,19 @@ await sleep(1500)
 await mcp("WEB", "report_result", { status: "partial", summary: "La pantalla de recibos lista por mes y descarga el PDF.\nFalta el estado \"vencido\": la API todavía no lo manda." })
 await mcp("PAGOS", "report_result", { status: "done", summary: "Los reembolsos parciales ya se registran contra la factura original." })
 await sleep(3000)
+
+// Las propuestas nacen en preparación y quedan listas cuando la orquestadora termina su turno.
+const ready = async (id) => {
+  for (let i = 0; i < 180 && (await snap()).drafts.find((d) => d.id === id)?.state !== "ready"; i++) await sleep(500)
+}
+for (const id of [enCurso, enPausa].filter(Boolean)) {
+  await ready(id)
+  await api("POST", `/api/drafts/${id}/send`).catch((e) => console.log("plan:", e.message))
+}
+await sleep(8000)
+// El bloqueado del plan en pausa va a la cola de ORQ-TURNOS: el plan listo se libera cuando termina de revisarlo.
+for (let i = 0; i < 120 && enPausa && (await snap()).drafts.find((d) => d.id === enPausa)?.planState !== "paused"; i++) await sleep(500)
+if (listo) await ready(listo)
 
 s = await snap()
 console.log("\nSesiones:", s.sessions.map((x) => `${x.name}=${x.status}`).join(" "))

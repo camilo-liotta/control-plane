@@ -470,17 +470,20 @@ export class Plans {
 
   /** El último paso terminó: un solo resultado en la cola con lo de cada paso. */
   private finish(d: Draft) {
-    this.db.updateDraft(d.id, { planState: "done", planNote: `Terminó: ${d.steps.length} pasos.`, updatedAt: now() })
+    const skipped = d.steps.filter((s) => s.state === "skipped").length
+    const total = `${d.steps.length} ${d.steps.length === 1 ? "paso" : "pasos"}${skipped ? ` (${skipped} ${skipped === 1 ? "salteado" : "salteados"})` : ""}`
+    this.db.updateDraft(d.id, { planState: "done", planNote: `Terminó: ${total}.`, updatedAt: now() })
     this.o.broadcastDraft(d.id)
     const worker = d.targetSessionId ? this.db.getSession(d.targetSessionId) : null
     if (!worker) return
-    const details = d.steps
+    // El id va en el detalle (la orquestadora lo lee ahí); el resumen es lo que ve el usuario en los avisos.
+    const details = `Plan ${d.id}.\n\n` + d.steps
       .map((s, i) => `### Paso ${i + 1}: ${s.title}${s.model ? ` (${s.model}${s.effort ? `, ${s.effort}` : ""})` : ""}\n${s.summary ?? "(sin resumen)"}${s.details ? `\n\n${s.details}` : ""}`)
       .join("\n\n")
     this.o.enqueueReport(worker, {
       status: "done",
       taskTitle: d.title,
-      summary: `Plan ${d.id} «${d.title}» terminado: ${d.steps.length} ${d.steps.length === 1 ? "paso" : "pasos"}.\nÚltimo paso: ${d.steps.at(-1)?.summary ?? ""}`,
+      summary: `«${d.title}» terminado: ${total}.\nÚltimo paso: ${d.steps.at(-1)?.summary ?? ""}`,
       details,
     })
   }
@@ -506,8 +509,10 @@ export class Plans {
     this.o.enqueueReport(worker, {
       status,
       taskTitle: d.title,
-      summary: `Plan ${d.id} «${d.title}» pausado en el paso ${i + 1} de ${d.steps.length} («${step?.title ?? "?"}»): ${note}${step?.summary ? `\n${step.summary}` : ""}`,
+      // Sin el id (va en el detalle): el resumen sale en los avisos y en la tarjeta de la sesión.
+      summary: `«${d.title}» en pausa en el paso ${i + 1} de ${d.steps.length} («${step?.title ?? "?"}»). ${note}${step?.summary && step.summary !== note ? `\n${step.summary}` : ""}`,
       details: [
+        `Plan ${d.id}.`,
         step?.details ?? null,
         `## Estado del plan\n${this.describe(this.db.getDraft(d.id)!)}`,
         remaining.length ? `Faltan ${remaining.length} ${remaining.length === 1 ? "paso" : "pasos"} después de este.` : "Era el último paso.",
@@ -589,7 +594,7 @@ export class Plans {
       return
     }
     if (step.state === "blocked" || step.state === "partial")
-      this.pause(d.id, step.state === "blocked" ? "el worker quedó bloqueado." : "el worker lo dejó a medias.", step.state, true)
+      this.pause(d.id, step.state === "blocked" ? "Quedó bloqueado." : "Quedó a medias.", step.state, true)
   }
 
   private onStatus(rec: SessionRecord, status: SessionStatus) {
