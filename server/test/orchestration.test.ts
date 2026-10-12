@@ -279,8 +279,8 @@ describe("cola de resultados", () => {
     assert.equal(db.listDrafts({ projectId, states: ["ready"] }).length, 1)
   })
 
-  it("con auto-envío, las propuestas salen solas al cerrar la revisión", async () => {
-    db.updateProject(projectId, { settings: { ...defaultSettings, batchWindowSec: 0.2, autoDispatch: true } })
+  it("en AFK, las propuestas salen solas al cerrar la revisión", async () => {
+    db.updateProject(projectId, { settings: { ...defaultSettings, batchWindowSec: 0.2 }, afk: { since: Date.now(), until: null, budgetUsd: null, spentAtStart: 0 } })
     orch.proposePrompt(orq, { session: "BACKEND", title: "T", prompt: "Hacé algo" })
     sessions.endTurn(orq)
     await sleep(20)

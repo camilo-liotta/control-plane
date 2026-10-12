@@ -1,4 +1,4 @@
-import type { Project } from "@shared/types"
+import type { AfkState, Project } from "@shared/types"
 
 import { clock, usd } from "@/lib/format"
 
@@ -6,15 +6,10 @@ import { clock, usd } from "@/lib/format"
  * Modo AFK de un proyecto (contrato de TRAY): la orquestadora envía sus propuestas sin esperar tu
  * aprobación hasta que vence `until`, se gasta `budgetUsd` o volvés.
  */
-export interface Afk {
-  since: number
-  until: number | null
-  budgetUsd: number | null
-  spentAtStart: number
-}
+export type Afk = AfkState
 
-/** El AFK del proyecto, o null si está presente. (Se lee así hasta que `Project.afk` esté en los tipos compartidos.) */
-export const afkOf = (project: Project): Afk | null => (project as Project & { afk?: Afk | null }).afk ?? null
+/** El AFK del proyecto, o null si está presente. */
+export const afkOf = (project: Project): Afk | null => project.afk
 
 async function call(method: "POST" | "DELETE", projectId: string, body?: { until: number | null; budgetUsd: number | null }) {
   const res = await fetch(`/api/projects/${projectId}/afk`, {

@@ -1,3 +1,4 @@
+import { AFK_HEADER } from "./afk.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import { normalizeSubagents, type Orchestration } from "./orchestration.ts"
 import { withSubagents } from "./prompts.ts"
@@ -149,7 +150,7 @@ export class Plans {
   /** propose_plan: un plan para una sesión existente o para una nueva. */
   propose(
     orch: SessionRecord,
-    input: { session?: string; newSession?: { name: string; role: string }; title: string; steps: StepInput[] }
+    input: { session?: string; newSession?: { name: string; role: string }; title: string; steps: StepInput[]; hold?: boolean }
   ): string {
     let target: SessionRecord | null = null
     let newSession: Draft["newSession"] = null
@@ -196,11 +197,13 @@ export class Plans {
       currentStep: null,
       planNote: null,
       revises: null,
+      hold: input.hold === true,
+      sentBy: null,
     }
     this.db.insertDraft(d)
     this.o.broadcastDraft(d.id)
     this.o.broadcastProject(orch.projectId)
-    return `Plan ${d.id} creado para ${target?.name ?? `la sesión nueva ${newSession!.name}`}: ${steps.length} pasos. Queda en preparación hasta que termines el turno; después lo aprueba el usuario${this.db.getProject(orch.projectId)?.settings.autoDispatch ? " (el proyecto tiene auto-envío: sale solo)" : ""}. Una vez aprobado avanza solo: te llega un resultado cuando termina o si se frena.`
+    return `Plan ${d.id} creado para ${target?.name ?? `la sesión nueva ${newSession!.name}`}: ${steps.length} pasos. Queda en preparación hasta que termines el turno; ${this.o.releaseNote(orch.projectId, d, !!newSession)}. Una vez aprobado avanza solo: te llega un resultado cuando termina o si se frena.`
   }
 
   /**
@@ -208,10 +211,11 @@ export class Plans {
    * propuesta nueva que cambia los pasos que faltan (vuelve a pasar por el usuario). `steps` son,
    * en ese caso, solo los que faltan: los hechos quedan como están.
    */
-  update(orch: SessionRecord, d: Draft, input: { title?: string; steps?: StepInput[] }): string {
+  update(orch: SessionRecord, d: Draft, input: { title?: string; steps?: StepInput[]; hold?: boolean }): string {
     if (d.state === "staged" || d.state === "ready") {
       const patch: Partial<Draft> = { state: "staged", updatedAt: now(), revision: d.revision + 1 }
       if (input.title !== undefined) patch.title = input.title.trim() || d.title
+      if (input.hold !== undefined) patch.hold = input.hold
       if (input.steps !== undefined) {
         if (d.revises) {
           const plan = this.db.getDraft(d.revises)
@@ -240,10 +244,10 @@ export class Plans {
     // Si ya hay una propuesta de cambio abierta para este plan, se actualiza esa.
     const open = this.db.listDrafts({ projectId: d.projectId, states: ["staged", "ready"] }).find((x) => x.revises === d.id)
     if (open) {
-      this.db.updateDraft(open.id, { steps, title: input.title?.trim() || open.title, state: "staged", updatedAt: now(), revision: open.revision + 1 })
+      this.db.updateDraft(open.id, { steps, title: input.title?.trim() || open.title, state: "staged", updatedAt: now(), revision: open.revision + 1, ...(input.hold !== undefined ? { hold: input.hold } : {}) })
       this.o.broadcastDraft(open.id)
       this.o.broadcastProject(d.projectId)
-      return `Actualicé la propuesta ${open.id}, que cambia los pasos del plan ${d.id}. El usuario la tiene que aprobar; al aprobarla, el plan sigue desde el paso ${kept.length + 1}.`
+      return `Actualicé la propuesta ${open.id}, que cambia los pasos del plan ${d.id}. ${this.o.releaseNote(d.projectId, { hold: input.hold ?? open.hold }, false)}; al aprobarla, el plan sigue desde el paso ${kept.length + 1}.`
     }
     const rev: Draft = {
       ...d,
@@ -261,11 +265,13 @@ export class Plans {
       currentStep: kept.length,
       planNote: null,
       revises: d.id,
+      hold: input.hold === true,
+      sentBy: null,
     }
     this.db.insertDraft(rev)
     this.o.broadcastDraft(rev.id)
     this.o.broadcastProject(d.projectId)
-    return `Propuesta ${rev.id} creada: cambia los pasos que faltan del plan ${d.id} (quedan ${steps.length - kept.length}). El usuario la tiene que aprobar${this.db.getProject(d.projectId)?.settings.autoDispatch ? " (con auto-envío sale sola)" : ""}; al aprobarla, el plan sigue desde el paso ${kept.length + 1}.`
+    return `Propuesta ${rev.id} creada: cambia los pasos que faltan del plan ${d.id} (quedan ${steps.length - kept.length}). ${this.o.releaseNote(d.projectId, rev)}; al aprobarla, el plan sigue desde el paso ${kept.length + 1}.`
   }
 
   /** El modelo con que sigue la sesión después de los primeros `upto` pasos de un plan. */
@@ -417,7 +423,9 @@ export class Plans {
         return
       }
       this.sessions.update(target.id, { taskTitle: `${d.title} · paso ${i + 1} de ${total}`, taskState: "assigned" })
-      await this.sessions.send(target.id, withSubagents(display, step.subagents), {
+      // En AFK el worker no tiene a quién preguntarle (también en los pasos de un plan que sigue solo).
+      const afkLine = this.db.getProject(d.projectId)?.afk ? `${AFK_HEADER}\n\n` : ""
+      await this.sessions.send(target.id, afkLine + withSubagents(display, step.subagents), {
         origin: "draft",
         draftId: d.id,
         draftTitle: d.title,

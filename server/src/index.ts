@@ -27,6 +27,7 @@ import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
 import { Terminals } from "./terminal/manager.ts"
 import { registerTerminal } from "./terminal/routes.ts"
+import { Afk } from "./afk.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
 import { decideSend, SEND_DENIED, type SendDecision, type SendGuardDeps } from "./send-guard.ts"
@@ -190,6 +191,7 @@ async function main() {
   externalTimer.unref()
 
   const orchestration = new Orchestration(db, hub, sessions, accounts)
+  const afk = new Afk({ db, hub, sessions, orchestration })
   const compaction = new Compaction({
     db,
     hub,
@@ -226,7 +228,7 @@ async function main() {
     return a ? apps.view(a) : null
   }
   const environments = new Environments({ db, hub, sessions, app: appView })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }), apps }
+  const deps = { db, hub, sessions, orchestration, afk, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }), apps }
   hub.setSummary(() => desktopSummary(deps))
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
@@ -330,6 +332,7 @@ async function main() {
     // Las apps levantadas desde el dashboard se bajan ordenadas (su comando de bajar, o SIGTERM y SIGKILL).
     await apps.shutdown().catch(() => {})
     orchestration.dispose()
+    afk.dispose()
     compaction.dispose()
     clis.dispose()
     tasks.dispose()
