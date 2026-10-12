@@ -78,7 +78,7 @@ export function ProjectSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Ajustes de {project.name}</DialogTitle>
+          <DialogTitle>Configuración de {project.name}</DialogTitle>
           <DialogDescription className="truncate font-mono text-xs" title={project.repoPath}>
             {shortPath(project.repoPath)}
           </DialogDescription>

@@ -5,6 +5,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
+import { seedMensajes } from "./seed-mensajes.mjs"
 import { CACHE, REPOS, SERVER_PORT, SRV } from "./paths.mjs"
 
 const B = `http://127.0.0.1:${SERVER_PORT}`
@@ -144,6 +145,8 @@ await sleep(8000)
 // El bloqueado del plan en pausa va a la cola de ORQ-TURNOS: el plan listo se libera cuando termina de revisarlo.
 for (let i = 0; i < 120 && enPausa && (await snap()).drafts.find((d) => d.id === enPausa)?.planState !== "paused"; i++) await sleep(500)
 if (listo) await ready(listo)
+
+seedMensajes()
 
 s = await snap()
 console.log("\nSesiones:", s.sessions.map((x) => `${x.name}=${x.status}`).join(" "))

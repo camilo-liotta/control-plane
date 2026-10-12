@@ -13,6 +13,7 @@ export type PanelSection =
   | "attachments"
   | "tools"
   | "details"
+  | "other-projects"
   /** El resumen de git de la vista del proyecto (igual para todos los proyectos). */
   | "project-repos"
   /** Lo programado por las sesiones, en la vista del proyecto. */

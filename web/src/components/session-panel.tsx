@@ -9,6 +9,7 @@ import { DraftCard } from "@/components/draft-card"
 import { SessionPlanLine } from "@/components/plan-card"
 import { SessionCredentialsLine } from "@/components/project-environments"
 import { Section } from "@/components/panel-section"
+import { OtherProjectsSection } from "@/components/project-messages"
 import { ReportCard } from "@/components/report-card"
 import { ReviewGate } from "@/components/review-gate"
 import { SessionScheduled } from "@/components/scheduled"
@@ -193,6 +194,7 @@ export function SessionPanel({ session, project }: { session: Session; project: 
         </>
       )}
       <SessionCredentialsLine sessionId={session.id} projectId={project.id} />
+      {isOrch && <OtherProjectsSection projectId={project.id} version={Object.keys(allReports).length + ":" + session.lastActivityAt} />}
       <ChangesSection session={session} />
       <SessionScheduled session={session} />
       {hasSubagents && (
