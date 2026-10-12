@@ -70,3 +70,18 @@ export function projectDefaults(settings: ProjectSettings, kind: SessionKind) {
     effort: settings.workerEffort ?? settings.defaultEffort,
   }
 }
+
+/**
+ * Lo gastado por modelo (US$ por id resuelto), con el nombre de cada uno y de mayor a menor. Los ids
+ * que son el mismo modelo (con y sin "[1m]" o la fecha) se juntan.
+ */
+export function costsByModel(models: ModelOption[], byModel: Record<string, number> | { model: string; usd: number }[]) {
+  const list = Array.isArray(byModel) ? byModel : Object.entries(byModel).map(([model, usd]) => ({ model, usd }))
+  const out = new Map<string, number>()
+  for (const { model, usd } of list) {
+    if (!(usd > 0)) continue
+    const name = modelName(models, model)
+    out.set(name, (out.get(name) ?? 0) + usd)
+  }
+  return [...out].map(([name, usd]) => ({ name, usd })).sort((a, b) => b.usd - a.usd)
+}

@@ -49,7 +49,11 @@ const MAIN = process.env.FAKE_MODEL ?? "claude-x"
 const SUB = process.env.FAKE_SUB_MODEL ?? "claude-y"
 let sub = 0
 let tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
-const usage = () => ({ [MAIN]: { ...tok, costUSD: usd - sub }, ...(sub ? { [SUB]: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: sub } } : {}) })
+// Lo que gastaron otros modelos antes de reanudar con este (Claude Code lo sigue informando aparte).
+let other = {}
+const zero = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
+const otherUsd = () => Object.values(other).reduce((a, b) => a + b, 0)
+const usage = () => ({ ...Object.fromEntries(Object.entries(other).map(([k, v]) => [k, { ...zero, costUSD: v }])), [MAIN]: { ...tok, costUSD: usd - sub - otherUsd() }, ...(sub ? { [SUB]: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: sub } } : {}) })
 try {
   for (const l of fs.readFileSync(file, "utf8").split("\n")) {
     if (!l.includes('"cost-state"')) continue
@@ -57,6 +61,7 @@ try {
     usd = j.totalCostUSD
     tok = j.modelUsage[MAIN] ?? tok
     sub = j.modelUsage[SUB]?.costUSD ?? 0
+    other = Object.fromEntries(Object.entries(j.modelUsage).filter(([k, v]) => k !== MAIN && k !== SUB && v.costUSD).map(([k, v]) => [k, v.costUSD]))
   }
 } catch {}
 let full = process.env.FAKE_FULL === "1"
@@ -95,6 +100,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     file = path.join(dir, sid + ".jsonl")
     usd = 0
     sub = 0
+    other = {}
     tok = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
     full = false
     out({ type: "conversation_reset", new_conversation_id: "otro-" + Math.random().toString(36).slice(2, 8), session_id: before, trigger: "clear" })

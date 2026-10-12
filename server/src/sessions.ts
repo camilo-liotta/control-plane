@@ -701,6 +701,7 @@ export class SessionManager extends EventEmitter<{
               .sort((a, b) => b[1] - a[1])
               .map(([model, usd]) => ({ model, usd }))
             if (models.length) event.models = models
+            if (rt.currentModel) event.model = rt.currentModel
             rt.turnModels = null
           }
           const stored = this.addEvent(id, event)
