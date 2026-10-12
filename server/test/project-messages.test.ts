@@ -4,7 +4,14 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it } from "node:test"
 
-import { Db, defaultSettings, type ProjectMessageRow } from "../src/db.ts"
+import Fastify from "fastify"
+
+import { Db, defaultSettings, type ProjectMessageRow, type SessionRecord } from "../src/db.ts"
+import type { Hub } from "../src/hub.ts"
+import { registerMcp } from "../src/mcp.ts"
+import { Orchestration } from "../src/orchestration.ts"
+import type { SessionManager } from "../src/sessions.ts"
+import type { ServerMessage, TimelineEvent } from "../src/shared/types.ts"
 
 const msg = (id: string, from: string, to: string, createdAt: number, extra: Partial<ProjectMessageRow> = {}): ProjectMessageRow => ({
   id,
@@ -68,5 +75,88 @@ describe("mensajes entre proyectos: la base", () => {
     assert.equal(db.getProjectMessage("m_1"), null)
     assert.equal(db.getProjectMessage("m_2"), null)
     assert.ok(db.getProjectMessage("m_3"))
+  })
+})
+
+function rec(projectId: string, name: string, kind: "worker" | "orchestrator"): SessionRecord {
+  return {
+    id: `s_${name.toLowerCase()}`, projectId, kind, name, role: "", claudeSessionId: `c-${name}`, startedOnce: true,
+    mcpToken: `tok-${name}`, model: null, effort: null, worktree: false, cwd: "/tmp", status: "idle", taskTitle: null, taskState: "none",
+    lastActivity: null, lastActivityAt: null, costUsd: 0, costByModel: {}, tokens: null, context: null, createdAt: 1, archivedAt: null,
+  }
+}
+
+describe("mensajes entre proyectos: las herramientas MCP", () => {
+  let dir: string
+  let db: Db
+  let app: ReturnType<typeof Fastify>
+  let orchestration: Orchestration
+  const events: { id: string; event: TimelineEvent }[] = []
+  const orqA = rec("pa", "ORQ-A", "orchestrator")
+  const wA = rec("pa", "W-A", "worker")
+  const orqB = rec("pb", "ORQ-B", "orchestrator")
+
+  async function rpc(who: SessionRecord, method: string, params: Record<string, unknown> = {}) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/mcp/${who.mcpToken}`,
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      payload: { jsonrpc: "2.0", id: 1, method, params },
+    })
+    return JSON.parse(res.body) as { result?: any; error?: unknown }
+  }
+  const call = async (who: SessionRecord, name: string, args: Record<string, unknown> = {}) => {
+    const body = await rpc(who, "tools/call", { name, arguments: args })
+    return { text: body.result.content.map((c: { text: string }) => c.text).join("\n") as string, isError: Boolean(body.result.isError) }
+  }
+  const toolNames = async (who: SessionRecord) => ((await rpc(who, "tools/list")).result.tools as { name: string }[]).map((t) => t.name)
+
+  beforeEach(async () => {
+    events.length = 0
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-pm-mcp-"))
+    db = new Db(path.join(dir, "t.db"))
+    for (const [id, name] of [["pa", "Alfa"], ["pb", "Beta"], ["pc", "Gamma"]])
+      db.insertProject({ id: id!, name: name!, repoPath: dir, settings: { ...defaultSettings, batchWindowSec: 60 }, accountId: null, createdAt: 1, archivedAt: null })
+    for (const s of [orqA, wA, orqB]) db.insertSession(s)
+    const sessions = Object.assign(new (await import("node:events")).EventEmitter(), {
+      addEvent: (id: string, event: TimelineEvent) => events.push({ id, event }),
+      statusOf: () => "idle",
+      contextOf: () => null,
+      meta: { models: [] },
+    }) as unknown as SessionManager
+    const hub = { broadcast: (_m: ServerMessage) => {}, size: 1 } as unknown as Hub
+    orchestration = new Orchestration(db, hub, sessions)
+    app = Fastify()
+    registerMcp(app, { db, sessions, orchestration })
+    await app.ready()
+  })
+  afterEach(async () => {
+    orchestration.dispose()
+    await app.close()
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("list_projects y message_project las tiene la orquestadora y no los workers", async () => {
+    const orq = await toolNames(orqA)
+    assert.ok(orq.includes("list_projects") && orq.includes("message_project"))
+    const worker = await toolNames(wA)
+    assert.ok(!worker.includes("list_projects") && !worker.includes("message_project"))
+    // Y aunque un worker las llame a mano, no existen para él.
+    const res = await rpc(wA, "tools/call", { name: "message_project", arguments: { project: "Beta", message: "hola" } })
+    assert.ok(res.result?.isError || res.error, "falla")
+  })
+
+  it("message_project devuelve el id del mensaje y los errores en palabras", async () => {
+    const ok = await call(orqA, "message_project", { project: "Beta", message: "hola" })
+    assert.equal(ok.isError, false)
+    const id = db.listProjectMessages("pa")[0]!.id
+    assert.ok(ok.text.includes(id))
+    for (const [project, re] of [["Nada", /No existe el proyecto/], ["Alfa", /propio proyecto/], ["Gamma", /no tiene orquestadora/]] as const) {
+      const r = await call(orqA, "message_project", { project, message: "hola" })
+      assert.ok(r.isError && re.test(r.text), `${project}: ${r.text}`)
+    }
+    const l = await call(orqA, "list_projects")
+    assert.match(l.text, /Beta \[pb\]/)
   })
 })
