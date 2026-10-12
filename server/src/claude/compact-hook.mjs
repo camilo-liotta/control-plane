@@ -4,9 +4,12 @@
 // Si el dashboard no responde, no escribe nada y todo sigue como siempre: la compactación nunca se
 // bloquea (sale siempre con 0). Con --deny-on-error (el cerrojo de SendMessage) pasa al revés: sin
 // respuesta del dashboard, deniega, porque ante la duda el mensaje no se manda.
+import fs from "node:fs"
 import http from "node:http"
 
-const url = process.argv[2]
+// La URL lleva el token de la sesión: Claude Code pasa "@<archivo>" y la lee de ahí, para que no quede en los
+// argumentos del proceso (los ve cualquier usuario de la máquina). Una URL suelta también sirve.
+const arg = process.argv[2]
 const denyOnError = process.argv.includes("--deny-on-error")
 const WAIT_MS = 15_000
 
@@ -31,6 +34,12 @@ let input = ""
 process.stdin.setEncoding("utf8")
 process.stdin.on("data", (chunk) => (input += chunk))
 process.stdin.on("end", () => {
+  let url
+  try {
+    url = arg?.startsWith("@") ? fs.readFileSync(arg.slice(1), "utf8").trim() : arg
+  } catch {
+    return fail()
+  }
   if (!url) return fail()
   // El cerrojo no espera para siempre; la compactación sí: en modo "esperarme" el dashboard responde recién cuando elegís.
   if (denyOnError) setTimeout(fail, WAIT_MS).unref()

@@ -502,8 +502,8 @@ describe("mensajes entre orquestadoras", () => {
     assert.equal(row.toSessionId, orqB.id)
     assert.ok(row.deliveredAt)
     assert.deepEqual([orch.reviewState("pb").queued, orch.reviewState("pb").inReview, orch.reviewState("pb").active], [0, 1, true])
-    // En el chat del que escribe queda constancia.
-    assert.ok(sessions.events.some((e) => e.id === orqA.id && e.event.kind === "notice" && e.event.text.includes(id)))
+    // En el chat del que escribe la constancia es la tarjeta de la llamada a message_project: no se suma un aviso aparte.
+    assert.ok(!sessions.events.some((e) => e.id === orqA.id && e.event.kind === "notice" && e.event.text.includes(id)))
     sessions.endTurn(orqB)
     assert.equal(orch.reviewState("pb").active, false)
   })

@@ -12,6 +12,7 @@ import { ARM_MS, CONTINUE_PROMPT, MAX_AGE_MS, Restart, RESUME_FILE, resumeSummar
 import { SessionManager } from "../src/sessions.ts"
 import type { ExternalSession, ServerMessage } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 const until = async (check: () => boolean, what = "no llegó a tiempo") => {
   for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 50))
@@ -45,6 +46,7 @@ describe("reiniciar para actualizar y retomar las sesiones", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir, FAKE_LONG_MS: "60000", ...(opts.strict ? { FAKE_STRICT_RESUME: "1" } : {}) }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

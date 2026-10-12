@@ -426,7 +426,7 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
    claude (worker) ◄── SendMessage ──► claude (worker)     claude (orquestadora)
 ```
 
-- Cada sesión es `claude -p --input-format stream-json --output-format stream-json` con `--dangerously-skip-permissions`, `--name`, `--append-system-prompt` (el protocolo) y `--mcp-config` (el MCP local). Es un proceso largo que recibe mensajes por stdin, igual que una sesión interactiva.
+- Cada sesión es `claude -p --input-format stream-json --output-format stream-json` con `--dangerously-skip-permissions`, `--name`, `--append-system-prompt` (el protocolo) y `--mcp-config` (el MCP local). La config del MCP y los settings (con el token de la sesión) van como archivos 0600 en `CONTROL_PLANE_HOME/run/<sesión>/`, no en la línea de comandos, para que otros usuarios de la máquina no los vean con `ps`; se borran cuando la sesión termina. Es un proceso largo que recibe mensajes por stdin, igual que una sesión interactiva.
 - **Protocolo**: al arrancar, cada sesión recibe su rol, quiénes son las otras y las reglas (coordinar con `SendMessage` antes de tocar algo compartido, no pisar el checkout, reportar al terminar). Se arma en `server/src/prompts.ts` y se puede ampliar por proyecto en su configuración.
 - **Herramientas MCP de control-plane**: `list_sessions` (todas, con el contexto que usa cada una); `create_user_task`, `list_user_tasks` y `update_user_task` (todas, para las tareas para vos); `list_clis` (todas); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora, que también trae los mensajes de otros proyectos); `list_projects` y `message_project` (solo orquestadoras: el único canal entre proyectos; el mensaje queda registrado, le llega a la orquestadora destino como un resultado más y hay un límite de 10 por hora y por sentido entre dos proyectos). Las propuestas aceptan `subagents` para pedir subagentes específicos y `fresh` para empezar de cero.
 - **Adjuntos**: se guardan en `~/.control-plane/attachments/<sesión>/` y se sirven solo a esta máquina.
@@ -450,7 +450,7 @@ Variables de entorno (opcionales):
 | --- | --- | --- |
 | `CONTROL_PLANE_PORT` | `4700` | Puerto del server |
 | `CONTROL_PLANE_HOST` | `127.0.0.1` | Interfaz donde escucha (dejalo en localhost) |
-| `CONTROL_PLANE_HOME` | `~/.control-plane` | Base de datos local |
+| `CONTROL_PLANE_HOME` | `~/.control-plane` | Base de datos local y `run/` (archivos de lanzamiento de las sesiones) |
 | `CONTROL_PLANE_WEB_DIST` | `web/dist` | La web compilada que sirve el server (para probar otra build sin tocar la tuya) |
 | `CLAUDE_BIN` | `claude` | Binario de Claude Code (para las cuentas sin comando propio) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |

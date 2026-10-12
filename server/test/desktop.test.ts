@@ -16,6 +16,7 @@ import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { Draft, DesktopSummary, ServerMessage, Session, StoredEvent, UserTask } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 async function freePort(): Promise<number> {
   const srv = net.createServer()
@@ -234,6 +235,7 @@ describe("running del resumen, contra el proceso real", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

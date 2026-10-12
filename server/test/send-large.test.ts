@@ -11,6 +11,7 @@ import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 const until = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 50))
@@ -36,6 +37,7 @@ describe("un mensaje más grande que el buffer de stdin (una imagen adjunta)", (
       attachments,
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
@@ -78,6 +80,7 @@ describe("el mismo envío dos veces (la web reintentó porque se cortó la respu
       attachments: new AttachmentStore(db, path.join(dir, "attachments")),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

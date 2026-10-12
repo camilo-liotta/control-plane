@@ -26,6 +26,8 @@ import { spawnSync } from "node:child_process"
 
 const args = process.argv.slice(2)
 const flag = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : null }
+// Como Claude Code, --mcp-config y --settings aceptan una ruta a un archivo JSON o el JSON mismo.
+const jsonFlag = (f) => { const v = flag(f); return JSON.parse(v.trim().startsWith("{") ? v : fs.readFileSync(v, "utf8")) }
 // Lo que el server corre aparte (versión, auth status, agents): contesta y sale.
 if (args[0] === "--version") { console.log("0.0.0-fake (Claude Code)"); process.exit(0) }
 if (!args.includes("-p")) process.exit(0)
@@ -159,7 +161,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     const sp = rest.indexOf(" ")
     const toolName = sp < 0 ? rest : rest.slice(0, sp)
     const input = sp < 0 ? {} : JSON.parse(rest.slice(sp + 1))
-    const url = JSON.parse(flag("--mcp-config")).mcpServers["control-plane"].url
+    const url = jsonFlag("--mcp-config").mcpServers["control-plane"].url
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: toolName, arguments: input } }) })
     const j = await res.json()
     const body = (j.result?.content ?? []).map((b) => b.text).join("\n") || JSON.stringify(j.error ?? j)
@@ -172,7 +174,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   if (text.startsWith("SENDMSG ")) {
     const to = text.slice(8).trim()
     const input = { to, recipient: to, recipient_kind: "name", message: "hola", content: "hola" }
-    const cmd = JSON.parse(flag("--settings")).hooks.PreToolUse.find((h) => h.matcher === "SendMessage").hooks[0].command
+    const cmd = jsonFlag("--settings").hooks.PreToolUse.find((h) => h.matcher === "SendMessage").hooks[0].command
     const run = spawnSync("/bin/sh", ["-c", cmd], { input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "SendMessage", tool_input: input }), encoding: "utf8" })
     let verdict = null
     try { verdict = JSON.parse(run.stdout).hookSpecificOutput } catch {}

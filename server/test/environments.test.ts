@@ -19,6 +19,7 @@ import { Hub as RealHub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
 import type { ServerMessage, TimelineEvent } from "../src/shared/types.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 function session(name: string, projectId: string): SessionRecord {
   return {
@@ -224,6 +225,7 @@ describe("el chat de una sesión que deja credenciales", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

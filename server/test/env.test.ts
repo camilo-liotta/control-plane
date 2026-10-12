@@ -10,6 +10,7 @@ import { Db, defaultSettings } from "../src/db.ts"
 import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 // Lo que pone la app de escritorio (o `npm start`) para el server, más lo que puede venir de tu shell.
 const SERVER_ENV = {
@@ -57,6 +58,7 @@ describe("el entorno de lo que lanza el server", () => {
         attachments: new AttachmentStore(db),
         mcpUrlFor: () => "http://127.0.0.1/mcp",
         hookUrlFor: () => "http://127.0.0.1/hooks",
+        runRoot: tmpRunRoot(),
         launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
         accountIdFor: () => "acc",
         meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
