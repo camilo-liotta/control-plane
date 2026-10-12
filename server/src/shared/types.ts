@@ -609,6 +609,33 @@ export interface Report {
   reviewedAt: number | null
 }
 
+/** Un mensaje de la orquestadora de un proyecto a la de otro (por message_project). */
+export interface ProjectMessage {
+  id: string
+  fromProjectId: string
+  fromProjectName: string
+  toProjectId: string
+  toProjectName: string
+  fromSessionId: string
+  /** La orquestadora destino al entregarse (null mientras espera en la cola). */
+  toSessionId: string | null
+  text: string
+  /** El id del mensaje que contesta, para armar la conversación. */
+  replyTo: string | null
+  createdAt: number
+  /** null = todavía en la cola de la orquestadora destino. */
+  deliveredAt: number | null
+}
+
+/** Lo que el lote le muestra a la web de cada mensaje ajeno. */
+export interface BatchProjectMessage {
+  id: string
+  fromProjectId: string
+  fromProjectName: string
+  text: string
+  replyTo: string | null
+}
+
 export type UserOrigin = "user" | "draft" | "control" | "external"
 
 export type TimelineEvent =
@@ -684,7 +711,7 @@ export type TimelineEvent =
       state: "pending" | "allowed" | "denied" | "cancelled"
     }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
-  | { kind: "batch"; reportIds: string[]; text: string; followUp: boolean }
+  | { kind: "batch"; reportIds: string[]; text: string; followUp: boolean; projectMessages?: BatchProjectMessage[] }
   | {
       kind: "compact"
       trigger: string

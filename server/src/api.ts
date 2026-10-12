@@ -392,6 +392,14 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
   )
 
   // Los archivados (de todas las cuentas: la web filtra por la que estás mirando).
+  // Los mensajes entre orquestadoras que mandó o recibió el proyecto, más nuevos primero.
+  app.get<{ Params: { id: string } }>("/api/projects/:id/messages", (req, reply) =>
+    guard(reply, () => {
+      if (!db.getProject(req.params.id)) throw new Error("El proyecto no existe")
+      return orchestration.projectMessages(req.params.id)
+    })
+  )
+
   app.get("/api/projects/archived", () => db.listArchivedProjects().map((p) => orchestration.projectView(p)))
 
   app.post<{ Params: { id: string } }>("/api/projects/:id/restore", (req, reply) =>

@@ -1,12 +1,12 @@
 import type { Accounts } from "./accounts.ts"
 import { lastCostState, listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
-import type { Db, ProjectRecord, SessionRecord } from "./db.ts"
+import type { Db, ProjectMessageRow, ProjectRecord, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
 import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
 import { checkModelChoice, choiceLabel, sessionChoice } from "./shared/models.ts"
-import type { Draft, Project, Report, ReportStatus, ReviewState, SubagentSpec } from "./shared/types.ts"
+import type { Draft, Project, ProjectMessage, Report, ReportStatus, ReviewState, SubagentSpec } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
 
 const STATUS_LABEL: Record<ReportStatus, string> = {
@@ -131,6 +131,20 @@ export class Orchestration {
 
   reportView(r: Omit<Report, "sessionName">): Report {
     return { ...r, sessionName: this.db.getSession(r.sessionId)?.name ?? "?" }
+  }
+
+  /** Un mensaje entre proyectos con los nombres de los dos (si un proyecto ya no está, "?"). */
+  messageView(m: ProjectMessageRow): ProjectMessage {
+    return {
+      ...m,
+      fromProjectName: this.db.getProject(m.fromProjectId)?.name ?? "?",
+      toProjectName: this.db.getProject(m.toProjectId)?.name ?? "?",
+    }
+  }
+
+  /** Los mensajes que mandó o recibió un proyecto, más nuevos primero. */
+  projectMessages(projectId: string): ProjectMessage[] {
+    return this.db.listProjectMessages(projectId).map((m) => this.messageView(m))
   }
 
   broadcastProject(projectId: string) {
