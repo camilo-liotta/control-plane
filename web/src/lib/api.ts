@@ -21,6 +21,7 @@ import type {
   EditorSettings,
   Marketplace,
   Project,
+  ProjectMessage,
   ProjectOverview,
   ProjectSettings,
   Report,
@@ -186,6 +187,7 @@ export const api = {
   terminalStatus: (id: string) => request<{ open: boolean; running: string[] }>("GET", `/api/sessions/${id}/terminal`),
   events: (id: string, before?: number, limit = 300) =>
     request<StoredEvent[]>("GET", `/api/sessions/${id}/events?limit=${limit}${before ? `&before=${before}` : ""}`),
+  projectMessages: (id: string) => request<ProjectMessage[]>("GET", `/api/projects/${id}/messages`),
   sessionReports: (id: string) => request<Report[]>("GET", `/api/sessions/${id}/reports`),
   sessionChanges: (id: string) => request<SessionChanges>("GET", `/api/sessions/${id}/changes`),
   openFile: (id: string, path: string, side: "uncommitted" | "committed") =>

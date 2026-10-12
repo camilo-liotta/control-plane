@@ -1,7 +1,6 @@
-import { ChevronRight, Settings, Settings2 } from "lucide-react"
+import { Settings } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { useLocation } from "wouter"
 
 import type { EditorKind } from "@shared/types"
 
@@ -11,8 +10,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useEditor, useEditorStore } from "@/lib/editor"
-import { useProjects } from "@/lib/store"
-import { useUi } from "@/lib/ui"
 
 /** Ajustes del dashboard que no son de un proyecto: por ahora, con qué editor se abren los cambios. */
 export function SettingsMenu() {
@@ -20,16 +17,6 @@ export function SettingsMenu() {
   const save = useEditorStore((s) => s.save)
   const [command, setCommand] = useState("")
   useEffect(() => setCommand(settings?.command ?? ""), [settings?.command])
-  const [open, setOpen] = useState(false)
-  const [location] = useLocation()
-  const projects = useProjects()
-  const setUi = useUi((s) => s.set)
-  // Dentro de un proyecto (/p/:id…), sus ajustes quedan a un clic; afuera, hay que elegir cuál.
-  const current = projects.find((p) => location === `/p/${p.id}` || location.startsWith(`/p/${p.id}/`))
-  const openProject = (id: string) => {
-    setOpen(false)
-    setUi({ settingsFor: id })
-  }
 
   const apply = async (patch: { kind?: EditorKind; command?: string }) => {
     try {
@@ -41,7 +28,7 @@ export function SettingsMenu() {
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover>
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
@@ -53,9 +40,9 @@ export function SettingsMenu() {
         <TooltipContent>Ajustes</TooltipContent>
       </Tooltip>
       <PopoverContent side="top" align="start" className="w-96 max-w-[calc(100vw-1.5rem)] gap-3 p-3.5">
-        <div className="border-b pb-3">
-          <p className="eyebrow">Ajustes del dashboard</p>
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">Valen para todos los proyectos y se guardan en esta máquina.</p>
+        <div>
+          <p className="text-sm font-medium">Ajustes</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">Valen para todo el dashboard y se guardan en esta máquina.</p>
         </div>
         <div className="space-y-2">
           <label className="flex items-center justify-between gap-3 text-sm">
@@ -108,42 +95,6 @@ export function SettingsMenu() {
                 proyecto entero, la carpeta va en <code>{"{dir}"}</code> (o en <code>{"{file}"}</code>, si es lo único que tiene).
               </p>
             </form>
-          )}
-        </div>
-        <div className="space-y-1.5 border-t pt-3">
-          <p className="eyebrow">Ajustes del proyecto</p>
-          {current ? (
-            <button
-              type="button"
-              onClick={() => openProject(current.id)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Settings2 className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">Ajustes de {current.name}</span>
-                <span className="block text-2xs text-muted-foreground">Modelos, orquestación y más</span>
-              </span>
-            </button>
-          ) : projects.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Cuando tengas un proyecto, sus ajustes (con los modelos) están acá.</p>
-          ) : (
-            <>
-              <p className="text-xs text-muted-foreground">Elegí un proyecto para ver sus ajustes, como los modelos.</p>
-              <ul className="-mx-1 max-h-40 overflow-y-auto">
-                {projects.map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      onClick={() => openProject(p.id)}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
           )}
         </div>
       </PopoverContent>

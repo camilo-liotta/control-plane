@@ -8,6 +8,7 @@ import { AttachmentList } from "@/components/attachments"
 import { DraftCard } from "@/components/draft-card"
 import { usePlanLink } from "@/components/plan-card"
 import { RefText } from "@/components/file-ref"
+import { IncomingProjectMessages, OutgoingProjectMessage, ProjectIdContext } from "@/components/project-messages"
 import { SubagentSpecList } from "@/components/subagent-specs"
 import { TonePill } from "@/components/status"
 import { PermissionCard, QuestionCard } from "@/components/timeline/interactive-cards"
@@ -18,6 +19,7 @@ import { WorkingIndicator } from "@/components/timeline/working-indicator"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
+import { MESSAGE_TOOL } from "@/lib/project-messages"
 import { clock, duration, tokens as tokensShort, usd } from "@/lib/format"
 import { costsByModel, modelName } from "@/lib/models"
 import { reportStatusView } from "@/lib/status"
@@ -243,12 +245,20 @@ function BatchCard({ ev }: { ev: Ev<"batch"> }) {
   const all = useStore((s) => s.reports)
   const reports = useMemo(() => ev.event.reportIds.map((id) => all[id]).filter(Boolean), [all, ev.event.reportIds])
   const [open, setOpen] = useState(false)
+  // Los mensajes de otras orquestadoras (llegan en el mismo lote, pero no son resultados de workers).
+  const fromProjects = ev.event.projectMessages ?? []
   return (
     <div className="surface-card px-4 py-3.5">
       <div className="flex items-center gap-2 text-sm font-medium">
         <Inbox className="size-4 shrink-0 text-status-pending" />
-        <span className="min-w-0 truncate">{ev.event.followUp ? "Llegaron más resultados mientras analizaba" : "Cola de resultados"}</span>
-        <span className="text-xs font-normal text-muted-foreground">{ev.event.reportIds.length}</span>
+        <span className="min-w-0 truncate">
+          {ev.event.reportIds.length === 0 && fromProjects.length > 0
+            ? "Mensajes de otros proyectos"
+            : ev.event.followUp
+              ? "Llegaron más resultados mientras analizaba"
+              : "Cola de resultados"}
+        </span>
+        <span className="text-xs font-normal text-muted-foreground">{ev.event.reportIds.length || fromProjects.length}</span>
         <span className="ml-auto shrink-0 text-2xs font-normal text-muted-foreground">{clock(ev.ts)}</span>
       </div>
       {reports.length > 0 && (
@@ -267,6 +277,7 @@ function BatchCard({ ev }: { ev: Ev<"batch"> }) {
           ))}
         </ul>
       )}
+      {fromProjects.length > 0 && <IncomingProjectMessages messages={fromProjects} version={ev.id} />}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -339,6 +350,8 @@ function ToolItem({ call, root, live }: { call: ToolCall; root?: string; live: b
     case "mcp__control-plane__propose_session":
     case "mcp__control-plane__propose_plan":
       return <ProposalCall call={call} root={root} live={live} />
+    case MESSAGE_TOOL:
+      return <OutgoingProjectMessage call={call} />
     case "Agent":
     case "Task":
       return <SubagentCard call={call} live={live} />
@@ -616,6 +629,7 @@ const CARD_TOOLS = new Set([
   "mcp__control-plane__propose_prompt",
   "mcp__control-plane__propose_session",
   "mcp__control-plane__propose_plan",
+  MESSAGE_TOOL,
   "Agent",
   "Task",
 ])
@@ -630,6 +644,7 @@ export function Timeline({ session, events }: { session: Session; events: Stored
   const live = session.status === "working" || session.status === "needs_input" || session.subagentsRunning > 0
 
   return (
+    <ProjectIdContext.Provider value={session.projectId}>
     <SubagentContext.Provider value={subagents}>
       <div className="flex flex-col gap-3">
         <TimelineItems items={items} sessionId={session.id} root={session.cwd} live={live} />
@@ -637,5 +652,6 @@ export function Timeline({ session, events }: { session: Session; events: Stored
         <LiveTail session={session} partial={partial} />
       </div>
     </SubagentContext.Provider>
+    </ProjectIdContext.Provider>
   )
 }

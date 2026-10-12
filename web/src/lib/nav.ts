@@ -47,8 +47,6 @@ interface NavState {
   folded: Record<string, true>
   visit: (sessionId: string) => void
   setFolded: (projectId: string, folded: boolean) => void
-  /** Pliega o despliega varios proyectos de una vez. */
-  setAllFolded: (projectIds: string[], folded: boolean) => void
 }
 
 export const useNav = create<NavState>((set) => ({
@@ -65,16 +63,6 @@ export const useNav = create<NavState>((set) => ({
       const next = { ...s.folded }
       if (folded) next[id] = true
       else delete next[id]
-      write(FOLDED_KEY, next)
-      return { folded: next }
-    }),
-  setAllFolded: (ids, folded) =>
-    set((s) => {
-      const next = { ...s.folded }
-      for (const id of ids) {
-        if (folded) next[id] = true
-        else delete next[id]
-      }
       write(FOLDED_KEY, next)
       return { folded: next }
     }),

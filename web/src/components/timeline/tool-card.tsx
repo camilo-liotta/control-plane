@@ -395,6 +395,7 @@ export function OutgoingMessage({ call }: { call: ToolCall }) {
         {failed && <span className="shrink-0 text-status-error">· No se entregó</span>}
       </div>
       <p className="text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">{text}</p>
+      {failed && call.result?.content && <p className="mt-1.5 text-xs leading-relaxed text-status-error wrap-anywhere">{call.result.content}</p>}
     </div>
   )
 }
