@@ -1,4 +1,4 @@
-import type { DraftState, ReportState, ReportStatus, Session } from "@shared/types"
+import type { DraftState, PlanState, PlanStepState, ReportState, ReportStatus, Session } from "@shared/types"
 
 /**
  * Los tonos y qué significan (no cambies el significado por estética):
@@ -101,4 +101,21 @@ export const draftStateView: Record<DraftState, { label: string; tone: Tone }> =
   ready: { label: "Lista para enviar", tone: "pending" },
   sent: { label: "Enviada", tone: "done" },
   discarded: { label: "Descartada", tone: "idle" },
+}
+
+/** Un plan aprobado. Pausado va en `attention` solo si frena por un paso que volvió mal (lo decide quien lo muestra). */
+export const planStateView: Record<PlanState, { label: string; tone: Tone }> = {
+  running: { label: "En curso", tone: "working" },
+  paused: { label: "En pausa", tone: "idle" },
+  done: { label: "Terminado", tone: "done" },
+  cancelled: { label: "Cancelado", tone: "idle" },
+}
+
+export const planStepView: Record<PlanStepState, { label: string; tone: Tone }> = {
+  pending: { label: "Por hacer", tone: "idle" },
+  running: { label: "En curso", tone: "working" },
+  done: { label: "Hecho", tone: "done" },
+  blocked: { label: "Bloqueado", tone: "attention" },
+  partial: { label: "Parcial", tone: "attention" },
+  skipped: { label: "Salteado", tone: "idle" },
 }

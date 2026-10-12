@@ -2,7 +2,7 @@ import { FolderGit2, GitBranch, GitCommitHorizontal, SquareArrowOutUpRight } fro
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
-import type { Project, ProjectOverview, RepoInfo } from "@shared/types"
+import type { ModelOption, Project, ProjectOverview, RepoInfo } from "@shared/types"
 
 import { GithubMark } from "@/components/github-mark"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { EDITOR_NAMES, useEditor } from "@/lib/editor"
+import { costsByModel } from "@/lib/models"
 import { basename, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -320,14 +321,22 @@ export function useProjectOverview(projectId: string) {
   return { data, error, reload: load }
 }
 
-/** El costo y los tokens del proyecto, para el encabezado; el detalle va en el title. */
-export function overviewTotals(data: ProjectOverview | null): { text: string; title: string } | null {
+/** "Opus 5.5 US$ 4,20 · Sonnet 5.5 US$ 1,10": el costo por modelo, del que más gastó al que menos. */
+export function costByModelText(models: ModelOption[], byModel: Record<string, number> | undefined): string | null {
+  const list = costsByModel(models, byModel ?? {}).filter((c) => c.usd >= 0.005)
+  return list.length ? list.map((c) => `${c.name} ${usd(c.usd)}`).join(" · ") : null
+}
+
+/** El costo y los tokens del proyecto, para el encabezado; el detalle (con el costo por modelo) va en el title. */
+export function overviewTotals(data: ProjectOverview | null, models: ModelOption[] = []): { text: string; title: string } | null {
   if (!data || (!data.costUsd && !data.tokens.total)) return null
   const t = data.tokens
+  const byModel = costByModelText(models, data.costByModel)
   return {
     text: `${usd(data.costUsd)} · ${tokens(t.total)} tokens`,
     title: [
       `${plural(data.sessions, "sesión", "sesiones")}, incluidas las archivadas.`,
+      ...(byModel ? [`Por modelo: ${byModel}.`] : []),
       `Entrada ${tokens(t.input)} · salida ${tokens(t.output)} · caché ${tokens(t.cacheRead + t.cacheWrite)} (${tokensFull(t.total)}).`,
       "Costo equivalente por API: con tu plan no se cobra aparte.",
     ].join("\n"),

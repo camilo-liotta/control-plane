@@ -7,6 +7,7 @@ import type { Session } from "@shared/types"
 
 import { ArchivedSessions } from "@/components/archived-sessions"
 import { DraftCard } from "@/components/draft-card"
+import { ProjectPlans } from "@/components/plan-card"
 import { PageHeader } from "@/components/page-header"
 import { appsSummary, ProjectApps } from "@/components/project-apps"
 import { ProjectEnvironments, useProjectEnvironments } from "@/components/project-environments"
@@ -28,12 +29,13 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { basename, tokens, totals, usd } from "@/lib/format"
 import { needReason, sessionNeedsYou, toneText } from "@/lib/status"
 import { cn } from "@/lib/utils"
-import { openDrafts, projectReports, projectSessions, useStore } from "@/lib/store"
+import { openDrafts, projectReports, projectSessions, useModels, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
 
@@ -117,6 +119,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const [stopping, setStopping] = useState(false)
   const [allPast, setAllPast] = useState(false)
   const overview = useProjectOverview(projectId)
+  const models = useModels()
 
   const asked = new URLSearchParams(search).get("tab")
   const tab: Tab = TABS.includes(asked as Tab) ? (asked as Tab) : "resumen"
@@ -127,7 +130,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const pendingReveal = useUi((s) => s.reveal)
   useEffect(() => {
     if (!pendingReveal || pendingReveal.id !== projectId) return
-    const want: Tab | null = pendingReveal.kind === "environments" ? "entornos" : pendingReveal.kind === "tasks" || pendingReveal.kind === "archived" ? "resumen" : null
+    const want: Tab | null = pendingReveal.kind === "environments" ? "entornos" : pendingReveal.kind === "tasks" || pendingReveal.kind === "archived" || pendingReveal.kind === "plan" ? "resumen" : null
     if (want && want !== tab) navigate(want === "resumen" ? `/p/${projectId}` : `/p/${projectId}?tab=${want}`, { replace: true })
   }, [pendingReveal, projectId, tab, navigate])
 
@@ -163,7 +166,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const appsState = appsSummary(apps ?? [])
   const gitChanges = reposHaveChanges(overview.data)
   const live = totals([orchestrator, ...workers].filter((s) => s !== null))
-  const total = overviewTotals(overview.data)
+  const total = overviewTotals(overview.data, models)
   const folder = basename(project.repoPath)
   const staged = drafts.filter((d) => d.state !== "ready")
 
@@ -204,7 +207,17 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               </>
             )}
             {total ? (
-              <span title={`${project.repoPath}\n${total.title}`}>{total.text}</span>
+              // El detalle (con el costo por modelo) en un tooltip: se ve al pasar el mouse y con el foco.
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} className="cursor-default rounded-sm focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none">
+                    {total.text}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="start" className="max-w-sm whitespace-pre-line">
+                  {total.title}
+                </TooltipContent>
+              </Tooltip>
             ) : live.cost > 0 || live.tokens > 0 ? (
               <span title={`${project.repoPath}\nLas sesiones del proyecto (equivalente API; con tu plan no se cobra aparte)`}>
                 {usd(live.cost)} · {tokens(live.tokens)} tokens
@@ -327,6 +340,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 </section>
               )}
               <OrchestratorCard project={project} orchestrator={orchestrator} drafts={drafts} />
+              <ProjectPlans projectId={project.id} />
               {staged.length > 0 && (
                 <section>
                   <SectionTitle count={staged.length}>Propuestas en preparación</SectionTitle>

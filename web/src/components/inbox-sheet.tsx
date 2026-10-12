@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Link, useLocation } from "wouter"
 
 import { DraftCard } from "@/components/draft-card"
+import { planStuck } from "@/components/plan-card"
 import { ReportCard } from "@/components/report-card"
 import { PriorityBadge } from "@/components/user-tasks"
 import { SessionLamp, TonePill } from "@/components/status"
@@ -26,8 +27,10 @@ interface Bucket {
   todo: UserTask[]
   ready: Draft[]
   staged: Draft[]
+  /** Planes en pausa: esperan a la orquestadora o a vos. */
+  paused: Draft[]
   queue: Report[]
-  /** Hay algo que te necesita: una sesión, una tarea que frena o una propuesta lista. */
+  /** Hay algo que te necesita: una sesión, una tarea que frena, una propuesta lista o un plan trabado. */
   urgent: boolean
   latest: number
 }
@@ -62,6 +65,7 @@ function summary(b: Bucket) {
     b.todo.length - blocking && plural(b.todo.length - blocking, "tarea", "tareas"),
     b.ready.length && plural(b.ready.length, "propuesta lista", "propuestas listas"),
     b.staged.length && `${b.staged.length} en preparación`,
+    b.paused.length && plural(b.paused.length, "plan en pausa", "planes en pausa"),
     b.queue.length && `${b.queue.length} en la cola`,
   ]
     .filter(Boolean)
@@ -88,7 +92,7 @@ export function InboxSheet() {
 
   const byProject: Record<string, Bucket> = {}
   const bucket = (projectId: string) =>
-    (byProject[projectId] ??= { projectId, needs: [], todo: [], ready: [], staged: [], queue: [], urgent: false, latest: 0 })
+    (byProject[projectId] ??= { projectId, needs: [], todo: [], ready: [], staged: [], paused: [], queue: [], urgent: false, latest: 0 })
   const touch = (b: Bucket, at: number) => {
     b.latest = Math.max(b.latest, at)
     return b
@@ -105,6 +109,7 @@ export function InboxSheet() {
   for (const d of Object.values(drafts).sort((a, b) => a.createdAt - b.createdAt)) {
     if (d.state === "ready") touch(bucket(d.projectId), d.updatedAt).ready.push(d)
     else if (d.state === "staged") touch(bucket(d.projectId), d.updatedAt).staged.push(d)
+    else if (d.kind === "plan" && d.state === "sent" && d.planState === "paused") touch(bucket(d.projectId), d.updatedAt).paused.push(d)
   }
   for (const r of Object.values(reports).sort((a, b) => a.createdAt - b.createdAt)) {
     if (r.state === "queued" || r.state === "in_review") touch(bucket(r.projectId), r.createdAt).queue.push(r)
@@ -112,7 +117,7 @@ export function InboxSheet() {
 
   const counts = inboxCounts({ sessions: Object.values(sessions), drafts: Object.values(drafts), tasks: Object.values(tasks) })
   const groups = Object.values(byProject)
-  for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some(taskWaits)
+  for (const b of groups) b.urgent = b.needs.length > 0 || b.ready.length > 0 || b.todo.some(taskWaits) || b.paused.some(planStuck)
   groups.sort(
     (a, b) =>
       Number(b.projectId === here) - Number(a.projectId === here) ||
@@ -237,6 +242,11 @@ export function InboxSheet() {
                   </Group>
                   <Group title="Propuestas listas para enviar" count={b.ready.length}>
                     {b.ready.map((d) => (
+                      <DraftCard key={d.id} draft={d} compact />
+                    ))}
+                  </Group>
+                  <Group title="Planes en pausa" count={b.paused.length}>
+                    {b.paused.map((d) => (
                       <DraftCard key={d.id} draft={d} compact />
                     ))}
                   </Group>
