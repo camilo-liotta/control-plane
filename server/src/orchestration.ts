@@ -554,7 +554,15 @@ export class Orchestration {
     if (staged.length) {
       // En AFK sale todo lo que la orquestadora no marcó con hold; lo demás espera al usuario como siempre.
       const afk = this.db.getProject(projectId)?.afk
-      const auto = afk ? staged.filter((d) => !d.hold) : []
+      // Lo que se armó en una revisión que leyó mensajes de otro proyecto no sale solo: un pedido ajeno no se
+      // ejecuta sin que el usuario lo vea. Esas propuestas quedan con hold.
+      if (afk && readMessages > 0) {
+        for (const d of staged.filter((d) => !d.hold)) {
+          this.db.updateDraft(d.id, { hold: true })
+          this.broadcastDraft(d.id)
+        }
+      }
+      const auto = afk && readMessages === 0 ? staged.filter((d) => !d.hold) : []
       const waiting = staged.length - auto.length
       const orch = this.orchestratorOf(projectId)
       if (waiting) {
@@ -564,7 +572,7 @@ export class Orchestration {
           event: "proposals",
           title: `${waiting === 1 ? "Hay una propuesta lista" : `Hay ${waiting} propuestas listas`} para revisar`,
           body: afk
-            ? `La orquestadora marcó ${waiting === 1 ? "esta" : "estas"} con hold: ${waiting === 1 ? "espera" : "esperan"} tu aprobación aunque estés AFK.`
+            ? `${readMessages ? "La orquestadora leyó un pedido de otro proyecto y" : "La orquestadora marcó con hold:"} ${waiting === 1 ? "esta espera" : "estas esperan"} tu aprobación aunque estés AFK.`
             : inReview.length
               ? `La orquestadora terminó de revisar ${inReview.length} ${inReview.length === 1 ? "resultado" : "resultados"}.`
               : readMessages

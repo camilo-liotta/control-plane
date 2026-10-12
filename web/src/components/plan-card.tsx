@@ -23,6 +23,7 @@ import type { Draft, ModelOption, PlanStep, Session } from "@shared/types"
 
 import { FileRefScope, RefText } from "@/components/file-ref"
 import { ModelPill, useSessionModelName } from "@/components/model-choice"
+import { DraftAfkMarks } from "@/components/afk-summary"
 import { Lamp, TonePill } from "@/components/status"
 import { SubagentSpecList } from "@/components/subagent-specs"
 import { Button } from "@/components/ui/button"
@@ -244,6 +245,7 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
                 {draft.state === "staged" && <Lock className="size-3" />}
                 {view.label}
               </TonePill>
+              <DraftAfkMarks draft={draft} />
               {draft.revision > 1 && <span>rev. {draft.revision}</span>}
               {draft.edited && approved && <span>con tus cambios</span>}
               <span className="ml-auto" title={new Date(draft.decidedAt ?? draft.updatedAt).toLocaleString("es-AR")}>
@@ -695,6 +697,9 @@ function PlanRow({ draft, open, onToggle }: { draft: Draft; open: boolean; onTog
           <span className="block truncate text-xs text-muted-foreground">{progressText(draft, models, target, fallback)}</span>
         </span>
         <PlanProgress steps={draft.steps} className="hidden w-24 shrink-0 sm:flex" />
+        <span className="hidden shrink-0 md:inline-flex">
+          <DraftAfkMarks draft={draft} />
+        </span>
         <TonePill tone={view.tone}>{view.label}</TonePill>
       </button>
       {open && (

@@ -180,6 +180,7 @@ export function InboxSheet() {
                       ) : (
                         <p className="truncate text-sm font-semibold text-muted-foreground">Proyecto archivado</p>
                       )}
+                      {projects[b.projectId]?.afk && <TonePill tone="idle">AFK</TonePill>}
                       {waiting > 0 && (
                         <TonePill tone="attention">
                           {waiting === 1 ? "1 te espera" : `${waiting} te esperan`}
@@ -239,7 +240,8 @@ export function InboxSheet() {
                       ))}
                     </Rows>
                   </Group>
-                  <Group title="Propuestas listas para enviar" count={b.ready.length}>
+                  {/* En un proyecto AFK lo que queda listo es lo que marcó con hold (o no pudo salir solo): te espera a tu vuelta. */}
+                  <Group title={projects[b.projectId]?.afk ? "Esperan tu vuelta" : "Propuestas listas para enviar"} count={b.ready.length}>
                     {b.ready.map((d) => (
                       <DraftCard key={d.id} draft={d} compact />
                     ))}

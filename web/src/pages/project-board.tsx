@@ -1,10 +1,12 @@
-import { Blocks, ChevronRight, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Trash2, Users } from "lucide-react"
+import { Blocks, Hourglass, ChevronRight, EllipsisVertical, History, Play, Plus, Send, Settings2, Square, Trash2, Users } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Link, useLocation, useSearch } from "wouter"
 
 import type { Session } from "@shared/types"
 
+import { AfkPill, AfkSummaryCard } from "@/components/afk-summary"
+import { comeBackFromAfk } from "@/components/afk-dialog"
 import { ArchivedSessions } from "@/components/archived-sessions"
 import { DraftCard } from "@/components/draft-card"
 import { ProjectPlans } from "@/components/plan-card"
@@ -31,6 +33,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { afkOf } from "@/lib/afk"
 import { api } from "@/lib/api"
 import { basename, tokens, totals, usd } from "@/lib/format"
 import { needReason, sessionNeedsYou, toneText } from "@/lib/status"
@@ -227,6 +230,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         }
         actions={
           <>
+            <AfkPill project={project} />
             <Button size="sm" onClick={() => setUi({ newSessionFor: project.id })}>
               <Plus />
               Nueva sesión
@@ -254,6 +258,17 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                   Importar una sesión existente
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                {afkOf(project) ? (
+                  <DropdownMenuItem onClick={() => void comeBackFromAfk(project)}>
+                    <Hourglass />
+                    Volver de AFK
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => setUi({ afkFor: project.id })}>
+                    <Hourglass />
+                    Ponerse AFK…
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onClick={() => navigate(`/p/${project.id}/tools`)}>
                   <Blocks />
                   Herramientas del proyecto
@@ -310,6 +325,8 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
           </div>
 
           <TabsContent value="resumen" className="flex flex-col gap-8">
+            <AfkSummaryCard project={project} />
+
             {needs.length > 0 && <NeedsYou sessions={needs} />}
 
             {hasTasks && <UserTasksCard project={project} />}
