@@ -15,21 +15,30 @@ import { Compaction } from "./compaction.ts"
 import { config, repoUrl, version } from "./config.ts"
 import { missingClaudeMessage } from "./claude/bin.ts"
 import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
+import { cleanRunRoot, runRootOf } from "./claude/run-files.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
+import { Apps } from "./apps.ts"
 import { Editor } from "./editor.ts"
 import { localOnly, registerDesktopShutdown, registerHealth, registerWs } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
+import { registerRestart, Restart, resumeSummary } from "./restart.ts"
+import { sessionChoice } from "./shared/models.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { registerMcp } from "./mcp.ts"
+import { Terminals } from "./terminal/manager.ts"
+import { registerTerminal } from "./terminal/routes.ts"
+import { Afk } from "./afk.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
+import { decideSend, SEND_DENIED, type SendDecision, type SendGuardDeps } from "./send-guard.ts"
 import { SessionManager } from "./sessions.ts"
 import { Overview } from "./overview.ts"
 import { CliUsage } from "./cli-usage.ts"
 import { Clis } from "./clis.ts"
 import { UserTasks } from "./user-tasks.ts"
+import { Environments } from "./environments.ts"
 import { SkillMarket } from "./skill-market.ts"
 import { Tools } from "./tools.ts"
 
@@ -83,8 +92,7 @@ async function main() {
           ? orchestratorProtocol(project, s, workers)
           : workerProtocol(project, s, orch, workers.filter((w) => w.id !== s.id)),
       orchestratorCanEdit: project.settings.orchestratorCanEdit,
-      model: s.model ?? project.settings.defaultModel,
-      effort: s.effort ?? project.settings.defaultEffort,
+      ...sessionChoice(project.settings, s),
       env: accounts.env(account),
       bin: accounts.bin(account),
       accountId: account.id,
@@ -101,6 +109,10 @@ async function main() {
     liveCache.set(accountId, { at: Date.now(), list })
     return list
   }
+  // Los archivos con los tokens de cada lanzamiento (0600, ver claude/run-files.ts): ninguna sesión corre
+  // todavía, así que lo que haya quedado de antes (un corte, un proceso que no pudo limpiar) sobra.
+  const runRoot = runRootOf(config.home)
+  cleanRunRoot(runRoot)
   const asExternal = (l: LiveSession): ExternalSession => ({ pid: l.pid ?? null, kind: l.kind === "background" ? "background" : "interactive", id: l.id ?? null })
 
   const sessions = new SessionManager({
@@ -108,7 +120,8 @@ async function main() {
     hub,
     attachments,
     mcpUrlFor: (token) => `${baseUrl}/mcp/${token}`,
-    hookUrlFor: (token) => `${baseUrl}/hooks/${token}/compact`,
+    hookUrlFor: (token) => `${baseUrl}/hooks/${token}`,
+    runRoot,
     launchFor,
     accountIdFor: (s) => accounts.forProject(s.projectId).id,
     liveElsewhere: async (s) => {
@@ -185,6 +198,7 @@ async function main() {
   externalTimer.unref()
 
   const orchestration = new Orchestration(db, hub, sessions, accounts)
+  const afk = new Afk({ db, hub, sessions, orchestration })
   const compaction = new Compaction({
     db,
     hub,
@@ -213,8 +227,15 @@ async function main() {
     },
   })
   const clis = new Clis({ onChange: () => hub.broadcast({ type: "clis_changed" }), usage })
-  const tasks = new UserTasks({ db, hub, sessions })
-  const deps = { db, hub, sessions, orchestration, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, editor: new Editor({ home: config.home }) }
+  const tasks = new UserTasks({ db, hub, sessions, clis })
+  // Los entornos toman la URL de su app levantada; si la app se borra, quedan con la suya.
+  const apps: Apps = new Apps({ db, hub, home: config.home, onRemove: (a) => environments.appRemoved(a.projectId) })
+  const appView = (id: string) => {
+    const a = db.getApp(id)
+    return a ? apps.view(a) : null
+  }
+  const environments = new Environments({ db, hub, sessions, app: appView })
+  const deps = { db, hub, sessions, orchestration, afk, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }), apps }
   hub.setSummary(() => desktopSummary(deps))
 
   // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
@@ -224,11 +245,16 @@ async function main() {
 
   await app.register(fastifyWebsocket)
   registerWs(app, hub, () => ({ type: "hello", snapshot: snapshot(deps) }))
-  registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId })
+  const restart = new Restart({ home: config.home, version, sessions, hub, apps })
+  registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId }, () => restart.resuming)
+  registerRestart(app, restart)
 
   registerApi(app, deps)
   registerMcp(app, deps)
   registerDesktopShutdown(app, config.shutdownToken, () => void shutdown("desktop"))
+  // La terminal de cada sesión (ver terminal/routes.ts: solo desde el dashboard, con token).
+  const terminals = new Terminals({ sessionAlive: (id) => !!db.getSession(id) && !db.getSession(id)!.archivedAt })
+  registerTerminal(app, { db, terminals, port: config.port, extraOrigins: config.production ? [] : config.devOrigins })
 
   // Hooks de compactación de las sesiones (los llama compact-hook.mjs, desde esta máquina).
   app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/compact", async (req, reply) => {
@@ -237,6 +263,41 @@ async function main() {
       .hook(req.params.token, req.body && typeof req.body === "object" ? req.body : {}, onClose)
       .catch(() => "")
     return reply.type("text/plain; charset=utf-8").send(text)
+  })
+
+  // El cerrojo de SendMessage (PreToolUse): solo deja escribirle a sesiones del propio proyecto.
+  // Responde 200 vacío para dejar pasar, o el JSON con el deny; ante cualquier error, deniega.
+  const sendGuard: SendGuardDeps = {
+    sessions: () => db.listSessions(),
+    pids: () => sessions.pids(),
+    agentNames: (id) => sessions.agentNames(id),
+    live: async (s) => {
+      const a = accounts.forProject(s.projectId)
+      return listLiveSessions({ bin: accounts.bin(a), env: accounts.env(a), configDir: accounts.dir(a) }, { all: true })
+    },
+    socketOf: (s, pid) => {
+      try {
+        const file = path.join(accounts.dir(accounts.forProject(s.projectId)), "sessions", `${pid}.json`)
+        const reg = JSON.parse(fs.readFileSync(file, "utf8")) as { messagingSocketPath?: unknown }
+        return typeof reg.messagingSocketPath === "string" ? reg.messagingSocketPath : null
+      } catch {
+        return null
+      }
+    },
+  }
+  app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/send-message", async (req, reply) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {}
+    const input = body.tool_input && typeof body.tool_input === "object" ? (body.tool_input as Record<string, unknown>) : {}
+    let decision: SendDecision
+    try {
+      decision = await decideSend(sendGuard, db.getSessionByToken(req.params.token) ?? null, input)
+    } catch {
+      decision = { allow: false, reason: SEND_DENIED.unresolved(String(input.to ?? "")) }
+    }
+    if (decision.allow) return reply.type("text/plain; charset=utf-8").send("")
+    return reply.type("application/json").send({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: decision.reason },
+    })
   })
 
   if (fs.existsSync(config.webDist)) {
@@ -257,11 +318,18 @@ async function main() {
     if (closing) return
     closing = true
     console.log(`\n${signal}: cerrando sesiones…`)
+    // Si la app pidió reiniciar para actualizar, anota qué sesiones retomar antes de cerrarlas.
+    const saved = restart.onShutdown()
+    if (saved) console.log(`Guardé ${saved.sessions.length} sesiones${saved.apps?.length ? ` y ${saved.apps.length} apps` : ""} para retomar al volver.`)
+    // Las apps levantadas desde el dashboard se bajan ordenadas (su comando de bajar, o SIGTERM y SIGKILL).
+    await apps.shutdown().catch(() => {})
     orchestration.dispose()
+    afk.dispose()
     compaction.dispose()
     clis.dispose()
     tasks.dispose()
     hub.dispose()
+    await terminals.closeAll().catch(() => {})
     await sessions.shutdown().catch(() => {})
     await app.close().catch(() => {})
     db.close()
@@ -278,6 +346,17 @@ async function main() {
   console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
   console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
   console.log(`Datos: ${config.home}`)
+  // Las que un /clear de antes de 0.4.3 dejó apuntando a una conversación que no existe.
+  for (const r of sessions.repairConversations()) console.log(`Recuperé la conversación de ${r.name}: ${r.from} → ${r.to}.`)
+  // Las sesiones que estaban vivas antes de reiniciar para actualizar.
+  void restart
+    .resumePending()
+    .then((outcome) => {
+      const line = resumeSummary(outcome)
+      if (line) console.log(line)
+    })
+    // Después de retomar las sesiones: los planes que se cortaron entre un paso y el siguiente siguen.
+    .finally(() => orchestration.plans.recover())
 }
 
 main().catch((err) => {

@@ -120,3 +120,29 @@ describe("qué usan las sesiones", () => {
     assert.deepEqual(programsIn(cmd), ["gcloud", "jq", "bq", "gh", "neon", "doppler"])
   })
 })
+
+describe("leer lo que imprime un CLI", () => {
+  it("no se cuelga si un hijo del CLI se queda con la salida (el navegador de un login)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-clis-hijo-"))
+    const bin = path.join(dir, "conhijo")
+    // Deja un sleep de fondo con su salida abierta: "close" no llega hasta que termine.
+    fs.writeFileSync(bin, `#!/bin/sh\nsleep 20 &\necho "logueado como vos"\nexit 0\n`, { mode: 0o755 })
+    const spec: CliSpec = {
+      id: "conhijo", name: "Con hijo", description: "", category: "Pruebas", bins: ["conhijo"], docs: "", install: {},
+      auth: [{ label: null, check: async (_bin, run) => ((await run(["status"])).out.includes("logueado") ? { state: "ok" } : { state: "logged_out" }) }],
+    }
+    const prev = process.env.PATH
+    process.env.PATH = `${dir}:${prev}`
+    const c = new Clis({ catalog: [spec] })
+    try {
+      const t0 = Date.now()
+      const v = await c.view(true)
+      assert.ok(Date.now() - t0 < 5000, "no esperó al sleep")
+      assert.equal(v.clis[0]!.credentials[0]!.state, "ok", "y leyó lo que imprimió")
+    } finally {
+      process.env.PATH = prev
+      c.dispose()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

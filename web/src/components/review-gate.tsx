@@ -4,6 +4,7 @@ import type { Draft, Project, Session } from "@shared/types"
 
 import { Lamp } from "@/components/status"
 import { useNow } from "@/hooks/use-now"
+import { toneSoft } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
 function Countdown({ at, windowSec, now }: { at: number; windowSec: number; now: number }) {
@@ -15,7 +16,7 @@ function Countdown({ at, windowSec, now }: { at: number; windowSec: number; now:
   return (
     <span className="inline-flex items-center gap-1.5">
       <svg viewBox="0 0 18 18" className="size-3.5 -rotate-90" aria-hidden>
-        <circle cx="9" cy="9" r={r} fill="none" strokeWidth="2.5" className="stroke-status-attention/25" />
+        <circle cx="9" cy="9" r={r} fill="none" strokeWidth="2.5" className="stroke-status-pending-lamp/25" />
         <circle
           cx="9"
           cy="9"
@@ -23,7 +24,7 @@ function Countdown({ at, windowSec, now }: { at: number; windowSec: number; now:
           fill="none"
           strokeWidth="2.5"
           strokeLinecap="round"
-          className="stroke-status-attention transition-[stroke-dashoffset] duration-500 ease-linear"
+          className="stroke-status-pending-lamp transition-[stroke-dashoffset] ease-linear"
           strokeDasharray={c}
           strokeDashoffset={c * (1 - frac)}
         />
@@ -59,15 +60,15 @@ function Segment({
         <span className="eyebrow text-current opacity-80">{label}</span>
         {icon}
       </div>
-      <div className="mt-1 font-mono text-xl leading-none font-medium tabular-nums">{count}</div>
-      <div className="mt-1 text-[0.72rem] leading-snug">{hint}</div>
+      <div className="mt-1 text-xl leading-none font-semibold">{count}</div>
+      <div className="mt-1 text-2xs">{hint}</div>
     </div>
   )
 }
 
 /**
  * La compuerta de la orquestadora: resultados en cola → revisión → propuestas.
- * Mientras haya algo sin leer, las propuestas quedan bloqueadas.
+ * Mientras haya algo sin leer, las propuestas quedan en preparación.
  */
 export function ReviewGate({
   project,
@@ -100,7 +101,7 @@ export function ReviewGate({
   if (inReview) reviewHint = paused ? "en pausa" : busy ? "analizando" : "abierta"
 
   const proposalsHint = staged
-    ? `${staged === 1 ? "bloqueada" : "bloqueadas"}${ready ? ` · ${ready} ${ready === 1 ? "lista" : "listas"}` : ""}`
+    ? `en preparación${ready ? ` · ${ready} ${ready === 1 ? "lista" : "listas"}` : ""}`
     : ready
       ? ready === 1
         ? "lista para enviar"
@@ -110,7 +111,7 @@ export function ReviewGate({
   return (
     <div
       className={cn(
-        "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1.2fr)] items-center rounded-xl border bg-background/60 p-1",
+        "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1.2fr)] items-center rounded-xl bg-muted/50 p-1",
         className
       )}
     >
@@ -119,7 +120,7 @@ export function ReviewGate({
         count={queued}
         hint={queueHint}
         active={queued > 0}
-        className="bg-status-attention/10 text-status-attention"
+        className={toneSoft.pending}
       />
       <ChevronRight className="size-4 text-muted-foreground/60" aria-hidden />
       <Segment
@@ -127,7 +128,7 @@ export function ReviewGate({
         count={inReview}
         hint={reviewHint}
         active={inReview > 0}
-        className="bg-status-working/10 text-status-working"
+        className={toneSoft.working}
         icon={inReview > 0 && busy ? <Lamp tone="working" pulse className="size-1.5" /> : null}
       />
       <ChevronRight className="size-4 text-muted-foreground/60" aria-hidden />
@@ -136,12 +137,12 @@ export function ReviewGate({
         count={staged + ready}
         hint={proposalsHint}
         active={staged + ready > 0}
-        className={staged ? "bg-muted text-foreground" : "bg-status-done/10 text-status-done"}
+        className={staged ? "bg-muted text-foreground" : toneSoft.pending}
         icon={
           staged ? (
-            <Lock className="size-3" aria-label="Bloqueadas" />
+            <Lock className="size-3" aria-label="En preparación" />
           ) : ready ? (
-            <LockOpen className="size-3" aria-label="Liberadas" />
+            <LockOpen className="size-3" aria-label="Listas para enviar" />
           ) : null
         }
       />

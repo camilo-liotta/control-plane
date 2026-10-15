@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react"
 import type { NoticeEvent } from "@shared/types"
 
 /**
- * Sonidos de la bandeja: uno por tipo de aviso, sintetizados con Web Audio (sin archivos). Son
+ * Sonidos de la Bandeja: uno por tipo de aviso, sintetizados con Web Audio (sin archivos). Son
  * independientes de las notificaciones del sistema y se configuran en este navegador.
  */
 
@@ -26,8 +26,8 @@ export const SOUNDS: { id: SoundId; label: string }[] = [
 
 export const EVENTS: { id: NoticeEvent; label: string; hint: string }[] = [
   { id: "needs_you", label: "Te necesita", hint: "Una pregunta de Claude o un permiso" },
-  { id: "result", label: "Resultado", hint: "Un worker terminó y reportó" },
-  { id: "blocked", label: "Bloqueado", hint: "Un worker quedó trabado y pide una decisión" },
+  { id: "result", label: "Resultado", hint: "Una sesión terminó y reportó" },
+  { id: "blocked", label: "Bloqueado", hint: "Una sesión quedó trabada y pide una decisión" },
   { id: "proposals", label: "Propuestas listas", hint: "La orquestadora terminó de revisar" },
   { id: "compaction", label: "Compactación", hint: "El contexto se llena o espera tu elección" },
   { id: "task", label: "Tarea para vos", hint: "Una sesión te dejó algo para hacer" },
@@ -177,7 +177,7 @@ export function playSound(id: SoundId, volume = current.volume) {
   synth.play(c, out, c.currentTime + 0.02)
 }
 
-/** El sonido de un aviso de la bandeja, según su tipo y tu configuración. */
+/** El sonido de un aviso de la Bandeja, según su tipo y tu configuración. */
 export function playNotice(event: NoticeEvent) {
   const s = current
   if (!s.enabled) return

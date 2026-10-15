@@ -16,18 +16,19 @@ function resetIn(ts: number, now: number) {
 
 function Row({ label, window, now }: { label: string; window: UsageWindow; now: number }) {
   const pct = Math.min(1, Math.max(0, window.utilization))
-  const tone = pct >= 0.9 ? "bg-status-error" : pct >= 0.7 ? "bg-status-attention" : "bg-status-working"
+  // Cerca del límite te va a frenar: ámbar. Antes, violeta para que lo mires; el resto, neutro.
+  const tone = pct >= 0.9 ? "bg-status-attention-lamp" : pct >= 0.7 ? "bg-status-pending-lamp" : "bg-muted-foreground/60"
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="grid grid-cols-[2.2rem_1fr_2.6rem] items-center gap-2">
-          <span className="font-condensed text-[0.7rem] font-semibold tracking-wide text-muted-foreground uppercase">
+        <div className="grid grid-cols-[2.2rem_1fr_2.6rem] items-center gap-2" tabIndex={0} aria-label={`${label}: ${percent(pct)} usado, se renueva en ${resetIn(window.resetsAt, now)}`}>
+          <span className="text-2xs font-semibold text-muted-foreground">
             {label}
           </span>
           <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent">
             <div className={cn("h-full rounded-full transition-[width]", tone)} style={{ width: `${pct * 100}%` }} />
           </div>
-          <span className="text-right font-mono text-[0.7rem] tabular-nums text-muted-foreground">{percent(pct)}</span>
+          <span className="text-right text-2xs text-muted-foreground">{percent(pct)}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="right">Se renueva en {resetIn(window.resetsAt, now)}</TooltipContent>

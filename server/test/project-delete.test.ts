@@ -11,11 +11,12 @@ import { Compaction } from "../src/compaction.ts"
 import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import { desktopSummary } from "../src/desktop.ts"
 import { Hub } from "../src/hub.ts"
-import { Orchestration } from "../src/orchestration.ts"
+import { DRAFT_DEFAULTS, Orchestration } from "../src/orchestration.ts"
 import { deleteProject, type DeleteProjectDeps } from "../src/project-delete.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { ServerMessage } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 class SpyHub extends Hub {
   messages: ServerMessage[] = []
@@ -94,9 +95,9 @@ describe("borrar un proyecto", () => {
       attachments.save(s.id, { name: "a.png", mime: "image/png", data: Buffer.from("x"), source: "user" })
     }
     const t = 10
-    db.insertDraft({ id: `d-${projectId}`, projectId, kind: "prompt", targetSessionId: worker.id, newSession: null, title: "t", prompt: "p", state: "ready", createdBy: orch.id, createdAt: t, updatedAt: t, decidedAt: null, edited: false, revision: 1, subagents: [], fresh: false })
+    db.insertDraft({ id: `d-${projectId}`, projectId, kind: "prompt", targetSessionId: worker.id, newSession: null, title: "t", prompt: "p", state: "ready", createdBy: orch.id, createdAt: t, updatedAt: t, decidedAt: null, edited: false, revision: 1, subagents: [], fresh: false, ...DRAFT_DEFAULTS })
     db.insertReport({ id: `r-${projectId}`, projectId, sessionId: worker.id, taskTitle: "t", status: "done", summary: "s", details: null, state: "reviewed", createdAt: t, deliveredAt: t, reviewedAt: t })
-    db.insertTask({ id: `t-${projectId}`, projectId, title: "t", steps: ["a"], why: null, blocking: true, due: null, createdBy: worker.id, alsoBy: [], status: "open", note: null, closedBy: null, createdAt: t, updatedAt: t, closedAt: null })
+    db.insertTask({ id: `t-${projectId}`, projectId, title: "t", steps: ["a"], why: null, blocking: true, due: null, createdBy: worker.id, alsoBy: [], status: "open", note: null, closedBy: null, createdAt: t, updatedAt: t, closedAt: null, cli: null, priority: null, tags: [] })
   }
 
   beforeEach(async () => {
@@ -123,6 +124,7 @@ describe("borrar un proyecto", () => {
       attachments,
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: claudeDir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
@@ -196,7 +198,7 @@ describe("borrar un proyecto", () => {
         stopAll: async () => [stubborn.id],
       },
     }
-    await assert.rejects(deleteProject(stuck, "p1", "Borrame"), new RegExp(`No pude detener ${stubborn.name}: no borré nada`))
+    await assert.rejects(deleteProject(stuck, "p1", "Borrame"), new RegExp(`No se pudieron detener ${stubborn.name} y no se borró nada`))
     unchanged(before)
     assert.equal(hub.messages.some((m) => m.type === "project_removed"), false)
     // Se puede volver a usar: sus sesiones arrancan de nuevo.

@@ -8,7 +8,7 @@ import { config } from "../config.ts"
 import type { TimelineEvent, TokenUsage } from "../shared/types.ts"
 import { oneLine } from "../util.ts"
 import { childEnv } from "./env.ts"
-import { sessionTokens, StreamNormalizer } from "./normalize.ts"
+import { modelCosts, sessionTokens, StreamNormalizer } from "./normalize.ts"
 
 const run = promisify(execFile)
 
@@ -31,7 +31,7 @@ export interface ClaudeTarget {
 }
 
 /** Sesiones de Claude Code vivas de una cuenta (las del dashboard y las de tus terminales). */
-export async function listLiveSessions(target?: ClaudeTarget): Promise<LiveSession[]> {
+export async function listLiveSessions(target?: ClaudeTarget, opts: { all?: boolean } = {}): Promise<LiveSession[]> {
   try {
     const { stdout } = await run(target?.bin ?? config.claudeBin, ["agents", "--json"], {
       timeout: 10_000,
@@ -39,7 +39,7 @@ export async function listLiveSessions(target?: ClaudeTarget): Promise<LiveSessi
       env: childEnv(target?.env ?? {}),
     })
     const list = JSON.parse(stdout) as LiveSession[]
-    return Array.isArray(list) ? list.filter((s) => s.pid) : []
+    return Array.isArray(list) ? (opts.all ? list : list.filter((s) => s.pid)) : []
   } catch {
     return []
   }
@@ -111,6 +111,8 @@ export function listTranscripts(cwd: string, configDir?: string, limit = 40): Tr
 export interface RestoredSpend {
   usd: number
   tokens: TokenUsage | null
+  /** US$ por modelo (costUSD de cada entrada de modelUsage). */
+  byModel: Record<string, number>
 }
 
 /**
@@ -144,7 +146,7 @@ export function lastCostState(cwd: string, sessionId: string, configDir?: string
           const obj = JSON.parse(line) as { type?: string; sessionId?: string; totalCostUSD?: unknown; modelUsage?: unknown }
           if (obj.type !== "cost-state" || (obj.sessionId && obj.sessionId !== sessionId)) continue
           const usd = Number(obj.totalCostUSD)
-          return { usd: Number.isFinite(usd) && usd > 0 ? usd : 0, tokens: sessionTokens(obj.modelUsage) }
+          return { usd: Number.isFinite(usd) && usd > 0 ? usd : 0, tokens: sessionTokens(obj.modelUsage), byModel: modelCosts(obj.modelUsage) }
         } catch {
           // línea incompleta
         }

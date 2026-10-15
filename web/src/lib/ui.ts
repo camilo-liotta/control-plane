@@ -7,6 +7,8 @@ interface UiState {
   inbox: boolean
   palette: boolean
   settingsFor: string | null
+  /** Proyecto cuyo diálogo "Ponerse AFK" está abierto. */
+  afkFor: string | null
   importFor: string | null
   /** Proyecto cuyo diálogo de borrar está abierto. */
   deleteFor: string | null
@@ -22,14 +24,28 @@ interface UiState {
   compactFor: string | null
   /** Sesión cuyo panel de herramientas (MCP, skills, plugins) está abierto. */
   toolsFor: string | null
+  /** Sesión que se está renombrando (el diálogo es uno solo, para el menú y la paleta). */
+  renameFor: string | null
+  /** Sesión que se está por archivar (se pide confirmar). */
+  archiveFor: string | null
+  /** La ayuda de los atajos de teclado. */
+  shortcuts: boolean
+  /** Cada vez que cambia, el chat abierto baja hasta lo último (el atajo y la paleta). */
+  jumpToEnd: number
   /**
    * Lo que la página de destino tiene que mostrar al llegar desde un aviso: las propuestas listas
    * en el chat de la orquestadora (`id`: la sesión) o las tareas del tablero (`id`: el proyecto).
    * La página lo limpia cuando lo muestra.
    */
-  reveal: { kind: "proposals" | "tasks"; id: string; at: number } | null
-  /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde su bandeja). */
+  /**
+   * Lo que la página de destino tiene que mostrar al llegar. Con `item`, además, cuál dentro de la
+   * sección (con "tasks", el id de la tarea: el resumen del proyecto la abre; con "plan", el id del plan).
+   */
+  reveal: { kind: "proposals" | "tasks" | "environments" | "archived" | "plan"; id: string; item?: string; at: number } | null
+  /** Versión nueva de la app de escritorio (la avisa la app; se actualiza desde el menú de su ícono). */
   desktopUpdate: { version: string; notesUrl: string } | null
+  /** La actualización de la app falló: el motivo y lo último de su log (para "Ver log"). */
+  updateFailure: UpdateFailure | null
   set: (patch: Partial<Omit<UiState, "set">>) => void
   selectAccount: (id: string) => void
 }
@@ -44,12 +60,23 @@ function storedAccount(): string | null {
   }
 }
 
+/** Una actualización que falló, como la cuenta la app de escritorio. */
+export interface UpdateFailure {
+  version: string
+  error: string
+  logPath: string
+  log: string
+  /** La URL de acción de la app para reintentar (con el token de esta falla), si vino. */
+  retryUrl: string | null
+}
+
 export const useUi = create<UiState>((set) => ({
   newProject: false,
   newSessionFor: null,
   inbox: false,
   palette: false,
   settingsFor: null,
+  afkFor: null,
   importFor: null,
   deleteFor: null,
   subagent: null,
@@ -59,8 +86,13 @@ export const useUi = create<UiState>((set) => ({
   settingsForAccount: null,
   compactFor: null,
   toolsFor: null,
+  renameFor: null,
+  archiveFor: null,
+  shortcuts: false,
+  jumpToEnd: 0,
   reveal: null,
   desktopUpdate: null,
+  updateFailure: null,
   set: (patch) => set(patch),
   selectAccount: (id) => {
     try {

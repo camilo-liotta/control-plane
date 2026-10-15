@@ -1,10 +1,14 @@
 import { EventEmitter } from "node:events"
 import fs from "node:fs"
+import path from "node:path"
 
 import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
-import { lastCostState, type RestoredSpend } from "./claude/local.ts"
-import { isContextFull, parseCommands, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
+import { removeSessionRunDir, sessionRunDir } from "./claude/run-files.ts"
+import { lastCostState, transcriptDir, type RestoredSpend } from "./claude/local.ts"
+import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
+import { findLostConversation } from "./claude/recover.ts"
+import { HIDDEN_RESULT, hidesResult, redactInput } from "./secrets.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
@@ -28,7 +32,12 @@ import type {
   UsageInfo,
   UserOrigin,
 } from "./shared/types.ts"
+import { version } from "./config.ts"
+import { fingerprintNotice, sectionHashes, type Fingerprint } from "./fingerprint.ts"
 import { withSubagents } from "./prompts.ts"
+import type { LiveSession } from "./restart.ts"
+import { Schedules, SCHEDULE_TOOLS } from "./schedule.ts"
+import { cancelMessage, cancelState } from "./shared/cancel-scheduled.ts"
 import { clampJson, errorMessage, now, oneLine, plainText, shortId, token, uuid } from "./util.ts"
 
 interface PendingControl {
@@ -66,7 +75,7 @@ interface Runtime {
   /** El turno en curso, para el indicador de "trabajando": cuándo empezó y cuántos tokens van. */
   turn: TurnCounter | null
   /** Lo que la sesión llevaba gastado cuando arrancó este proceso. */
-  spentBefore: { usd: number; tokens: TokenUsage | null }
+  spentBefore: { usd: number; tokens: TokenUsage | null; byModel: Record<string, number> }
   /**
    * Lo que Claude Code restaura al reanudar (el último cost-state del transcript): sus totales siguen
    * desde ahí. applies se decide con el primer total que informa (si es menor, no restauró nada).
@@ -79,9 +88,25 @@ interface Runtime {
   /** El turno en curso es un reenvío: si vuelve a no entrar, no se insiste solo. */
   resending: boolean
   /** Los últimos totales que informó el proceso (para rebasar la cuenta si la conversación se reinicia). */
-  lastTotals: { usd: number; tokens: TokenUsage | null }
+  lastTotals: { usd: number; tokens: TokenUsage | null; byModel: Record<string, number> }
+  /** Lo gastado por modelo según el último total del proceso: la base para saber cuánto costó cada turno. */
+  seenByModel: Record<string, number> | null
+  /** Lo que costó el turno en curso por modelo (llega con el resultado, justo antes del fin de turno). */
+  turnModels: Record<string, number> | null
   /** Hubo un /clear: el próximo fin de turno (el del propio /clear) dice si los totales volvieron a cero. */
   resetPending: boolean
+  /**
+   * Hubo un /clear y todavía no se sabe el id nuevo de la conversación: el new_conversation_id del
+   * conversation_reset no es el del transcript (Claude Code 2.1.285 escribe bajo otro), el real llega en
+   * el session_id de los mensajes que siguen. Acá queda el id de antes.
+   */
+  resetFrom: string | null
+  /** Se relanzó de cero porque Claude Code no encontró la conversación: el id que no encontró. */
+  lostConversation: string | null
+  /** Lo que ve esta sesión desde que se lanzó (herramientas y protocolo): se compara con lo que vio antes en el primer mensaje. */
+  fingerprint: Fingerprint
+  /** Ya se le avisó (o no hacía falta) de lo que cambió desde la última vez. */
+  noticed: boolean
 }
 
 interface TurnInput {
@@ -90,7 +115,7 @@ interface TurnInput {
 }
 
 /** Aviso que reemplaza al mensaje reenviado en el chat (el original ya se ve más arriba). */
-const RESENT_NOTICE = "Reenvié el mensaje que no había entrado."
+const RESENT_NOTICE = "Mensaje reenviado: antes no había entrado."
 
 interface TurnCounter {
   startedAt: number
@@ -141,6 +166,8 @@ export interface SendOptions {
   subagents?: SubagentSpec[]
   /** Id del envío que puso la web: si llega dos veces (reintentó porque se cortó la respuesta), sale una sola. */
   clientId?: string
+  /** Si es un paso de un plan. */
+  plan?: { draftId: string; step: number; total: number; title: string }
 }
 
 /** Cuántos envíos recientes se recuerdan para no duplicar un reintento. */
@@ -163,6 +190,8 @@ export interface SessionManagerOptions {
   attachments: AttachmentStore
   mcpUrlFor: (token: string) => string
   hookUrlFor: (token: string) => string
+  /** Donde se escriben, en 0600, los archivos de cada lanzamiento (<home>/run, ver claude/run-files.ts). */
+  runRoot: string
   launchFor: (session: SessionRecord) => LaunchContext
   accountIdFor: (session: SessionRecord) => string
   /** Si la conversación está viva fuera del dashboard (terminal o segundo plano). */
@@ -183,10 +212,16 @@ export class SessionManager extends EventEmitter<{
   context: [string, ContextUsage]
   compacted: [string, number]
   compactFailed: [string, string]
+  /** Se va a archivar una sesión (antes de detenerla). */
+  archiving: [string]
 }> {
   private runtimes = new Map<string, Runtime>()
+  /** El hash del esquema de cada herramienta MCP de una sesión (lo pone registerMcp). Sin esto no se avisa de herramientas. */
+  toolHashes: ((rec: SessionRecord) => Record<string, string>) | null = null
   private stoppedDetail = new Map<string, string>()
   private lastTexts = new Map<string, string | null>()
+  /** Lo que programó cada sesión (crons, wakeups de /loop), armado de sus eventos. */
+  private schedules: Schedules
   /** Últimos comandos conocidos por sesión (sirven aunque esté detenida) y los de cada cuenta. */
   private commands = new Map<string, SlashCommand[]>()
   private accountCommands = new Map<string, SlashCommand[]>()
@@ -198,9 +233,12 @@ export class SessionManager extends EventEmitter<{
   private attachments: AttachmentStore
   private mcpUrlFor: (token: string) => string
   private hookUrlFor: (token: string) => string
+  private runRoot: string
   private launchFor: (session: SessionRecord) => LaunchContext
   private accountIdFor: (session: SessionRecord) => string
   private liveElsewhere?: (session: SessionRecord) => Promise<ExternalSession | null>
+  /** Llamadas a list_environments: su resultado (con secretos) no se guarda en el chat. */
+  private hiddenResults = new Set<string>()
   /** Conversaciones del dashboard que hoy están abiertas en otro lado (se refresca periódicamente). */
   private external = new Map<string, ExternalSession>()
   /** Envíos recientes por id de cliente (sesión + id): el evento que ya se guardó. */
@@ -215,11 +253,13 @@ export class SessionManager extends EventEmitter<{
     this.attachments = opts.attachments
     this.mcpUrlFor = opts.mcpUrlFor
     this.hookUrlFor = opts.hookUrlFor
+    this.runRoot = opts.runRoot
     this.launchFor = opts.launchFor
     this.accountIdFor = opts.accountIdFor
     this.liveElsewhere = opts.liveElsewhere
     this.meta = opts.meta
     const db = opts.db
+    this.schedules = new Schedules({ load: (id) => db.listScheduleEvents(id, SCHEDULE_TOOLS) })
     // Si el server se cortó, ninguna sesión sigue viva: arrancan como detenidas.
     for (const s of db.listSessions()) {
       if (s.status !== "stopped") db.updateSession(s.id, { status: "stopped" })
@@ -255,6 +295,12 @@ export class SessionManager extends EventEmitter<{
       subagents: rt ? this.subagentBriefs(rt) : [],
       context: rt?.context ?? rec.context,
       external: rt && !rt.proc.exited ? null : (this.external.get(rec.id) ?? null),
+      scheduled: this.schedules.list(rec.id, {
+        claudeSessionId: rec.claudeSessionId,
+        dirs: [rec.cwd, this.db.getProject(rec.projectId)?.repoPath ?? rec.cwd],
+        running: Boolean(rt && !rt.proc.exited),
+        runtimeStartedAt: rt && !rt.proc.exited ? rt.startedAt : null,
+      }),
     }
   }
 
@@ -327,6 +373,50 @@ export class SessionManager extends EventEmitter<{
     return this.db.listSessions().map((s) => this.view(s))
   }
 
+  /** Las sesiones con el proceso vivo y en qué están (para retomarlas después de un reinicio). */
+  liveSessions(): LiveSession[] {
+    const out: LiveSession[] = []
+    for (const [id, rt] of this.runtimes) {
+      if (rt.proc.exited) continue
+      if (rt.status !== "idle" && rt.status !== "working" && rt.status !== "needs_input" && rt.status !== "starting") continue
+      const rec = this.db.getSession(id)
+      if (!rec || rec.archivedAt) continue
+      out.push({ id, name: rec.name, projectId: rec.projectId, projectName: this.db.getProject(rec.projectId)?.name ?? "", status: this.seenStatus(rt) })
+    }
+    return out
+  }
+
+  /**
+   * El estado como lo ves en el dashboard: con subagentes andando, o con un mensaje tuyo que todavía
+   * no empezó a procesar, está trabajando aunque el turno principal ya haya cerrado (o no haya abierto).
+   */
+  private seenStatus(rt: Runtime): LiveSession["status"] {
+    const status = rt.status as LiveSession["status"]
+    if (status !== "idle" && status !== "starting") return status
+    const subagents = [...rt.subagents.values()].some((s) => s.status === "running")
+    return subagents || rt.turnInputs.length > 0 ? "working" : status
+  }
+
+  /** Si al arrancar Claude Code no encontró su conversación y empezó una nueva: el id que no encontró. */
+  lostConversation(id: string): string | null {
+    const rt = this.runtimes.get(id)
+    return rt && !rt.proc.exited ? rt.lostConversation : null
+  }
+
+  /** Los pid de los procesos de Claude Code que lanzó el dashboard, con la sesión a la que pertenece cada uno. */
+  pids(): Map<number, string> {
+    const out = new Map<number, string>()
+    for (const [id, rt] of this.runtimes) if (!rt.proc.exited && rt.proc.pid) out.set(rt.proc.pid, id)
+    return out
+  }
+
+  /** Los nombres de los subagentes que la sesión lanzó con la herramienta Agent. */
+  agentNames(id: string): string[] {
+    const rt = this.runtimes.get(id)
+    if (!rt) return []
+    return [...rt.agentCalls.values()].map((c) => c.input.name).filter((n): n is string => typeof n === "string" && n.trim() !== "")
+  }
+
   isRunning(id: string) {
     const rt = this.runtimes.get(id)
     return Boolean(rt && !rt.proc.exited)
@@ -349,6 +439,7 @@ export class SessionManager extends EventEmitter<{
   addEvent(sessionId: string, event: TimelineEvent): StoredEvent {
     const stored = this.db.insertEvent(sessionId, now(), event)
     this.hub.broadcast({ type: "event", event: stored })
+    if (this.schedules.observe(stored)) this.broadcastSession(sessionId)
     if (event.kind === "text" && !event.parent) {
       this.lastTexts.set(sessionId, event.text)
       this.broadcastSession(sessionId)
@@ -400,6 +491,7 @@ export class SessionManager extends EventEmitter<{
       lastActivity: null,
       lastActivityAt: null,
       costUsd: 0,
+      costByModel: {},
       tokens: null,
       context: null,
       createdAt: now(),
@@ -411,6 +503,37 @@ export class SessionManager extends EventEmitter<{
   }
 
   // ------------------------------------------------------------------ ciclo
+
+  /**
+   * Repara las sesiones que quedaron apuntando a una conversación que no existe por un /clear de
+   * antes de 0.4.3 (ver claude/recover.ts): si el transcript del /clear está, lo adopta. No toca las
+   * que tienen su transcript ni las que no tienen un candidato claro. Se corre al arrancar el server.
+   */
+  repairConversations(): { id: string; name: string; from: string; to: string }[] {
+    const out: { id: string; name: string; from: string; to: string }[] = []
+    const all = this.db.listSessions()
+    const taken = new Set(all.map((s) => s.claudeSessionId))
+    for (const rec of all) {
+      if (rec.archivedAt || !rec.startedOnce || this.runtimes.has(rec.id)) continue
+      try {
+        const dir = transcriptDir(rec.cwd, this.launchFor(rec).env.CLAUDE_CONFIG_DIR)
+        if (fs.existsSync(path.join(dir, `${rec.claudeSessionId}.jsonl`))) continue
+        const found = findLostConversation({ dir, name: rec.name, resets: this.db.noticeTimes(rec.id, RESET_NOTICE), taken })
+        if (!found) continue
+        taken.add(found)
+        this.db.updateSession(rec.id, { claudeSessionId: found })
+        this.addEvent(rec.id, {
+          kind: "notice",
+          level: "info",
+          text: `Conversación recuperada después de un /clear: la sesión apuntaba a ${rec.claudeSessionId}, que no existe, y ahora usa ${found}.`,
+        })
+        out.push({ id: rec.id, name: rec.name, from: rec.claudeSessionId, to: found })
+      } catch {
+        // sin proyecto o sin carpeta: queda como está
+      }
+    }
+    return out
+  }
 
   /** Lanza el proceso si no está corriendo. Resuelve cuando el CLI terminó el handshake. */
   async start(id: string): Promise<void> {
@@ -437,17 +560,28 @@ export class SessionManager extends EventEmitter<{
     return this.launch(rec, existing?.retried ?? false)
   }
 
-  private launch(rec: SessionRecord, retried: boolean): Promise<void> {
+  private launch(old: SessionRecord, retried: boolean, lostConversation: string | null = null): Promise<void> {
+    // Un token nuevo en cada lanzamiento: el del proceso anterior (y lo que haya quedado de él) deja de valer.
+    const rec = { ...old, mcpToken: token() }
+    this.db.updateSession(rec.id, { mcpToken: rec.mcpToken })
     const built = this.launchFor(rec)
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
       hookUrl: this.hookUrlFor(rec.mcpToken),
+      runDir: sessionRunDir(this.runRoot, rec.id),
       protocol: built.protocol,
       orchestratorCanEdit: built.orchestratorCanEdit,
       model: built.model,
       effort: built.effort,
     })
     const proc = new ClaudeProcess(built.bin, args, rec.cwd, { ...env, ...built.env })
+    // Una sesión nueva arranca con la huella al día; una de antes (sin huella) la recibe en su primer mensaje.
+    const fingerprint: Fingerprint = {
+      version,
+      tools: this.toolHashes?.(rec) ?? {},
+      sections: sectionHashes(built.protocol),
+    }
+    if (!old.startedOnce && !this.db.getFingerprint(rec.id)) this.db.setFingerprint(rec.id, fingerprint)
     const rt: Runtime = {
       proc,
       normalizer: new StreamNormalizer((u) => rt.ownUuids.has(u)),
@@ -471,13 +605,19 @@ export class SessionManager extends EventEmitter<{
       lastCompactEventId: null,
       hold: null,
       turn: null,
-      spentBefore: { usd: rec.costUsd, tokens: rec.tokens },
-      restored: { ...(lastCostState(rec.cwd, rec.claudeSessionId, built.env.CLAUDE_CONFIG_DIR) ?? { usd: 0, tokens: null }), applies: null },
+      spentBefore: { usd: rec.costUsd, tokens: rec.tokens, byModel: rec.costByModel },
+      restored: { ...(lastCostState(rec.cwd, rec.claudeSessionId, built.env.CLAUDE_CONFIG_DIR) ?? { usd: 0, tokens: null, byModel: {} }), applies: null },
       turnInputs: [],
       failedInputs: null,
       resending: false,
-      lastTotals: { usd: 0, tokens: null },
+      lastTotals: { usd: 0, tokens: null, byModel: {} },
+      seenByModel: null,
+      turnModels: null,
       resetPending: false,
+      resetFrom: null,
+      lostConversation,
+      fingerprint,
+      noticed: false,
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -561,6 +701,10 @@ export class SessionManager extends EventEmitter<{
 
   private onMessage(id: string, rt: Runtime, msg: CliMessage) {
     if (this.runtimes.get(id) !== rt) return
+    if (rt.resetFrom && typeof msg.session_id === "string" && msg.session_id && msg.session_id !== rt.resetFrom) {
+      rt.resetFrom = null
+      this.db.updateSession(id, { claudeSessionId: msg.session_id, startedOnce: true })
+    }
     if (msg.type === "control_cancel_request") {
       this.cancelControl(rt, String(msg.request_id ?? ""))
       this.setStatus(id, rt, this.deriveStatus(rt))
@@ -577,6 +721,15 @@ export class SessionManager extends EventEmitter<{
               // si no se puede guardar, la imagen queda como "[imagen]" en el texto
             }
           }
+          // Lo que llevan secretos (credenciales de prueba) no se guarda tal cual en el chat.
+          if (event.kind === "tool_use") {
+            event.input = redactInput(event.name, event.input)
+            if (hidesResult(event.name)) this.hiddenResults.add(event.id)
+          }
+          if (event.kind === "tool_result" && this.hiddenResults.delete(event.toolUseId)) {
+            event.content = HIDDEN_RESULT
+            delete event.structured
+          }
           if (event.kind === "tool_use" && AGENT_TOOLS.has(event.name)) {
             rt.agentCalls.set(event.id, { input: (event.input ?? {}) as Record<string, unknown>, parent: event.parent })
           }
@@ -588,6 +741,12 @@ export class SessionManager extends EventEmitter<{
             }
             // El "acumulado" del fin de turno es el de la sesión, no el de este proceso.
             if (event.costUsd > 0) event.costUsd = rt.spentBefore.usd + this.processUsd(rt, event.costUsd)
+            const models = Object.entries(rt.turnModels ?? {})
+              .sort((a, b) => b[1] - a[1])
+              .map(([model, usd]) => ({ model, usd }))
+            if (models.length) event.models = models
+            if (rt.currentModel) event.model = rt.currentModel
+            rt.turnModels = null
           }
           const stored = this.addEvent(id, event)
           if (event.kind === "compact") {
@@ -701,10 +860,17 @@ export class SessionManager extends EventEmitter<{
           break
         case "cost":
           // total_cost_usd y modelUsage siguen desde lo que Claude Code restauró al reanudar: se suma solo lo nuevo.
-          this.decideRestored(rt, action.totalUsd, action.tokens)
-          rt.lastTotals = { usd: action.totalUsd, tokens: action.tokens ?? rt.lastTotals.tokens }
+          // modelUsage también es acumulado: lo de cada turno sale de restarle el total anterior.
+          this.decideRestored(rt, action.totalUsd, null)
+          const restoredByModel = rt.restored.applies ? rt.restored.byModel : {}
+          rt.turnModels = costsSince(action.byModel, rt.seenByModel ?? restoredByModel)
+          if (Object.keys(action.byModel).length) rt.seenByModel = action.byModel
+          rt.lastTotals = { usd: action.totalUsd, tokens: action.tokens ?? rt.lastTotals.tokens, byModel: action.byModel }
           this.db.updateSession(id, {
             ...(action.totalUsd > 0 ? { costUsd: rt.spentBefore.usd + this.processUsd(rt, action.totalUsd) } : {}),
+            ...(Object.keys(action.byModel).length
+              ? { costByModel: addCosts(rt.spentBefore.byModel, costsSince(action.byModel, restoredByModel)) }
+              : {}),
             ...(action.tokens ? { tokens: addTokens(rt.spentBefore.tokens, tokensSince(action.tokens, rt.restored)) } : {}),
           })
           break
@@ -763,10 +929,12 @@ export class SessionManager extends EventEmitter<{
           // /clear: la conversación nueva arranca sus totales de cero (o, si algún día no, sigue desde los
           // últimos). Lo gastado hasta acá queda como base; el resultado del /clear dice cuál de las dos.
           const cur = this.db.getSession(id)
-          rt.spentBefore = { usd: cur?.costUsd ?? 0, tokens: cur?.tokens ?? null }
+          rt.spentBefore = { usd: cur?.costUsd ?? 0, tokens: cur?.tokens ?? null, byModel: cur?.costByModel ?? {} }
           rt.restored = { ...rt.lastTotals, applies: null }
+          rt.seenByModel = null
           rt.resetPending = true
-          this.db.updateSession(id, { claudeSessionId: action.newSessionId, startedOnce: true })
+          // El id nuevo es el session_id de lo que sigue (ver resetFrom), no el new_conversation_id.
+          rt.resetFrom = cur?.claudeSessionId ?? null
           break
         }
       }
@@ -798,7 +966,7 @@ export class SessionManager extends EventEmitter<{
           kind: "permission",
           requestId,
           toolName: String(req.tool_name ?? "herramienta"),
-          input: clampJson(input, 20_000),
+          input: clampJson(redactInput(String(req.tool_name ?? ""), input), 20_000),
           state: "pending",
         })
         rt.pendingControl.set(requestId, {
@@ -835,6 +1003,8 @@ export class SessionManager extends EventEmitter<{
     if (this.runtimes.get(id) !== rt) return
     this.endTurn(id, rt)
     this.runtimes.delete(id)
+    // Sin proceso no hace falta lo que leía (los tokens); un relanzamiento lo vuelve a escribir.
+    this.dropRunFiles(id)
     for (const requestId of [...rt.pendingControl.keys()]) this.cancelControl(rt, requestId)
     // Los subagentes mueren con su sesión.
     for (const sub of rt.subagents.values()) {
@@ -850,7 +1020,13 @@ export class SessionManager extends EventEmitter<{
     if (quick && !rt.retried && !info.expected) {
       if (/No conversation found/i.test(info.stderr)) {
         this.db.updateSession(id, { startedOnce: false })
-        void this.launch({ ...rec, startedOnce: false }, true).catch(() => {})
+        if (rec.startedOnce)
+          this.addEvent(id, {
+            kind: "notice",
+            level: "warn",
+            text: `Claude Code no encontró la conversación de esta sesión (${rec.claudeSessionId}): arrancó una nueva, sin el contexto de antes.`,
+          })
+        void this.launch({ ...rec, startedOnce: false }, true, rec.startedOnce ? rec.claudeSessionId : null).catch(() => {})
         return
       }
       if (/already in use/i.test(info.stderr)) {
@@ -882,6 +1058,29 @@ export class SessionManager extends EventEmitter<{
   // ---------------------------------------------------------------- acciones
 
   /** Manda un mensaje como si lo escribieras vos. Si la sesión estaba detenida, la reanuda. */
+  /**
+   * Le pide a la sesión que cancele algo que programó (solo ella puede llamar a CronDelete): le manda
+   * el mensaje por el mismo camino que el composer y anota el pedido, que se ve hasta que lo cancela.
+   * Si ya hay un pedido pendiente para lo mismo, no lo vuelve a mandar.
+   */
+  async requestCancelScheduled(id: string, itemId: string, clientId?: string): Promise<{ sent: boolean }> {
+    const rec = this.db.getSession(id)
+    if (!rec) throw new Error("La sesión no existe")
+    const view = this.view(rec)
+    const item = view.scheduled.find((i) => i.id === itemId)
+    if (!item || item.status !== "active") throw new Error("Eso ya no está programado")
+    if (cancelState(item.cancelRequest, item, view.status, now()) === "pending") return { sent: false }
+    this.schedules.requestCancel(id, itemId)
+    try {
+      await this.send(id, cancelMessage(item), { origin: "user", clientId })
+    } catch (err) {
+      this.schedules.dropCancel(id, itemId)
+      throw err
+    }
+    this.broadcastSession(id)
+    return { sent: true }
+  }
+
   async send(id: string, text: string, opts: SendOptions): Promise<StoredEvent> {
     const clientKey = opts.clientId ? `${id}:${opts.clientId}` : null
     const already = clientKey ? this.byClientId.get(clientKey) : undefined
@@ -904,7 +1103,12 @@ export class SessionManager extends EventEmitter<{
       ...(opts.draftTitle ? { draftTitle: opts.draftTitle } : {}),
       ...(files.length ? { attachments: files.map(toRef) } : {}),
       ...(opts.subagents?.length ? { subagents: opts.subagents } : {}),
+      ...(opts.plan ? { plan: opts.plan } : {}),
     }
+    // Lo primero que recibe después de un lanzamiento: si cambiaron sus herramientas o su protocolo, un aviso para el modelo.
+    // No va a los comandos (/clear, /compact) ni se muestra en el chat: el evento se arma con el texto original.
+    const notice = !rt.noticed && !text.startsWith("/") ? fingerprintNotice(this.db.getFingerprint(id), rt.fingerprint) : null
+    if (notice) text = `${notice}\n\n${text}`
     // Primero sale al proceso y después se guarda: si no sale, no queda en el chat como enviado.
     // (La salida del proceso se lee en otro tick, así que el eco nunca llega antes que el evento.)
     if (!rt.proc.sendUser(files.length ? contentWithFiles(text, files) : text, u, rec.claudeSessionId))
@@ -916,6 +1120,11 @@ export class SessionManager extends EventEmitter<{
     if (clientKey) {
       this.byClientId.set(clientKey, stored)
       if (this.byClientId.size > CLIENT_IDS_KEPT) this.byClientId.delete(this.byClientId.keys().next().value!)
+    }
+    if (!rt.noticed && !text.startsWith("/")) {
+      rt.noticed = true
+      this.db.setFingerprint(id, rt.fingerprint)
+      if (notice) this.addEvent(id, { kind: "notice", level: "info", text: "control-plane se actualizó: se le avisó a la sesión de sus herramientas y secciones nuevas." })
     }
     rt.turnInputs.push({ text, opts })
     // Hasta que el CLI avise, la mostramos trabajando.
@@ -1094,7 +1303,7 @@ export class SessionManager extends EventEmitter<{
   /** Reenvía lo que no entró en el último turno (después de compactar). */
   async resendUnsent(id: string): Promise<number> {
     const inputs = this.unsent(id)
-    if (!inputs.length) throw new Error("No encontré un mensaje que no haya salido")
+    if (!inputs.length) throw new Error("No hay ningún mensaje sin enviar")
     await this.start(id)
     const rt = this.runtimes.get(id)
     if (!rt) throw new Error("La sesión no está corriendo")
@@ -1159,8 +1368,10 @@ export class SessionManager extends EventEmitter<{
 
   /** Cambia el modelo: queda guardado y, si la sesión está corriendo, aplica desde el próximo turno. */
   async setModel(id: string, model: string | null) {
-    this.update(id, { model })
     const rt = this.runtimes.get(id)
+    // El modelo que informó el proceso ya no vale: hasta el próximo turno se ve el elegido.
+    if (rt) rt.currentModel = null
+    this.update(id, { model })
     if (rt && !rt.proc.exited) await rt.proc.request("set_model", { model }, 15_000)
   }
 
@@ -1180,8 +1391,18 @@ export class SessionManager extends EventEmitter<{
   }
 
   async archive(id: string) {
+    this.emit("archiving", id)
     await this.stop(id)
+    this.dropRunFiles(id)
     this.update(id, { archivedAt: now(), status: "stopped" })
+  }
+
+  private dropRunFiles(id: string) {
+    try {
+      removeSessionRunDir(this.runRoot, id)
+    } catch {
+      // se limpian igual al arrancar el server
+    }
   }
 
   /** Mientras se borra un proyecto, ninguna de sus sesiones arranca (ni por un prompt ni por un reintento). */
@@ -1232,6 +1453,22 @@ function tokensSince(total: TokenUsage, restored: Runtime["restored"]): TokenUsa
     cacheWrite: d(total.cacheWrite, r.cacheWrite),
     total: d(total.total, r.total),
   }
+}
+
+/** Lo que sumó cada modelo desde `base` (los dos acumulados); lo que no creció no aparece. */
+function costsSince(total: Record<string, number>, base: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [model, usd] of Object.entries(total)) {
+    const d = usd - (base[model] ?? 0)
+    if (d > 1e-9) out[model] = d
+  }
+  return out
+}
+
+function addCosts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out = { ...a }
+  for (const [model, usd] of Object.entries(b)) out[model] = (out[model] ?? 0) + usd
+  return out
 }
 
 function addTokens(a: TokenUsage | null, b: TokenUsage): TokenUsage {

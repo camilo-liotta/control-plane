@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/web",
-  "version": "0.2.3",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,10 +11,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
-    "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@fontsource/ibm-plex-sans-condensed": "^5.3.0",
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "cmdk": "^1.1.1",
     "cn": "^0.4.0",

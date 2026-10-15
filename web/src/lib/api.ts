@@ -1,5 +1,9 @@
 import type {
+  AfkLog,
   Account,
+  AppInput,
+  AppSuggestion,
+  AppView,
   AccountAuth,
   Attachment,
   CatalogPlugin,
@@ -9,13 +13,17 @@ import type {
   CliJob,
   CliView,
   UserTask,
+  Environment,
+  Credential,
   CompactionState,
   ContextUsage,
   Draft,
+  PlanStep,
   EditorSettings,
   EngramInstallResult,
   Marketplace,
   Project,
+  ProjectMessage,
   ProjectOverview,
   ProjectSettings,
   Report,
@@ -30,6 +38,22 @@ import type {
   ToolsView,
 } from "@shared/types"
 import { NetworkError } from "@shared/deliver"
+import type { ResolvedRef } from "@shared/file-refs"
+
+export interface EnvironmentFields {
+  name: string
+  url?: string | null
+  /** Id de la app del proyecto que le da la URL; "" o null la desconecta. */
+  app?: string | null
+  notes?: string | null
+}
+export interface CredentialFields {
+  name: string
+  username?: string | null
+  secret?: string | null
+  loginUrl?: string | null
+  notes?: string | null
+}
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   let res: Response
@@ -102,6 +126,20 @@ const qs = (params: Record<string, string | null | undefined>) => {
 
 export const attachmentUrl = (id: string, download = false) => `/api/attachments/${id}${download ? "?download=1" : ""}`
 
+/** Lo que el usuario cambia de una propuesta antes de aprobarla (o de un plan pausado). */
+export interface DraftEdits {
+  title?: string
+  prompt?: string
+  subagents?: SubagentSpec[]
+  fresh?: boolean
+  /** null = la sesión sigue con el que tiene. */
+  model?: string | null
+  effort?: string | null
+  steps?: PlanStepEdit[]
+}
+
+export type PlanStepEdit = Pick<PlanStep, "title" | "prompt" | "model" | "effort" | "fresh" | "subagents">
+
 export const api = {
   accounts: (refresh = false) => request<Account[]>("GET", `/api/accounts${refresh ? "?refresh=1" : ""}`),
   detectAccounts: () => request<{ configDir: string; name: string; auth: AccountAuth }[]>("GET", "/api/accounts/detect"),
@@ -124,6 +162,9 @@ export const api = {
   updateProject: (id: string, body: { name?: string; settings?: Partial<ProjectSettings> }) =>
     request<Project>("PATCH", `/api/projects/${id}`, body),
   archiveProject: (id: string) => request<Project>("DELETE", `/api/projects/${id}`),
+  archivedProjects: () => request<Project[]>("GET", "/api/projects/archived"),
+  restoreProject: (id: string) =>
+    request<{ project: Project; restored: number; skipped: string[] }>("POST", `/api/projects/${id}/restore`),
   deleteProject: (id: string, confirm: string) =>
     request<{ ok: true; stopped: number }>("POST", `/api/projects/${id}/delete`, { confirm }),
   reviewNow: (id: string) => request("POST", `/api/projects/${id}/review-now`),
@@ -141,14 +182,40 @@ export const api = {
   updateSession: (id: string, body: { name?: string; role?: string; model?: string | null; effort?: string | null }) =>
     request<Session>("PATCH", `/api/sessions/${id}`, body),
   archiveSession: (id: string) => request("DELETE", `/api/sessions/${id}`),
+  /** Abre (o retoma) la terminal de la sesión; el token sirve para conectarse a /ws/terminal. */
+  openTerminal: (id: string, cols: number, rows: number) => request<{ token: string; created: boolean }>("POST", `/api/sessions/${id}/terminal`, { cols, rows }),
+  closeTerminal: (id: string) => request("DELETE", `/api/sessions/${id}/terminal`),
+  /** Si la terminal está abierta y qué corre adentro (vacío si espera un comando). */
+  terminalStatus: (id: string) => request<{ open: boolean; running: string[] }>("GET", `/api/sessions/${id}/terminal`),
   events: (id: string, before?: number, limit = 300) =>
     request<StoredEvent[]>("GET", `/api/sessions/${id}/events?limit=${limit}${before ? `&before=${before}` : ""}`),
+  afkLog: (id: string) => request<AfkLog | null>("GET", `/api/projects/${id}/afk-log`),
+  projectMessages: (id: string) => request<ProjectMessage[]>("GET", `/api/projects/${id}/messages`),
   sessionReports: (id: string) => request<Report[]>("GET", `/api/sessions/${id}/reports`),
   sessionChanges: (id: string) => request<SessionChanges>("GET", `/api/sessions/${id}/changes`),
   openFile: (id: string, path: string, side: "uncommitted" | "committed") =>
     request<{ diff: boolean }>("POST", `/api/sessions/${id}/open-file`, { path, side }),
   editor: () => request<EditorSettings>("GET", "/api/editor"),
+  openProjectInEditor: (projectId: string, path?: string) => request<{ dir: string }>("POST", `/api/projects/${projectId}/open-in-editor`, { path }),
+  resolvePaths: (projectId: string, paths: string[], sessionId?: string) =>
+    request<{ ok: ResolvedRef[] }>("POST", `/api/projects/${projectId}/resolve-paths`, { paths, sessionId }),
+  openPath: (projectId: string, path: string, sessionId?: string) =>
+    request<{ rel: string; kind: "file" | "dir" }>("POST", `/api/projects/${projectId}/open-path`, { path, sessionId }),
+  apps: (projectId: string, watch = false) => request<AppView[]>("GET", `/api/projects/${projectId}/apps${watch ? "?watch=1" : ""}`),
+  appSuggestions: (projectId: string) => request<AppSuggestion[]>("GET", `/api/projects/${projectId}/apps/suggestions`),
+  createApp: (projectId: string, input: AppInput) => request<AppView>("POST", `/api/projects/${projectId}/apps`, input),
+  updateApp: (id: string, input: AppInput) => request<AppView>("PATCH", `/api/apps/${id}`, input),
+  removeApp: (id: string) => request("DELETE", `/api/apps/${id}`),
+  startApp: (id: string) => request<AppView>("POST", `/api/apps/${id}/start`),
+  stopApp: (id: string) => request<AppView>("POST", `/api/apps/${id}/stop`),
+  restartApp: (id: string) => request<AppView>("POST", `/api/apps/${id}/restart`),
+  appLog: (id: string) => request<{ lines: string[] }>("GET", `/api/apps/${id}/log`),
+  startAllApps: (projectId: string) =>
+    request<{ started: string[]; failed: { name: string; error: string }[] }>("POST", `/api/projects/${projectId}/apps/start-all`),
+  stopAllApps: (projectId: string) => request("POST", `/api/projects/${projectId}/apps/stop-all`),
   saveEditor: (patch: Partial<EditorSettings>) => request<EditorSettings>("PUT", "/api/editor", patch),
+  cancelScheduled: (id: string, itemId: string, clientId: string) =>
+    request<{ sent: boolean }>("POST", `/api/sessions/${id}/scheduled/${encodeURIComponent(itemId)}/cancel`, { clientId }),
   send: (id: string, text: string, attachmentIds: string[] = [], clientId?: string) =>
     request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds, clientId }),
   upload: (id: string, file: { name: string; mime: string; data: string }) =>
@@ -163,13 +230,13 @@ export const api = {
   permission: (id: string, requestId: string, allow: boolean) =>
     request("POST", `/api/sessions/${id}/permission`, { requestId, allow }),
 
-  sendDraft: (
-    id: string,
-    edits: { title?: string; prompt?: string; name?: string; role?: string; subagents?: SubagentSpec[]; fresh?: boolean } = {}
-  ) => request<Draft>("POST", `/api/drafts/${id}/send`, edits),
+  sendDraft: (id: string, edits: DraftEdits & { name?: string; role?: string } = {}) => request<Draft>("POST", `/api/drafts/${id}/send`, edits),
   discardDraft: (id: string) => request<Draft>("POST", `/api/drafts/${id}/discard`),
-  editDraft: (id: string, edits: { title?: string; prompt?: string; subagents?: SubagentSpec[]; fresh?: boolean }) =>
-    request<Draft>("PATCH", `/api/drafts/${id}`, edits),
+  editDraft: (id: string, edits: DraftEdits) => request<Draft>("PATCH", `/api/drafts/${id}`, edits),
+  pausePlan: (id: string) => request<Draft>("POST", `/api/drafts/${id}/plan/pause`),
+  /** retry repite el paso que se cortó; next sigue con el siguiente (por defecto, lo que corresponda). */
+  resumePlan: (id: string, mode?: "retry" | "next") => request<Draft>("POST", `/api/drafts/${id}/plan/resume`, mode ? { mode } : {}),
+  cancelPlan: (id: string) => request<Draft>("POST", `/api/drafts/${id}/plan/cancel`),
 
   dismissReport: (id: string) => request("POST", `/api/reports/${id}/dismiss`),
 
@@ -177,10 +244,22 @@ export const api = {
   compactionApply: (id: string, selection: CompactionSelection) =>
     request("POST", `/api/sessions/${id}/compaction/apply`, selection),
   compactionDirect: (id: string) => request("POST", `/api/sessions/${id}/compaction/direct`),
-  createTask: (projectId: string, task: { title: string; steps: string[]; why?: string; due?: number | null }) =>
+  createTask: (projectId: string, task: { title: string; steps: string[]; why?: string; due?: number | null; priority?: number | null; tags?: string[] }) =>
     request<UserTask>("POST", `/api/projects/${projectId}/tasks`, task),
-  updateTask: (id: string, patch: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] }) =>
-    request<UserTask>("PATCH", `/api/tasks/${id}`, patch),
+  updateTask: (
+    id: string,
+    patch: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[]; priority?: number | null; tags?: string[] }
+  ) => request<UserTask>("PATCH", `/api/tasks/${id}`, patch),
+  /** El login del CLI de la tarea: si sale bien, la tarea se cierra sola. */
+  taskCliLogin: (id: string) => request<CliJob>("POST", `/api/tasks/${id}/cli-login`),
+  createEnvironment: (projectId: string, env: EnvironmentFields) => request<Environment>("POST", `/api/projects/${projectId}/environments`, env),
+  updateEnvironment: (id: string, patch: Partial<EnvironmentFields>) => request<Environment>("PATCH", `/api/environments/${id}`, patch),
+  deleteEnvironment: (id: string) => request("DELETE", `/api/environments/${id}`),
+  createCredential: (environmentId: string, c: CredentialFields) => request<Credential>("POST", `/api/environments/${environmentId}/credentials`, c),
+  updateCredential: (id: string, patch: Partial<CredentialFields>) => request<Credential>("PATCH", `/api/credentials/${id}`, patch),
+  deleteCredential: (id: string) => request("DELETE", `/api/credentials/${id}`),
+  /** El secreto de una credencial: solo al mostrarlo o copiarlo (no se guarda en el store). */
+  credentialSecret: (id: string) => request<{ secret: string | null }>("GET", `/api/credentials/${id}/secret`),
   clis: (refresh = false) => request<CliView>("GET", `/api/clis${refresh ? "?refresh=1" : ""}`),
   cliLogin: (id: string, credential = 0) => request<CliJob>("POST", `/api/clis/${id}/login`, { credential }),
   cliInstall: (id: string) => request<CliJob>("POST", `/api/clis/${id}/install`),

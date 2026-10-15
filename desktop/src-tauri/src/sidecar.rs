@@ -16,20 +16,21 @@ use std::fs::File;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::{
-    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
-};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::health::{self, Health, Probe};
 use crate::launch_env::LaunchEnv;
-use crate::policy::{self, Answer, Busy, ExitAction, Restart, RestartPolicy, ServerKind};
+use crate::policy::{
+    self, Answer, Busy, ExitAction, QuitMode, Restart, RestartPolicy, ServerAge, ServerKind,
+};
+use crate::restart;
 use crate::screen::{self, Action, Request, Screen};
 use crate::server_log;
 use crate::server_state::{self, Expected, Owner, StateFile};
@@ -48,11 +49,15 @@ const SLOW_AFTER: Duration = Duration::from_secs(30);
 const FOREIGN_GRACE: Duration = Duration::from_secs(10);
 const STOP_GRACE: Duration = Duration::from_secs(15);
 const NODEJS_URL: &str = "https://nodejs.org/";
+/// Cómo instalar Claude Code.
+const CLAUDE_SETUP_URL: &str = "https://code.claude.com/docs/en/setup";
 
 /// Lo que la app le pide al sidecar desde afuera de su hilo.
 enum Cmd {
     Action(Request),
     Exit,
+    /// "Reiniciar el server" (uno propio más viejo que la app).
+    RestartServer,
 }
 
 /// Los pedidos pendientes del sidecar (se crean con el estado y los consume su hilo).
@@ -70,6 +75,8 @@ pub struct Hooks {
     pub notify: Notify,
     /// Cuántas sesiones corta detener el server (`running` del resumen), si se sabe.
     pub running: Running,
+    /// Cuántas están trabajando (`working` del resumen), si se sabe.
+    pub working: Running,
 }
 
 /// Estado del sidecar que se comparte con la app (`app.state::<Sidecar>()`).
@@ -82,8 +89,11 @@ pub struct Sidecar {
     exit_ok: AtomicBool,
     /// El sistema se está apagando o cerrando la sesión (macOS): salir sin preguntar.
     system_ending: Arc<AtomicBool>,
-    /// La próxima salida deja el server corriendo (`--quit --keep-server`). Se consume al salir.
-    keep_server: AtomicBool,
+    /// Cómo es la próxima salida (`--quit --keep-server`, `--quit --restart-for-update`). Se
+    /// consume al salir.
+    quit_mode: AtomicU8,
+    /// La salida la pidió cerrar la ventana sin un ícono visible: el diálogo lo explica.
+    closed_without_tray: AtomicBool,
     log: Mutex<Option<PathBuf>>,
 }
 
@@ -114,10 +124,31 @@ impl Sidecar {
         self.tx.lock().expect("sidecar").send(Cmd::Exit).is_ok()
     }
 
-    /// `--quit --keep-server`: la próxima salida no pregunta ni detiene el server, sin cambiar
-    /// "Al salir". Después hay que pedir la salida (`app.exit`).
-    pub fn keep_server_on_exit(&self) {
-        self.keep_server.store(true, Ordering::SeqCst);
+    /// `--quit --keep-server` o `--quit --restart-for-update`: la próxima salida no pregunta, sin
+    /// cambiar "Al salir". Después hay que pedir la salida (`app.exit`).
+    pub fn set_quit_mode(&self, mode: QuitMode) {
+        self.quit_mode.store(mode as u8, Ordering::SeqCst);
+    }
+
+    fn take_quit_mode(&self) -> QuitMode {
+        match self
+            .quit_mode
+            .swap(QuitMode::Normal as u8, Ordering::SeqCst)
+        {
+            m if m == QuitMode::KeepServer as u8 => QuitMode::KeepServer,
+            m if m == QuitMode::RestartForUpdate as u8 => QuitMode::RestartForUpdate,
+            _ => QuitMode::Normal,
+        }
+    }
+
+    /// Cerrar la ventana sin un ícono visible: salir como con "Salir" (pasa por "Al salir").
+    pub fn quit_from_close(&self) {
+        self.closed_without_tray.store(true, Ordering::SeqCst);
+    }
+
+    /// "Reiniciar el server" del menú del ícono.
+    pub fn restart_server(&self) {
+        let _ = self.tx.lock().expect("sidecar").send(Cmd::RestartServer);
     }
 
     pub fn log_path(&self) -> Option<PathBuf> {
@@ -138,7 +169,8 @@ pub fn create(app: &AppHandle) -> Inbox {
         token: screen::random_hex(),
         exit_ok: AtomicBool::new(false),
         system_ending: Arc::new(AtomicBool::new(false)),
-        keep_server: AtomicBool::new(false),
+        quit_mode: AtomicU8::new(QuitMode::Normal as u8),
+        closed_without_tray: AtomicBool::new(false),
         log: Mutex::new(None),
     });
     Inbox(rx)
@@ -365,6 +397,10 @@ struct Worker {
     /// El puerto del server que tiene tomada la carpeta de datos ("Usar ese").
     lock_port: Option<u16>,
     last_health: Instant,
+    /// La versión del server en la ventana, y si ya se la comparó con la de la app.
+    server_version: Option<String>,
+    age_checked: bool,
+    age_since: Instant,
 }
 
 impl Worker {
@@ -381,6 +417,9 @@ impl Worker {
             home: None,
             lock_port: None,
             last_health: Instant::now(),
+            server_version: None,
+            age_checked: true,
+            age_since: Instant::now(),
         }
     }
 
@@ -435,6 +474,7 @@ impl Worker {
             match rx.recv_timeout(self.tick()) {
                 Ok(Cmd::Action(req)) => self.on_action(req),
                 Ok(Cmd::Exit) => self.on_exit(),
+                Ok(Cmd::RestartServer) => self.restart_server(),
                 Err(RecvTimeoutError::Timeout) => self.on_tick(),
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -483,6 +523,11 @@ impl Worker {
         let state_path = self.state_file(port);
         match health::probe(port) {
             Probe::ControlPlane(h) => {
+                // Uno adoptado puede ser de una versión anterior: se compara en el próximo tick,
+                // cuando ya se sabe cuántas sesiones están trabajando.
+                self.server_version = Some(h.version.clone());
+                self.age_checked = false;
+                self.age_since = Instant::now();
                 let state = StateFile::read(&state_path);
                 match server_state::owner(state.as_ref(), &h) {
                     Owner::Own => {
@@ -560,10 +605,15 @@ impl Worker {
             Ok(n) => n.path.clone(),
             Err(e) => return self.show(Screen::no_node(&e.to_string())),
         };
-        if let Err(e) = &launch.claude {
-            return self.show(Screen::no_claude(&e.to_string()));
-        }
+        let claude = match &launch.claude {
+            Ok(p) => p.clone(),
+            Err(e) => return self.show(Screen::no_claude(&e.to_string())),
+        };
         let mut env: BTreeMap<String, String> = launch.server_env.clone();
+        // El que elegiste a mano: el server (y las sesiones) usan ese.
+        if self.settings().claude_path.as_deref() == Some(claude.as_path()) {
+            env.insert("CLAUDE_BIN".into(), claude.to_string_lossy().into_owned());
+        }
         let user_home = env.get("HOME").map(PathBuf::from);
         let allow_real = env
             .get("CONTROL_PLANE_ALLOW_REAL_HOME")
@@ -594,7 +644,7 @@ impl Worker {
         let entry = bundle.join("server.mjs");
         if !entry.is_file() {
             return self.show(Screen::failed(&format!(
-                "No encontré el server empaquetado en {}. En desarrollo se genera con `npm run stage -w desktop`.",
+                "No se encontró el server empaquetado en {}. En desarrollo se genera con `npm run stage -w desktop`.",
                 entry.display()
             )));
         }
@@ -621,7 +671,7 @@ impl Worker {
             Ok(x) => x,
             Err(e) => {
                 return self.show(Screen::failed(&format!(
-                    "No pude abrir el log {}: {e}",
+                    "No se pudo abrir el log {}: {e}",
                     log_path.display()
                 )))
             }
@@ -631,7 +681,7 @@ impl Worker {
             Ok(c) => c,
             Err(e) => {
                 return self.show(Screen::failed(&format!(
-                    "No pude ejecutar {}: {e}",
+                    "No se pudo ejecutar {}: {e}",
                     node.display()
                 )))
             }
@@ -668,6 +718,9 @@ impl Worker {
 
     fn on_tick(&mut self) {
         let Some(port) = self.port else { return };
+        if !self.age_checked && matches!(self.phase, Phase::Own { .. } | Phase::Foreign { .. }) {
+            self.check_server_age();
+        }
         match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Idle => {}
             Phase::Starting {
@@ -797,7 +850,7 @@ impl Worker {
                             (self.hooks.notify)(
                                 &self.app,
                                 "El server se detuvo",
-                                "No lo había lanzado la app, así que no lo relanzo sola.",
+                                "No lo había lanzado la app, así que no se relanza solo.",
                             );
                             self.show(Screen::foreign_gone(port));
                         } else {
@@ -856,7 +909,7 @@ impl Worker {
                 (self.hooks.notify)(
                     &self.app,
                     "El server se cerró",
-                    &format!("Terminó {code}. Lo vuelvo a lanzar."),
+                    &format!("Terminó {code}. Se está relanzando."),
                 );
                 self.show(Screen::restarting());
                 self.discover(port);
@@ -873,7 +926,7 @@ impl Worker {
                 (self.hooks.notify)(
                     &self.app,
                     "El server se sigue cayendo",
-                    "Lo relancé 3 veces en 5 minutos. No lo vuelvo a lanzar solo.",
+                    "Se relanzó 3 veces en 5 minutos y la app no lo relanza más. Mirá el log en la app.",
                 );
                 self.show(Screen::too_many_restarts(tail));
             }
@@ -917,6 +970,8 @@ impl Worker {
             },
             Action::PickNode => self.pick_node(),
             Action::GetNode => window::open_in_browser(NODEJS_URL),
+            Action::PickClaude => self.pick_claude(),
+            Action::GetClaude => window::open_in_browser(CLAUDE_SETUP_URL),
             Action::OpenAnyway => {
                 if let Some(p) = port {
                     // Un server viejo sin health: no hay cómo supervisarlo, solo se lo muestra.
@@ -993,6 +1048,19 @@ impl Worker {
         }
     }
 
+    fn pick_claude(&mut self) {
+        let picked = self
+            .app
+            .dialog()
+            .file()
+            .set_title("Elegí el ejecutable de Claude Code")
+            .blocking_pick_file();
+        if let Some(path) = picked.and_then(|p| p.into_path().ok()) {
+            self.save_settings(|s| s.claude_path = Some(path));
+            self.boot();
+        }
+    }
+
     // ------------------------------------------------------------------ detener y salir
 
     fn kind(&self) -> ServerKind {
@@ -1007,15 +1075,33 @@ impl Worker {
     fn on_exit(&mut self) {
         let on_exit = self.settings().on_exit;
         let ending = self.state().system_ending.load(Ordering::SeqCst);
-        let keep = self.state().keep_server.swap(false, Ordering::SeqCst);
-        let mut action = policy::exit_action(self.kind(), on_exit, None, ending, keep);
+        let mode = self.state().take_quit_mode();
+        let mut action = policy::exit_action(self.kind(), on_exit, None, ending, mode);
+        let without_tray = self
+            .state()
+            .closed_without_tray
+            .swap(false, Ordering::SeqCst);
         if action == ExitAction::Ask {
-            let answer = self.ask_exit();
-            action = policy::exit_action(self.kind(), on_exit, Some(answer), ending, keep);
+            let answer = self.ask_exit(without_tray);
+            action = policy::exit_action(self.kind(), on_exit, Some(answer), ending, mode);
         }
         match action {
             ExitAction::Stay | ExitAction::Ask => {}
             ExitAction::Exit => self.exit_now(),
+            ExitAction::RestartThenExit => {
+                window::show_main(&self.app);
+                self.show(Screen::stopping());
+                if !self.restart_own("update") {
+                    let port = self.port.unwrap_or(0);
+                    eprintln!("No pude confirmar que el server del puerto {port} sea el que lanzó la app: no lo detuve.");
+                    (self.hooks.notify)(
+                        &self.app,
+                        "El server anterior sigue corriendo",
+                        &format!("No se pudo confirmar que el server del puerto {port} sea el de la app, así que no se detuvo. Detenelo a mano para que arranque el nuevo."),
+                    );
+                }
+                self.exit_now();
+            }
             ExitAction::StopThenExit => {
                 window::show_main(&self.app);
                 self.show(Screen::stopping());
@@ -1024,7 +1110,7 @@ impl Worker {
                     self.app
                         .dialog()
                         .message(format!(
-                            "No pude confirmar que el server del puerto {port} sea el que lanzó la app, así que no le mandé nada. Si querés detenerlo, hacelo a mano."
+                            "No se pudo confirmar que el server del puerto {port} sea el que lanzó la app, así que no se le mandó nada. Si querés detenerlo, hacelo a mano."
                         ))
                         .title("control-plane")
                         .kind(MessageDialogKind::Warning)
@@ -1035,28 +1121,125 @@ impl Worker {
         }
     }
 
-    fn ask_exit(&self) -> Answer {
-        let running = (self.hooks.running)(&self.app);
-        let (stop, leave, cancel) = ("Detener y salir", "Dejarlo corriendo", "Cancelar");
-        let result = self
-            .app
-            .dialog()
-            .message(policy::exit_question(running))
-            .title("Salir de control-plane")
-            .kind(MessageDialogKind::Info)
-            .buttons(MessageDialogButtons::YesNoCancelCustom(
-                stop.into(),
-                leave.into(),
-                cancel.into(),
-            ))
-            .blocking_show_with_result();
-        match result {
-            MessageDialogResult::Yes => Answer::Stop,
-            MessageDialogResult::No => Answer::Leave,
-            MessageDialogResult::Custom(s) if s == stop => Answer::Stop,
-            MessageDialogResult::Custom(s) if s == leave => Answer::Leave,
-            _ => Answer::Cancel,
+    /// Reinicio con retomar: el server guarda las sesiones activas (si es de una versión que
+    /// sabe) y se detiene por el camino ordenado, verificado. Devuelve false si no se pudo
+    /// verificar que es el propio (no se le mandó nada).
+    fn restart_own(&mut self, reason: &str) -> bool {
+        if let Some(port) = self.port {
+            match restart::prepare(port, reason) {
+                restart::Reply::Ok(p) => eprintln!(
+                    "El server guarda {} sesiones para retomarlas ({} trabajando).",
+                    p.sessions.len(),
+                    p.working
+                ),
+                restart::Reply::Unsupported => {
+                    eprintln!("El server es de antes de \"retomar\": se reinicia sin retomar las sesiones.")
+                }
+                restart::Reply::Failed(e) => {
+                    eprintln!("No pude pedirle al server que guarde las sesiones: {e}")
+                }
+            }
         }
+        self.stop_own()
+    }
+
+    /// "Reiniciar el server": uno propio y más viejo que la app se cambia por el de la app, y las
+    /// sesiones activas se retoman.
+    fn restart_server(&mut self) {
+        if self.kind() != ServerKind::Own {
+            return;
+        }
+        self.set_outdated(None);
+        window::show_main(&self.app);
+        self.show(Screen::stopping());
+        if self.restart_own("server-update") {
+            self.boot();
+        } else {
+            let port = self.port.unwrap_or(0);
+            (self.hooks.notify)(
+                &self.app,
+                "El server no se reinició",
+                &format!("No se pudo confirmar que el server del puerto {port} sea el de la app, así que no se le mandó nada."),
+            );
+            self.boot();
+        }
+    }
+
+    /// Un server adoptado más viejo que la app: propio y sin sesiones trabajando, se reinicia
+    /// solo; propio con sesiones trabajando, se ofrece en el menú del ícono; ajeno, solo se avisa.
+    fn check_server_age(&mut self) {
+        let Some(server) = self.server_version.clone() else {
+            self.age_checked = true;
+            return;
+        };
+        // Cuántas trabajan lo dice el WS de escritorio: se espera hasta 20 s a que llegue.
+        let working = match (self.hooks.working)(&self.app) {
+            Some(n) => n,
+            None if self.age_since.elapsed() < Duration::from_secs(20) => return,
+            None => u32::MAX,
+        };
+        self.age_checked = true;
+        let app_version = self.app.package_info().version.to_string();
+        match policy::server_age(&app_version, &server, self.kind(), working) {
+            ServerAge::Current => {}
+            ServerAge::OlderOwn { from, to, auto: true } => {
+                eprintln!("El server es v{from} y la app v{to}, sin sesiones trabajando: lo reinicio.");
+                (self.hooks.notify)(
+                    &self.app,
+                    "Server reiniciado",
+                    &format!("Era de una versión anterior (v{from}); ahora es el de la app (v{to}). Las sesiones se retoman solas."),
+                );
+                self.restart_server();
+            }
+            ServerAge::OlderOwn { from, to, auto: false } => {
+                self.set_outdated(Some(format!("Reiniciar el server (v{from} → v{to})")));
+                (self.hooks.notify)(
+                    &self.app,
+                    "El server es de una versión anterior",
+                    &format!("Corre v{from} y la app es v{to}: algunas funciones no andan. Reinicialo desde {} → Reiniciar el server; las sesiones se retoman solas.", policy::icon_place()),
+                );
+            }
+            ServerAge::OlderForeign { from, to } => (self.hooks.notify)(
+                &self.app,
+                "El server es de una versión anterior",
+                &format!("El server del puerto corre v{from} y la app es v{to}. No lo lanzó la app: reinicialo vos (por ejemplo, npm start)."),
+            ),
+        }
+    }
+
+    fn set_outdated(&self, text: Option<String>) {
+        if let Some(tray) = self.app.try_state::<crate::tray::Tray<tauri::Wry>>() {
+            tray.set_restart_server(text);
+        }
+    }
+
+    /// Pregunta qué hacer con el server. Con "Recordar mi elección", la respuesta queda en "Al
+    /// salir" (el mismo ajuste del menú del ícono) y la próxima vez no se pregunta.
+    fn ask_exit(&mut self, without_tray: bool) -> Answer {
+        let running = (self.hooks.running)(&self.app);
+        let working = (self.hooks.working)(&self.app);
+        let mut message = policy::exit_question(running, working);
+        if without_tray {
+            message = format!("{}\n\n{message}", policy::NO_TRAY_NOTE);
+        }
+        let choice = crate::exit_dialog::ask(
+            &self.app,
+            "Salir de control-plane",
+            &message,
+            ["Detener y salir", "Dejarlo corriendo", "Cancelar"],
+        );
+        let answer = match choice.button {
+            Some(0) => Answer::Stop,
+            Some(1) => Answer::Leave,
+            _ => Answer::Cancel,
+        };
+        if let Some(on_exit) = policy::remembered(answer).filter(|_| choice.remember) {
+            self.save_settings(|s| s.on_exit = on_exit);
+            if let Some(tray) = self.app.try_state::<crate::tray::Tray<tauri::Wry>>() {
+                tray.sync_toggles(&self.app);
+            }
+        }
+        answer
     }
 
     fn exit_now(&self) {

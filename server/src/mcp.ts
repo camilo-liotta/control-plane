@@ -3,13 +3,17 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
+import type { Apps } from "./apps.ts"
 import { version } from "./config.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
+import type { Environments } from "./environments.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
+import type { StepInput } from "./plans.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { ContextUsage, SessionStatus } from "./shared/types.ts"
+import type { AppInput, AppStatus, AppView, ContextUsage, SessionStatus } from "./shared/types.ts"
+import { hash } from "./fingerprint.ts"
 import { errorMessage } from "./util.ts"
 
 const STATUS_ES: Record<SessionStatus, string> = {
@@ -37,6 +41,11 @@ const subagentSchema = z
   .optional()
   .describe("Subagentes específicos que el worker tiene que lanzar para esta tarea.")
 
+const holdSchema = z
+  .boolean()
+  .optional()
+  .describe("true: lo tiene que aprobar el usuario aunque esté AFK (en AFK, lo demás sale solo, sin revisión). Obligatorio para lo que no se puede deshacer o sale afuera: publicar una versión, deploys, tocar producción o datos reales, borrar, gastar plata, mandar algo a terceros, y lo que nace de un pedido de otro proyecto.")
+
 const freshSchema = z
   .boolean()
   .optional()
@@ -44,10 +53,114 @@ const freshSchema = z
     "true: la sesión empieza de cero (/clear) antes de este prompt. Para una tarea que no necesita lo que la sesión trae en contexto, con lo anterior cerrado. El prompt tiene que ser autocontenido."
   )
 
+const modelSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .describe(
+    "Modelo con que sale: haiku, sonnet, opus o fable (o un valor del catálogo). Queda en la sesión hasta que otra propuesta o el usuario lo cambien. Sin poner, la sesión sigue con el que tiene."
+  )
+
+const effortSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .describe("Esfuerzo: low, medium, high, xhigh o max (los que soporte el modelo). Sin poner, sigue con el que tiene.")
+
+/** En propose_prompt, propose_session y cada paso de un plan: obligatorios (el server contesta con un error que enseña si faltan). */
+const requiredModelSchema = z
+  .string()
+  .optional()
+  .describe(
+    "OBLIGATORIO. Modelo con que sale: sonnet para implementar un pedido claro, haiku para lo mecánico, opus solo para diseño, depuración difícil o revisión (o un valor del catálogo). Queda en la sesión hasta que otra propuesta o el usuario lo cambien. Para que siga con el que tiene, pasá ese mismo (list_sessions lo muestra)."
+  )
+
+const requiredEffortSchema = z
+  .string()
+  .optional()
+  .describe("OBLIGATORIO (salvo con modelos sin niveles, como haiku). Esfuerzo: low, medium, high, xhigh o max (los que soporte el modelo). Por defecto, medium o high con sonnet.")
+
+const stepSchema = z.object({
+  title: z.string().describe("Título corto del paso."),
+  prompt: z.string().min(1).describe("Prompt del paso: concreto y verificable (archivos, interfaces, criterio de terminado), para que el worker no tenga que diseñar."),
+  model: requiredModelSchema,
+  effort: requiredEffortSchema,
+  fresh: z.boolean().optional().describe("true: la sesión empieza de cero antes de este paso; recibe lo que reportó el paso anterior."),
+  subagents: subagentSchema,
+})
+
+const taskCliSchema = z
+  .object({
+    id: z.string().min(1).describe("El id del CLI en el catálogo, tal como lo da list_clis (gh, gcloud, aws, vercel…)."),
+    credential: z.number().int().min(0).optional().describe("Qué credencial, si el CLI tiene más de una (gcloud: 0 tu usuario, 1 las credenciales de aplicación). Por defecto, 0."),
+  })
+  .optional()
+  .describe("Si la tarea es loguearse o reautenticarse en un CLI del catálogo: cuál. La tarea muestra el botón para hacerlo ahí mismo y, si sale bien, se cierra sola y te aviso.")
+
+const prioritySchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(999)
+  .optional()
+  .describe("En qué orden hacerla, sobre todo si hay varias: 1 = primero, 2 = después, y así. Número menor = va primero. Sin prioridad va después de las que tienen.")
+
+const tagsSchema = z
+  .array(z.string().min(1).max(32))
+  .max(4)
+  .optional()
+  .describe("Etiquetas cortas, en minúsculas y con guiones (ej. postmark-dominios). Solo para relacionar dos o más tareas que van juntas; no etiquetes una tarea sola ni para clasificar.")
+
 /** Cuánto contexto usa una sesión, para que la orquestadora sepa si conviene empezar de cero. */
 function contextLine(ctx: ContextUsage | null): string | null {
   if (!ctx || !ctx.max) return null
   return `contexto: ${Math.round((ctx.tokens / ctx.max) * 100)}% (${Math.round(ctx.tokens / 1000)}k de ${Math.round(ctx.max / 1000)}k tokens)`
+}
+
+/** "modelo: sonnet, esfuerzo medium": lo que usa la sesión desde su próximo turno. */
+function choiceLine(orchestration: Orchestration, s: SessionRecord): string {
+  const model = orchestration.effectiveModel(s)
+  const effort = orchestration.effectiveEffort(s)
+  return `modelo: ${model ?? "el por defecto"}${effort ? `, esfuerzo ${effort}` : ""}`
+}
+
+const APP_STATUS_ES: Record<AppStatus, string> = {
+  stopped: "detenida",
+  starting: "arrancando",
+  up: "levantada",
+  unresponsive: "sin responder (el proceso vive pero la salud no contesta)",
+  crashed: "se cayó",
+  external: "levantada afuera del dashboard (no la toca)",
+}
+
+/** Una app en una línea (y, si se cayó, las últimas líneas de su log). */
+function appLine(a: AppView): string {
+  const st = a.state
+  const health = a.health ? (a.health.kind === "http" ? `salud ${a.health.url}` : `puerto ${a.health.port}`) : "sin salud"
+  const crash =
+    st.status === "crashed"
+      ? ` (${st.error ?? (st.exitCode !== null ? `código ${st.exitCode}` : st.signal ?? "")})${st.tail.length ? `\n    últimas líneas:\n${st.tail.slice(-8).map((l) => `    | ${l}`).join("\n")}` : ""}`
+      : ""
+  return `- ${a.name} [${a.id}] · ${APP_STATUS_ES[st.status]}${crash} · \`${a.command}\`${a.shell ? " (shell)" : ""} en ${a.cwd || "."} · ${health}${a.url ? ` · ${a.url}` : ""}`
+}
+
+const healthSchema = z
+  .union([
+    z.object({ kind: z.literal("http"), url: z.string().describe("URL que responde cuando la app está levantada (ej. http://127.0.0.1:3000/health).") }),
+    z.object({ kind: z.literal("tcp"), port: z.number().int().describe("Puerto que acepta conexiones cuando está levantada."), host: z.string().optional() }),
+  ])
+  .nullable()
+  .optional()
+  .describe("Cómo saber que está levantada: una URL (http) o un puerto (tcp). Sin esto, cuenta como levantada si el proceso sigue vivo.")
+
+const appFields = {
+  command: z.string().describe("El comando, por ejemplo `npm run dev` o `uvicorn app:main --port 8000`. Corre sin shell: para && o pipes, poné shell: true."),
+  shell: z.boolean().optional().describe("true: el comando corre en /bin/sh -c (para &&, pipes o redirecciones)."),
+  cwd: z.string().optional().describe("Carpeta donde corre, relativa a la del proyecto (\"\" o sin poner: la raíz). Puede ser un subrepo o un worktree del proyecto."),
+  env: z.record(z.string(), z.string()).optional().describe("Variables de entorno extra."),
+  health: healthSchema,
+  url: z.string().nullable().optional().describe("La URL para abrir en el navegador, si no es la de salud."),
+  stopCommand: z.string().nullable().optional().describe("Cómo bajarla si no alcanza con terminar el proceso (ej. `docker compose down`)."),
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean }
@@ -65,13 +178,20 @@ function wrap<A>(fn: (args: A) => string | Promise<string>) {
   }
 }
 
-/** Herramientas de control-plane que ve cada sesión según su rol. */
-function buildServer(
-  self: SessionRecord,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks }
-): McpServer {
+type McpDeps = { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks; environments?: Environments; apps?: Apps }
+
+/** Herramientas de control-plane que ve cada sesión según su rol. `record` anota el hash del esquema de cada una. */
+function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string, string>): McpServer {
   const { db, sessions, orchestration } = deps
   const server = new McpServer({ name: "control-plane", version })
+  if (record) {
+    const register = server.registerTool.bind(server) as (name: string, config: Record<string, unknown>, cb: unknown) => unknown
+    ;(server as { registerTool: unknown }).registerTool = (name: string, config: { description?: string; title?: string; inputSchema?: Record<string, z.ZodType> }, cb: unknown) => {
+      const schema = config.inputSchema ? z.toJSONSchema(z.object(config.inputSchema)) : null
+      record[name] = hash(JSON.stringify({ title: config.title, description: config.description, schema }))
+      return register(name, config, cb)
+    }
+  }
 
   server.registerTool(
     "list_sessions",
@@ -91,6 +211,8 @@ function buildServer(
             s.role ? `rol: ${s.role}` : null,
             `estado: ${STATUS_ES[sessions.statusOf(s.id)]}`,
             s.taskTitle ? `tarea: ${s.taskTitle}` : null,
+            choiceLine(orchestration, s),
+            orchestration.plans.sessionLine(s.id),
             contextLine(sessions.contextOf(s.id)),
             s.worktree ? "worktree propio" : null,
             last ? `último resultado: ${last.status} — ${last.summary.split("\n")[0]}` : null,
@@ -108,22 +230,25 @@ function buildServer(
       {
         title: "Crear una tarea para el usuario",
         description:
-          "Deja en el tablero del proyecto algo que necesitás que haga el usuario y no podés hacer vos (loguearse en un CLI o una web, aprobar o configurar algo en otro sistema, conseguir un dato). Mejor que pedírselo en el chat: ahí se pierde. Si ya hay una abierta para lo mismo, se suma a esa.",
+          "Deja en el tablero del proyecto algo que necesitás que haga el usuario y no podés hacer vos (loguearse en un CLI o una web, aprobar o configurar algo en otro sistema, conseguir un dato). Mejor que pedírselo en el chat: ahí se pierde. Si ya hay una abierta para lo mismo, se suma a esa. Si es loguearse en un CLI, mirá su id con list_clis y pasalo en `cli`: la tarea trae el botón para loguearlo y se cierra sola cuando sale bien.",
         inputSchema: {
           title: z.string().min(1).describe("Qué hay que hacer, en pocas palabras (ej. \"Reautenticar gcloud\")."),
-          steps: z.array(z.string().min(1)).min(1).max(12).describe("Pasos cortos y en orden: qué abrir, qué comando correr (entre `backticks`), qué elegir. Sin explicaciones largas."),
+          steps: z.array(z.string().min(1)).min(1).max(12).describe("Pasos cortos y en orden: qué abrir, qué comando correr (entre `backticks`: el dashboard lo lleva a su terminal con un clic), qué elegir. Si el comando tiene un valor que pone el usuario, marcalo con {{NOMBRE: qué es}} o {{NOMBRE: qué es = sugerido}}, sin comillas alrededor. Sin explicaciones largas."),
           why: z.string().optional().describe("Para qué hace falta, en una línea."),
           blocking: z.boolean().optional().describe("true si estás frenado esperando esto. Cuando el usuario la marque hecha, te llega un aviso."),
           due: z.string().optional().describe("Para cuándo, si tiene fecha (ISO 8601, ej. 2026-09-30T23:40:00Z)."),
+          cli: taskCliSchema,
+          priority: prioritySchema,
+          tags: tagsSchema,
         },
       },
-      wrap((args: { title: string; steps: string[]; why?: string; blocking?: boolean; due?: string }) => {
+      wrap((args: { title: string; steps: string[]; why?: string; blocking?: boolean; due?: string; cli?: { id: string; credential?: number }; priority?: number; tags?: string[] }) => {
         const due = args.due ? Date.parse(args.due) : null
         if (args.due && (due === null || Number.isNaN(due))) throw new Error("La fecha no se entiende: usá ISO 8601 (2026-09-30T23:40:00Z)")
         const { task, existing } = tasks.create(self.projectId, { ...args, due }, self)
         return existing
           ? `Ya había una tarea abierta para eso: ${task.id} "${task.title}". Sumé tu pedido; no hace falta crear otra.`
-          : `Tarea ${task.id} creada en el tablero del proyecto. ${task.blocking ? "Cuando el usuario la marque hecha te llega un aviso." : "Seguí con lo que no dependa de esto."}`
+          : `Tarea ${task.id} creada en el tablero del proyecto.${task.cli ? ` Tiene el botón para loguear ${task.cli.id}: si el login sale bien, se cierra sola y te aviso.` : ""} ${task.blocking ? "Cuando el usuario la marque hecha te llega un aviso." : "Seguí con lo que no dependa de esto."}`
       })
     )
     server.registerTool(
@@ -140,16 +265,28 @@ function buildServer(
       {
         title: "Actualizar una tarea para el usuario",
         description:
-          "Cerrá una tarea si ves que ya está hecha (por ejemplo, el login ya anda) o que dejó de hacer falta, con una nota que diga cómo te diste cuenta. También sirve para corregir sus pasos o marcar que te está frenando.",
+          "Cerrá una tarea si ves que ya está hecha (por ejemplo, el login ya anda) o que dejó de hacer falta, con una nota que diga cómo te diste cuenta. También sirve para corregir sus pasos, marcar que te está frenando, cambiar su prioridad (1 = primero) o sus etiquetas.",
         inputSchema: {
           id: z.string().describe("Id de la tarea (ej. t_ab12cd)."),
           status: z.enum(["done", "dismissed", "open"]).optional().describe("done: ya está hecha; dismissed: ya no hace falta; open: volverla a abrir."),
           note: z.string().optional().describe("Por qué la cerrás o qué cambió, en una línea."),
           steps: z.array(z.string().min(1)).max(12).optional(),
           blocking: z.boolean().optional(),
+          cli: taskCliSchema.nullable(),
+          priority: prioritySchema.nullable().describe("En qué orden hacerla: 1 = primero, 2 = después… null la deja sin prioridad."),
+          tags: tagsSchema.describe("Reemplaza las etiquetas de la tarea ([] las saca). Solo para relacionar dos o más tareas que van juntas; no etiquetes una tarea sola ni para clasificar."),
         },
       },
-      wrap((args: { id: string; status?: "done" | "dismissed" | "open"; note?: string; steps?: string[]; blocking?: boolean }) => {
+      wrap((args: {
+        id: string
+        status?: "done" | "dismissed" | "open"
+        note?: string
+        steps?: string[]
+        blocking?: boolean
+        cli?: { id: string; credential?: number } | null
+        priority?: number | null
+        tags?: string[]
+      }) => {
         const t = tasks.update(args.id, args, self)
         return `Tarea ${t.id} ${t.status === "open" ? "actualizada" : t.status === "done" ? "cerrada como hecha" : "descartada"}.`
       })
@@ -167,6 +304,98 @@ function buildServer(
         annotations: { readOnlyHint: true },
       },
       wrap(() => clis.summary())
+    )
+  }
+
+  if (deps.environments) {
+    const envs = deps.environments
+    const testOnly =
+      "Solo para entornos locales o de staging con credenciales de prueba que creaste vos o que existen para probar: nunca de producción ni personales."
+    const credentialFields = {
+      username: z.string().optional().describe("Usuario, email o id con que se entra."),
+      secret: z.string().optional().describe("Contraseña o token. Se guarda en el dashboard (el usuario lo ve si lo pide); no lo repitas en el chat."),
+      loginUrl: z.string().optional().describe("URL de login, si no es la del entorno."),
+      notes: z.string().optional().describe("Qué permisos tiene, con qué datos viene, en una línea."),
+    }
+    server.registerTool(
+      "set_environment",
+      {
+        title: "Crear o actualizar un entorno",
+        description: `Deja en el dashboard un entorno del proyecto ("Local", "Staging") con su URL. Si ya hay uno con ese nombre, lo actualiza (no se duplica). Con app, lo conecta a una app levantable del proyecto (ver list_apps): su URL pasa a ser la de la app y en el dashboard se ve si está levantada. ${testOnly}`,
+        inputSchema: {
+          name: z.string().min(1).describe('Nombre del entorno (ej. "Local", "Staging"). Sin distinguir mayúsculas.'),
+          url: z.string().optional().describe("URL donde se abre (ej. http://localhost:3000). Si está conectado a una app, queda como respaldo."),
+          app: z.string().optional().describe('Id o nombre de una app del proyecto (list_apps) que le da la URL. "" lo desconecta.'),
+          notes: z.string().optional().describe("Cómo se levanta o algo que haga falta saber, en una línea."),
+        },
+      },
+      wrap((args: { name: string; url?: string; app?: string; notes?: string }) => {
+        const { environment, created } = envs.setEnvironment(self.projectId, args, self)
+        const app = environment.appId ? deps.db.getApp(environment.appId) : null
+        return `Entorno "${environment.name}" ${created ? "creado" : "actualizado"} [${environment.id}]${app ? `, conectado a la app "${app.name}"` : ""}.`
+      })
+    )
+    server.registerTool(
+      "add_credential",
+      {
+        title: "Dejar una credencial de prueba",
+        description: `Guarda en el dashboard una credencial de prueba de un entorno (un usuario que creaste, un admin, un inquilino), para que el usuario la vea y la copie sin buscarla en el chat. Si el entorno no existe, se crea. Si ya hay una credencial con ese nombre en el entorno, se actualiza (no se duplica). ${testOnly}`,
+        inputSchema: {
+          environment: z.string().min(1).describe('Nombre (o id) del entorno, ej. "Local".'),
+          name: z.string().min(1).describe('Para qué es, ej. "Inquilino", "Usuario admin".'),
+          ...credentialFields,
+        },
+      },
+      wrap((args: { environment: string; name: string; username?: string; secret?: string; loginUrl?: string; notes?: string }) => {
+        const { environment, ...input } = args
+        const res = envs.addCredential(self.projectId, environment, input, self)
+        return `Credencial "${res.credential.name}" ${res.created ? "guardada" : "actualizada"} en "${res.environment.name}" [${res.credential.id}]. Ya se ve en el dashboard: no hace falta repetirla en el chat.`
+      })
+    )
+    server.registerTool(
+      "update_credential",
+      {
+        title: "Actualizar una credencial",
+        description: `Cambia una credencial guardada (por ejemplo, si reseteaste la contraseña). Indicá el id, o el entorno y el nombre. Solo cambia los campos que pases; un secreto vacío lo borra. ${testOnly}`,
+        inputSchema: {
+          id: z.string().optional().describe("Id de la credencial (ej. k_ab12cd)."),
+          environment: z.string().optional().describe("Entorno, si no pasás el id."),
+          name: z.string().optional().describe("Nombre actual de la credencial, si no pasás el id."),
+          newName: z.string().optional().describe("Nombre nuevo, si cambia."),
+          ...credentialFields,
+        },
+      },
+      wrap((args: { id?: string; environment?: string; name?: string; newName?: string; username?: string; secret?: string; loginUrl?: string; notes?: string }) => {
+        const { id, environment, name, newName, ...patch } = args
+        const c = envs.updateCredential(self.projectId, { id, environment, name }, { ...patch, ...(newName ? { name: newName } : {}) }, self)
+        return `Credencial "${c.name}" actualizada [${c.id}].`
+      })
+    )
+    server.registerTool(
+      "remove_credential",
+      {
+        title: "Borrar una credencial",
+        description: "Borra una credencial que ya no sirve (el usuario de prueba se borró, el entorno se bajó). Indicá el id, o el entorno y el nombre.",
+        inputSchema: {
+          id: z.string().optional(),
+          environment: z.string().optional(),
+          name: z.string().optional(),
+        },
+      },
+      wrap((args: { id?: string; environment?: string; name?: string }) => {
+        const r = envs.removeCredential(self.projectId, args, self)
+        return `Borré la credencial "${r.name}" de "${r.environment}".`
+      })
+    )
+    server.registerTool(
+      "list_environments",
+      {
+        title: "Entornos y credenciales del proyecto",
+        description:
+          "Los entornos del proyecto (locales o de staging) con su URL y sus credenciales de prueba, con usuario y secreto para que puedas usarlas. Miralo antes de crear un usuario de prueba nuevo: puede que ya haya uno.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => envs.summary(self.projectId))
     )
   }
 
@@ -196,21 +425,29 @@ function buildServer(
   }
 
   if (self.kind === "orchestrator") {
+    /** Los planes se tocan solo desde la orquestadora de su proyecto. */
+    const ownPlan = (id: string) => {
+      const d = db.getDraft(id)
+      if (!d || d.kind !== "plan" || d.projectId !== self.projectId) throw new Error(`No existe el plan ${id}.`)
+    }
     server.registerTool(
       "propose_prompt",
       {
         title: "Proponer prompt",
         description:
-          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el proyecto tiene auto-envío).",
+          "Propone un prompt para una sesión worker existente. Queda en preparación mientras revisás y después lo aprueba el usuario (o se envía solo si el usuario está AFK, salvo que lo marques con hold). model y effort son OBLIGATORIOS: sonnet (medium o high) para implementar un pedido claro, haiku (low) para lo mecánico, opus solo para diseño, depuración difícil o revisión. Sin ellos devuelve un error.",
         inputSchema: {
           session: z.string().describe("Nombre de la sesión destino, tal como aparece en list_sessions."),
           title: z.string().describe("Título corto de la tarea (se muestra en el dashboard)."),
           prompt: z.string().min(1).describe("Prompt completo y autocontenido para la sesión."),
           subagents: subagentSchema,
           fresh: freshSchema,
+          model: requiredModelSchema,
+          effort: requiredEffortSchema,
+          hold: holdSchema,
         },
       },
-      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean }) =>
+      wrap((args: { session: string; title: string; prompt: string; subagents?: unknown; fresh?: boolean; model?: string | null; effort?: string | null; hold?: boolean }) =>
         orchestration.proposePrompt(self, args)
       )
     )
@@ -220,16 +457,19 @@ function buildServer(
       {
         title: "Proponer sesión nueva",
         description:
-          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba.",
+          "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba (o se crea sola si está AFK, salvo que la marques con hold). model y effort son OBLIGATORIOS (la sesión arranca con ellos): sonnet para implementar, haiku para lo mecánico, opus solo si hace falta.",
         inputSchema: {
           name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E)."),
           role: z.string().describe("Rol o responsabilidad de la sesión."),
           title: z.string().describe("Título corto de la primera tarea."),
           prompt: z.string().min(1).describe("Primer prompt, completo y autocontenido."),
           subagents: subagentSchema,
+          model: requiredModelSchema,
+          effort: requiredEffortSchema,
+          hold: holdSchema,
         },
       },
-      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown }) =>
+      wrap((args: { name: string; role: string; title: string; prompt: string; subagents?: unknown; model?: string | null; effort?: string | null; hold?: boolean }) =>
         orchestration.proposeSession(self, args)
       )
     )
@@ -238,7 +478,8 @@ function buildServer(
       "update_proposal",
       {
         title: "Actualizar propuesta",
-        description: "Modifica una propuesta que todavía no se envió (título, prompt o sesión destino).",
+        description:
+          "Modifica una propuesta que todavía no se envió (título, prompt, sesión destino, modelo, esfuerzo o hold). model o effort en null los sacan: la sesión sigue con el que tiene. Con un plan pausado, cambia los pasos que faltan (pasá steps): vuelve a pasar por el usuario.",
         inputSchema: {
           id: z.string().describe("Id de la propuesta (ej. d_ab12cd)."),
           title: z.string().optional(),
@@ -246,11 +487,83 @@ function buildServer(
           session: z.string().optional().describe("Nueva sesión destino."),
           fresh: freshSchema,
           subagents: subagentSchema,
+          model: modelSchema,
+          effort: effortSchema,
+          hold: holdSchema,
+          steps: z
+            .array(stepSchema)
+            .optional()
+            .describe("Solo planes. Sin aprobar: todos los pasos. Aprobado y pausado: los pasos que faltan, como tienen que quedar (los hechos no se tocan); arma una propuesta de cambio que aprueba el usuario y, al aprobarla, el plan sigue."),
         },
       },
-      wrap((args: { id: string; title?: string; prompt?: string; session?: string; subagents?: unknown; fresh?: boolean }) =>
+      wrap((args: {
+        id: string
+        title?: string
+        prompt?: string
+        session?: string
+        subagents?: unknown
+        fresh?: boolean
+        model?: string | null
+        effort?: string | null
+        steps?: StepInput[]
+        hold?: boolean
+      }) =>
         orchestration.updateProposal(self, args)
       )
+    )
+
+    server.registerTool(
+      "propose_plan",
+      {
+        title: "Proponer un plan por pasos",
+        description:
+          "Propone un plan: una lista ordenada de pasos para UNA sesión, cada uno con su prompt, modelo, esfuerzo y fresh. El usuario lo aprueba una vez (o sale solo si está AFK, salvo que lo marques con hold: si algún paso es irreversible o sale afuera, marcalo) y control-plane manda cada paso cuando el worker reporta done el anterior, sin despertarte. Te llega un solo resultado al final, o uno apenas un paso vuelva blocked o partial, o la sesión dé error (el plan queda pausado). Sirve para partir una tarea grande en pasos que puede hacer un modelo más barato. Una sesión tiene un solo plan a la vez.",
+        inputSchema: {
+          session: z.string().optional().describe("Sesión worker existente, como aparece en list_sessions."),
+          newSession: z
+            .object({ name: z.string().describe("Nombre en mayúsculas, sin espacios."), role: z.string().describe("Rol de la sesión.") })
+            .optional()
+            .describe("En vez de session: crear una sesión nueva para el plan (arranca con el modelo del primer paso)."),
+          title: z.string().describe("Título del plan."),
+          steps: z.array(stepSchema).min(1).max(20).describe("Los pasos, en orden. model y effort son OBLIGATORIOS en cada uno (sonnet para implementar, haiku para lo mecánico, opus solo para diseño o revisión)."),
+          hold: holdSchema,
+        },
+      },
+      wrap((args: { session?: string; newSession?: { name: string; role: string }; title: string; steps: StepInput[]; hold?: boolean }) =>
+        orchestration.plans.propose(self, args)
+      )
+    )
+
+    server.registerTool(
+      "resume_plan",
+      {
+        title: "Reanudar un plan pausado",
+        description:
+          "Reanuda un plan pausado sin cambiarle los pasos. mode retry repite el paso en que se frenó (por ejemplo, si ya resolviste lo que lo bloqueaba); next lo da por salteado y sigue con el siguiente. Para cambiar los pasos (subir el modelo del que falló, por ejemplo), usá update_proposal con steps.",
+        inputSchema: {
+          id: z.string().describe("Id del plan (ej. d_ab12cd)."),
+          mode: z.enum(["retry", "next"]).optional().describe("Por defecto, retry si el paso no terminó y next si terminó."),
+        },
+      },
+      wrap(async (args: { id: string; mode?: "retry" | "next" }) => {
+        ownPlan(args.id)
+        const d = await orchestration.plans.resume(args.id, args.mode, "orchestrator")
+        return `Plan ${d.id} reanudado: paso ${(d.currentStep ?? 0) + 1} de ${d.steps.length}.`
+      })
+    )
+
+    server.registerTool(
+      "cancel_plan",
+      {
+        title: "Cancelar un plan",
+        description: "Cancela un plan en curso o pausado: los pasos que faltan no se mandan. Si el worker está en medio de un paso, lo termina y su reporte te llega como un resultado común (también si ya había reportado en ese turno).",
+        inputSchema: { id: z.string(), reason: z.string().optional() },
+      },
+      wrap((args: { id: string; reason?: string }) => {
+        ownPlan(args.id)
+        const d = orchestration.plans.cancel(args.id, args.reason?.trim() || "Lo canceló la orquestadora.", "orchestrator")
+        return `Plan ${d.id} cancelado.`
+      })
     )
 
     server.registerTool(
@@ -270,10 +583,38 @@ function buildServer(
       "list_proposals",
       {
         title: "Propuestas abiertas",
-        description: "Lista tus propuestas que siguen sin enviar, con su estado y el prompt completo.",
+        description: "Lista tus propuestas que siguen sin enviar (con su estado, modelo y prompt completo) y los planes aprobados que siguen en curso o pausados, con sus pasos.",
         annotations: { readOnlyHint: true },
       },
       wrap(() => orchestration.listProposals(self.projectId))
+    )
+
+    server.registerTool(
+      "list_projects",
+      {
+        title: "Otros proyectos",
+        description:
+          "Lista los otros proyectos del dashboard (sin los archivados): nombre, id, repo, su orquestadora y en qué estado está. Sirve para saber a quién escribirle con message_project cuando tu proyecto necesita algo de otro (un dato, un cambio en una API, coordinar una migración). Solo la tienen las orquestadoras.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => orchestration.listProjects(db.getSession(self.id) ?? self))
+    )
+
+    server.registerTool(
+      "message_project",
+      {
+        title: "Escribirle a la orquestadora de otro proyecto",
+        description:
+          "Le manda un mensaje a la orquestadora de otro proyecto (nombre o id, ver list_projects). Es el único canal entre proyectos: con SendMessage no se puede (está bloqueado) y tus workers no tienen esta herramienta. Escribí el mensaje autocontenido: qué necesitás, para qué y para cuándo. Queda registrado, el usuario lo ve y le llega a esa orquestadora en su próxima revisión aunque esté quieta o detenida; lo que te contesten te llega igual, con replyTo. No mandes acuses (\"gracias\", \"recibido\"): solo cuando haya algo que decir; hay un límite de mensajes por hora entre dos proyectos y, si lo pasás, pedile al usuario que intervenga. Si contestás un mensaje que recibiste, pasá su id en replyTo.",
+        inputSchema: {
+          project: z.string().min(1).describe("Nombre o id del proyecto destino."),
+          message: z.string().min(1).describe("El mensaje: qué necesitás o qué respondés, con el contexto para que lo entienda sin más."),
+          replyTo: z.string().optional().describe("El id (m_…) del mensaje que contestás, si es una respuesta."),
+        },
+      },
+      wrap((args: { project: string; message: string; replyTo?: string }) =>
+        orchestration.messageProject(db.getSession(self.id) ?? self, args)
+      )
     )
 
     server.registerTool(
@@ -281,9 +622,95 @@ function buildServer(
       {
         title: "Leer la cola de resultados",
         description:
-          "Trae los resultados de los workers que llegaron a la cola y todavía no leíste. Usala si te avisan que hay resultados nuevos mientras estás revisando.",
+          "Trae los resultados de los workers y los mensajes de otros proyectos que llegaron a la cola y todavía no leíste. Usala si te avisan que hay resultados o mensajes nuevos mientras estás revisando.",
       },
       wrap(() => orchestration.readResults(db.getSession(self.id) ?? self))
+    )
+  }
+
+  if (deps.apps) {
+    const apps = deps.apps
+    server.registerTool(
+      "list_apps",
+      {
+        title: "Apps del proyecto",
+        description: "Las apps del proyecto que se levantan localmente (backend, frontend, workers): su comando, carpeta, salud, URL y si están levantadas.",
+        annotations: { readOnlyHint: true },
+      },
+      wrap(() => {
+        const list = apps.list(self.projectId)
+        return list.length ? list.map(appLine).join("\n") : "El proyecto no tiene apps registradas. Si armaste algo que se levanta localmente, registralo con register_app."
+      })
+    )
+    server.registerTool(
+      "register_app",
+      {
+        title: "Registrar una app que se levanta localmente",
+        description:
+          "Registra una app del proyecto que se levanta localmente (un backend, un frontend, un worker) para que el usuario la levante y la baje con un botón y vea si está arriba. Registrala cuando armes algo así, con su salud (URL o puerto) para que se sepa cuándo está levantada.",
+        inputSchema: { name: z.string().describe("Nombre corto (ej. backend, web, worker)."), ...appFields },
+      },
+      wrap(async (args: AppInput & { name: string; command: string }) => {
+        const a = await apps.create(self.projectId, args, self.id)
+        return `App ${a.name} registrada (${a.id}). Para levantarla: start_app.`
+      })
+    )
+    server.registerTool(
+      "update_app",
+      {
+        title: "Cambiar una app",
+        description: "Cambia la definición de una app (vale desde el próximo levantar si ya está corriendo).",
+        inputSchema: {
+          app: z.string().describe("Nombre o id de la app."),
+          name: z.string().optional(),
+          ...appFields,
+          command: appFields.command.optional(),
+        },
+      },
+      wrap(async ({ app, ...args }: AppInput & { app: string }) => {
+        const a = await apps.update(apps.find(self.projectId, app).id, args)
+        return `App ${a.name} actualizada.`
+      })
+    )
+    server.registerTool(
+      "remove_app",
+      {
+        title: "Quitar una app",
+        description: "Quita una app del proyecto (si el dashboard la tenía levantada, primero la baja).",
+        inputSchema: { app: z.string().describe("Nombre o id de la app.") },
+      },
+      wrap(async ({ app }: { app: string }) => {
+        const a = apps.find(self.projectId, app)
+        await apps.remove(a.id)
+        return `App ${a.name} quitada.`
+      })
+    )
+    server.registerTool(
+      "start_app",
+      {
+        title: "Levantar una app",
+        description: "Levanta una app del proyecto (por ejemplo, el backend antes de probar algo) y espera a que su salud responda, hasta 60 segundos.",
+        inputSchema: { app: z.string().describe("Nombre o id de la app.") },
+      },
+      wrap(async ({ app }: { app: string }) => {
+        const a = apps.find(self.projectId, app)
+        await apps.start(a.id)
+        for (let i = 0; i < 120; i++) {
+          const st = apps.view(apps.find(self.projectId, a.id)).state.status
+          if (st !== "starting") break
+          await new Promise((r) => setTimeout(r, 500))
+        }
+        return appLine(apps.view(apps.find(self.projectId, a.id)))
+      })
+    )
+    server.registerTool(
+      "stop_app",
+      {
+        title: "Bajar una app",
+        description: "Baja una app que levantó el dashboard (con su comando de bajar, o terminando el proceso). Las levantadas afuera del dashboard no se tocan.",
+        inputSchema: { app: z.string().describe("Nombre o id de la app.") },
+      },
+      wrap(async ({ app }: { app: string }) => appLine(await apps.stop(apps.find(self.projectId, app).id)))
     )
   }
 
@@ -305,10 +732,20 @@ function toWebRequest(req: FastifyRequest): Request {
   })
 }
 
-export function registerMcp(
-  app: FastifyInstance,
-  deps: { db: Db; sessions: SessionManager; orchestration: Orchestration; clis?: Clis; tasks?: UserTasks }
-) {
+/** El hash del esquema de cada herramienta que ve una sesión de ese rol (no cambia mientras corre el server). */
+export function toolHashes(self: SessionRecord, deps: McpDeps): Record<string, string> {
+  const cached = hashCache.get(self.kind)
+  if (cached) return cached
+  const out: Record<string, string> = {}
+  buildServer(self, deps, out)
+  hashCache.set(self.kind, out)
+  return out
+}
+const hashCache = new Map<string, Record<string, string>>()
+
+export function registerMcp(app: FastifyInstance, deps: McpDeps) {
+  // Para avisarle a cada sesión cuando cambian sus herramientas (ver SessionManager.send).
+  deps.sessions.toolHashes = (rec) => toolHashes(rec, deps)
   const handler = async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
     const self = deps.db.getSessionByToken(req.params.token)
     if (!self || self.archivedAt) return reply.code(404).send({ error: "sesión desconocida" })

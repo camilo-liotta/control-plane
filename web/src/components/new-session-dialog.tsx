@@ -20,6 +20,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
+import { EFFORTS, effortName, effortsFor, modelName, projectDefaults } from "@/lib/models"
 import { useModels } from "@/lib/store"
 
 const DEFAULT = "__default"
@@ -28,15 +29,19 @@ export function ModelSelect({
   value,
   onChange,
   placeholder = "El de tu configuración",
+  id,
+  "aria-label": ariaLabel,
 }: {
   value: string | null
   onChange: (v: string | null) => void
   placeholder?: string
+  id?: string
+  "aria-label"?: string
 }) {
   const models = useModels()
   return (
     <Select value={value ?? DEFAULT} onValueChange={(v) => onChange(v === DEFAULT ? null : v)}>
-      <SelectTrigger className="w-full">
+      <SelectTrigger id={id} aria-label={ariaLabel} className="w-full">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -53,17 +58,32 @@ export function ModelSelect({
   )
 }
 
-export function EffortSelect({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+/** Esfuerzo: ofrece solo los que soporta el modelo (`efforts`, de `effortsFor`). */
+export function EffortSelect({
+  value,
+  onChange,
+  efforts = EFFORTS,
+  placeholder = "El de tu configuración",
+  id,
+  "aria-label": ariaLabel,
+}: {
+  value: string | null
+  onChange: (v: string | null) => void
+  efforts?: string[]
+  placeholder?: string
+  id?: string
+  "aria-label"?: string
+}) {
   return (
-    <Select value={value ?? DEFAULT} onValueChange={(v) => onChange(v === DEFAULT ? null : v)}>
-      <SelectTrigger className="w-full">
+    <Select value={value ?? DEFAULT} onValueChange={(v) => onChange(v === DEFAULT ? null : v)} disabled={efforts.length === 0}>
+      <SelectTrigger id={id} aria-label={ariaLabel} className="w-full">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={DEFAULT}>El de tu configuración</SelectItem>
-        {["low", "medium", "high", "xhigh", "max"].map((e) => (
+        <SelectItem value={DEFAULT}>{efforts.length ? placeholder : "No se elige con este modelo"}</SelectItem>
+        {efforts.map((e) => (
           <SelectItem key={e} value={e}>
-            {e}
+            {effortName(e)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -88,6 +108,7 @@ export function NewSessionDialog({
   const [effort, setEffort] = useState<string | null>(null)
   const [worktree, setWorktree] = useState(false)
   const [creating, setCreating] = useState(false)
+  const models = useModels()
 
   useEffect(() => {
     if (open) {
@@ -102,7 +123,12 @@ export function NewSessionDialog({
 
   if (!project) return null
 
+  // Sin modelo ni esfuerzo propios, la sesión arranca con los de las sesiones del proyecto.
+  const inherited = projectDefaults(project.settings, "worker")
+  const efforts = effortsFor(models, model ?? inherited.model)
+
   const create = async () => {
+    if (!name.trim() || creating) return
     setCreating(true)
     try {
       const s = await api.createSession(project.id, {
@@ -117,7 +143,7 @@ export function NewSessionDialog({
       onOpenChange(false)
       navigate(`/p/${project.id}/s/${s.id}`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo crear la sesión", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setCreating(false)
     }
@@ -133,6 +159,14 @@ export function NewSessionDialog({
             coordinarse y cómo reportarle a la orquestadora al terminar.
           </DialogDescription>
         </DialogHeader>
+        {/* Enter en un campo crea; en el prompt es un salto de línea, y Ctrl/⌘+Enter crea. */}
+        <form
+          id="new-session-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void create()
+          }}
+        >
         <FieldGroup>
           <div className="grid gap-4 sm:grid-cols-[1fr_1.4fr]">
             <Field>
@@ -142,7 +176,7 @@ export function NewSessionDialog({
                 value={name}
                 onChange={(e) => setName(e.target.value.toUpperCase())}
                 placeholder="BACKEND"
-                className="font-mono"
+                className="name"
                 autoFocus
               />
             </Field>
@@ -162,20 +196,47 @@ export function NewSessionDialog({
               id="session-prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  e.currentTarget.form?.requestSubmit()
+                }
+              }}
               placeholder="Si lo dejás vacío, la sesión arranca y espera. La orquestadora le puede proponer la tarea después."
               className="min-h-28"
             />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel>Modelo</FieldLabel>
-              <ModelSelect value={model} onChange={setModel} placeholder={project.settings.defaultModel ? `El del proyecto (${project.settings.defaultModel})` : "El de tu configuración"} />
-            </Field>
-            <Field>
-              <FieldLabel>Esfuerzo</FieldLabel>
-              <EffortSelect value={effort} onChange={setEffort} />
-            </Field>
-          </div>
+          <Field>
+            <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr]">
+              <Field>
+                <FieldLabel htmlFor="session-model">Modelo</FieldLabel>
+                <ModelSelect
+                  id="session-model"
+                  value={model}
+                  onChange={(v) => {
+                    setModel(v)
+                    if (effort && !effortsFor(models, v ?? inherited.model).includes(effort)) setEffort(null)
+                  }}
+                  placeholder={inherited.model ? `El del proyecto (${modelName(models, inherited.model)})` : "El de tu configuración"}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="session-effort">Esfuerzo</FieldLabel>
+                <EffortSelect
+                  id="session-effort"
+                  value={effort}
+                  onChange={setEffort}
+                  efforts={efforts}
+                  placeholder={inherited.effort ? `El del proyecto (${effortName(inherited.effort)})` : "El de tu configuración"}
+                />
+              </Field>
+            </div>
+            <FieldDescription>
+              {inherited.model || inherited.effort
+                ? "Arranca con los de las sesiones del proyecto. Se cambian en la configuración del proyecto, en Modelos."
+                : "Arranca con los de tu configuración de Claude Code. En la configuración del proyecto, en Modelos, podés elegir otros para todas las sesiones."}
+            </FieldDescription>
+          </Field>
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="session-worktree">Worktree aparte</FieldLabel>
@@ -186,11 +247,12 @@ export function NewSessionDialog({
             <Switch id="session-worktree" checked={worktree} onCheckedChange={setWorktree} />
           </Field>
         </FieldGroup>
+        </form>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={create} disabled={!name.trim() || creating}>
+          <Button type="submit" form="new-session-form" disabled={!name.trim() || creating}>
             {creating && <Spinner />}
             {prompt.trim() ? "Crear y enviar" : "Crear sesión"}
           </Button>

@@ -1,7 +1,8 @@
 //! Notificaciones nativas con cada `toast` del server.
 //!
 //! Solo con los avisos prendidos y la ventana escondida o sin foco: con la ventana al frente, la
-//! página ya muestra el toast. El clic muestra la ventana y la lleva a lo que avisaba
+//! página ya muestra el toast. Los de la app misma (versión nueva, falló la actualización) salen
+//! siempre: no vienen del server, así que la página no los muestra por su cuenta. El clic muestra la ventana y la lleva a lo que avisaba
 //! (`window.__cpDesktop.open`, con los campos del toast tal cual).
 //!
 //! - Linux: D-Bus directo (`org.freedesktop.Notifications`, con zbus, que ya trae Tauri). Así se
@@ -18,9 +19,11 @@ use crate::desktop_ws::{Local, Toast};
 use crate::window;
 use crate::AppState;
 
-/// ¿Mandar el aviso del sistema? Con la ventana visible y con foco, ya lo muestra la página.
-pub fn should_notify(enabled: bool, visible: bool, focused: bool) -> bool {
-    enabled && !(visible && focused)
+/// ¿Mandar el aviso del sistema? Con la ventana visible y con foco, ya lo muestra la página. Los
+/// avisos de la app misma (`own`: hay versión nueva, falló la actualización) no pasan por el server
+/// ni por la página, así que salen siempre.
+pub fn should_notify(enabled: bool, visible: bool, focused: bool, own: bool) -> bool {
+    own || (enabled && !(visible && focused))
 }
 
 /// Los avisos de una misma sesión (o proyecto) se reemplazan entre sí.
@@ -169,7 +172,7 @@ pub fn handle<R: Runtime>(app: &AppHandle<R>, toast: Toast) {
     let win = app.get_webview_window(window::MAIN);
     let visible = win.as_ref().and_then(|w| w.is_visible().ok()) == Some(true);
     let focused = win.as_ref().and_then(|w| w.is_focused().ok()) == Some(true);
-    if !should_notify(enabled, visible, focused) {
+    if !should_notify(enabled, visible, focused, toast.local.is_some()) {
         return;
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -445,11 +448,18 @@ mod tests {
 
     #[test]
     fn notify_only_when_the_page_is_not_in_front() {
-        assert!(should_notify(true, false, false));
-        assert!(should_notify(true, true, false));
-        assert!(should_notify(true, false, true));
-        assert!(!should_notify(true, true, true));
-        assert!(!should_notify(false, false, false));
+        assert!(should_notify(true, false, false, false));
+        assert!(should_notify(true, true, false, false));
+        assert!(should_notify(true, false, true, false));
+        assert!(!should_notify(true, true, true, false));
+        assert!(!should_notify(false, false, false, false));
+    }
+
+    #[test]
+    fn the_app_own_notices_show_even_with_the_window_in_front() {
+        // "No pude actualizar" con la ventana al frente y con foco (y con los avisos apagados).
+        assert!(should_notify(true, true, true, true));
+        assert!(should_notify(false, true, true, true));
     }
 
     #[test]

@@ -21,9 +21,9 @@ export function localOnly(app: FastifyInstance, port: number, extraOrigins: stri
 }
 
 /** Para que la app de escritorio reconozca al server (sin rutas ni datos de la máquina). */
-export function registerHealth(app: FastifyInstance, info: Omit<Health, "app" | "pid">) {
-  const body: Health = { app: "control-plane", version: info.version, pid: process.pid, port: info.port, startedAt: info.startedAt, launchId: info.launchId }
-  app.get("/api/health", async () => body)
+export function registerHealth(app: FastifyInstance, info: Omit<Health, "app" | "pid" | "resuming">, resuming: () => boolean = () => false) {
+  const body = { app: "control-plane" as const, version: info.version, pid: process.pid, port: info.port, startedAt: info.startedAt, launchId: info.launchId }
+  app.get("/api/health", async (): Promise<Health> => ({ ...body, resuming: resuming() }))
 }
 
 const MIN_SHUTDOWN_TOKEN = 32

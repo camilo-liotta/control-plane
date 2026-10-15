@@ -1,11 +1,14 @@
-import { Brain, ChevronRight, Info, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
+import { Brain, ChevronRight, Compass, Info, ListOrdered, ListTree, Inbox, Layers, ListChecks, MessageSquareReply, OctagonAlert, Rows3, TriangleAlert } from "lucide-react"
 import { memo, useMemo, useState } from "react"
-import { toast } from "sonner"
+import { useLocation } from "wouter"
 
 import type { Session, StoredEvent, TimelineEvent } from "@shared/types"
 
 import { AttachmentList } from "@/components/attachments"
 import { DraftCard } from "@/components/draft-card"
+import { usePlanLink } from "@/components/plan-card"
+import { RefText } from "@/components/file-ref"
+import { IncomingProjectMessages, OutgoingProjectMessage, ProjectIdContext } from "@/components/project-messages"
 import { SubagentSpecList } from "@/components/subagent-specs"
 import { TonePill } from "@/components/status"
 import { PermissionCard, QuestionCard } from "@/components/timeline/interactive-cards"
@@ -16,11 +19,14 @@ import { WorkingIndicator } from "@/components/timeline/working-indicator"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
+import { MESSAGE_TOOL } from "@/lib/project-messages"
 import { clock, duration, tokens as tokensShort, usd } from "@/lib/format"
+import { costsByModel, modelName } from "@/lib/models"
 import { reportStatusView } from "@/lib/status"
-import { useStore, type PartialBlock } from "@/lib/store"
+import { useModels, useStore, type PartialBlock } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 type Ev<K extends TimelineEvent["kind"]> = StoredEvent & { event: Extract<TimelineEvent, { kind: K }> }
 
@@ -61,24 +67,64 @@ export function buildItems(events: StoredEvent[]): Item[] {
   return items
 }
 
+/**
+ * "Paso 2 de 4 · plan «X»" encima del mensaje de un paso: lleva a la tarjeta del plan (en el resumen
+ * del proyecto si sigue en curso; si no, en el chat de la orquestadora).
+ */
+function PlanMark({ plan, planTitle, sessionId }: { plan: NonNullable<Ev<"user">["event"]["plan"]>; planTitle?: string; sessionId: string }) {
+  const [, navigate] = useLocation()
+  const draft = useStore((s) => s.drafts[plan.draftId])
+  // Los drafts viejos no vienen en el snapshot: la orquestadora sale del proyecto de esta sesión.
+  const orchestrator = useStore((s) => {
+    const pid = draft?.projectId ?? s.sessions[sessionId]?.projectId
+    return pid ? Object.values(s.sessions).find((x) => x.projectId === pid && x.kind === "orchestrator" && !x.archivedAt) : undefined
+  })
+  const link = usePlanLink(draft)
+  const title = planTitle ?? draft?.title
+  const label = `Paso ${plan.step + 1} de ${plan.total}${title ? ` · plan «${title}»` : ""}`
+  const open = () => {
+    if (link?.onClick) {
+      link.onClick()
+      navigate(link.href)
+      return
+    }
+    // Plan terminado, o uno viejo que ya no viene en el snapshot: su tarjeta, en el chat de la orquestadora.
+    const orchId = draft?.createdBy ?? orchestrator?.id
+    if (!orchId) return
+    useUi.getState().set({ reveal: { kind: "proposals", id: orchId, item: plan.draftId, at: Date.now() } })
+    navigate(`/p/${draft?.projectId ?? orchestrator!.projectId}/s/${orchId}`)
+  }
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={!link && !orchestrator}
+      title={link || orchestrator ? (plan.title ? `Paso ${plan.step + 1}: ${plan.title}` : undefined) : "La orquestadora de este plan ya no está"}
+      className="flex max-w-[85%] items-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:text-foreground"
+    >
+      <ListOrdered className="size-3.5 shrink-0" />
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
+
 function UserBubble({ ev }: { ev: Ev<"user"> }) {
   const { event } = ev
   return (
     <div className="flex flex-col items-end gap-1">
-      {event.origin === "draft" && (
-        <span className="text-xs text-muted-foreground">
-          Propuesta de la orquestadora{event.draftTitle ? ` · ${event.draftTitle}` : ""}
+      {event.plan && <PlanMark plan={event.plan} planTitle={event.draftTitle} sessionId={ev.sessionId} />}
+      {event.origin === "draft" && !event.plan && (
+        <span className="flex max-w-[85%] items-center gap-1.5 text-xs text-muted-foreground">
+          <Compass className="size-3.5 shrink-0" />
+          <span className="truncate" title={event.draftTitle ?? undefined}>
+            Propuesta de la orquestadora{event.draftTitle ? ` · ${event.draftTitle}` : ""}
+          </span>
         </span>
       )}
       {event.origin === "external" && <span className="text-xs text-muted-foreground">Desde fuera del dashboard</span>}
       {event.attachments && event.attachments.length > 0 && <AttachmentList items={event.attachments} />}
       {event.text && (
-        <div
-          className={cn(
-            "max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[0.9rem] leading-relaxed whitespace-pre-wrap break-words",
-            event.origin === "draft" && "border border-status-working/25 bg-status-working/8"
-          )}
-        >
+        <div className="bubble-user max-w-[85%] px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">
           {event.text}
         </div>
       )}
@@ -87,20 +133,22 @@ function UserBubble({ ev }: { ev: Ev<"user"> }) {
           <SubagentSpecList specs={event.subagents} />
         </div>
       )}
-      <span className="font-mono text-[0.65rem] text-muted-foreground/70">{clock(ev.ts)}</span>
+      <span className="text-2xs text-muted-foreground">{clock(ev.ts)}</span>
     </div>
   )
 }
 
 function PeerMessage({ ev }: { ev: Ev<"peer"> }) {
   return (
-    <div className="max-w-[85%] rounded-xl border border-l-4 border-l-status-working/60 bg-card px-3.5 py-2.5">
+    <div className="surface-card max-w-[85%] px-4 py-3">
       <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <MessageSquareReply className="size-3.5" />
-        Mensaje de <span className="font-mono font-medium text-foreground">{ev.event.from}</span>
-        <span className="ml-auto font-mono text-[0.65rem]">{clock(ev.ts)}</span>
+        <MessageSquareReply className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          Mensaje de <span className="name text-foreground">{ev.event.from}</span>
+        </span>
+        <span className="ml-auto shrink-0 text-2xs">{clock(ev.ts)}</span>
       </div>
-      <p className="text-[0.87rem] leading-relaxed whitespace-pre-wrap">{ev.event.body}</p>
+      <p className="text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">{ev.event.body}</p>
     </div>
   )
 }
@@ -112,17 +160,17 @@ function Thinking({ text }: { text: string }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted/60"
+        aria-expanded={open}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+          open && "bg-muted/50"
+        )}
       >
-        <Brain className="size-3.5" />
+        <Brain className="size-3.5 shrink-0" />
         Pensamiento
-        <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
+        <ChevronRight className={cn("ml-auto size-3.5 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
       </button>
-      {open && (
-        <p className="mt-1 ml-2 border-l-2 pl-3 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
-          {text}
-        </p>
-      )}
+      {open && <p className="mt-1 mb-2 ml-7.5 border-l-2 pl-3 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">{text}</p>}
     </div>
   )
 }
@@ -133,15 +181,17 @@ function Notice({ ev }: { ev: Ev<"notice"> }) {
   const multiline = text.includes("\n")
   return (
     <div
+      role={level === "info" ? undefined : "note"}
+      title={clock(ev.ts)}
       className={cn(
-        "mx-auto flex max-w-[90%] items-start gap-2 rounded-lg px-3 py-1.5 text-xs",
-        level === "error" && "bg-status-error/10 text-status-error",
-        level === "warn" && "text-status-attention",
+        "notice-line",
+        level === "error" && "border-status-error-lamp text-status-error",
+        level === "warn" && "border-status-attention-lamp text-foreground [&>svg]:text-status-attention",
         level === "info" && "text-muted-foreground"
       )}
     >
-      <Icon className="mt-0.5 size-3.5 shrink-0" />
-      {multiline ? <pre className="font-mono text-[0.72rem] whitespace-pre-wrap">{text}</pre> : <span>{text}</span>}
+      <Icon aria-label={level === "error" ? "Error" : level === "warn" ? "Aviso" : undefined} />
+      {multiline ? <pre className="min-w-0 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">{text}</pre> : <span className="min-w-0 wrap-anywhere">{text}</span>}
     </div>
   )
 }
@@ -149,13 +199,41 @@ function Notice({ ev }: { ev: Ev<"notice"> }) {
 function TurnEnd({ ev }: { ev: Ev<"turn_end"> }) {
   const { ok, durationMs, costUsd, error, terminalReason, tokens } = ev.event
   const aborted = Boolean(terminalReason?.startsWith("aborted"))
+  const failed = !ok && !aborted
+  const models = useModels()
+  // Lo que costó el turno, por modelo: el principal a la vista y el detalle (subagentes en otro modelo) en el title.
+  const parts = costsByModel(models, ev.event.models ?? [])
+  // El de la sesión primero, aunque un subagente en otro modelo haya gastado más.
+  const main = ev.event.model ? parts.findIndex((p) => p.name === modelName(models, ev.event.model!)) : -1
+  if (main > 0) parts.unshift(...parts.splice(main, 1))
+  const turnUsd = parts.reduce((a, p) => a + p.usd, 0)
+  const detail = [
+    error,
+    parts.length > 1 ? parts.map((p) => `${p.name}: ${usd(p.usd)}`).join(" · ") : null,
+    parts.length && costUsd > 0 ? `${usd(costUsd)} acumulado en la sesión` : null,
+  ]
+    .filter(Boolean)
+    .join("\n")
   return (
-    <div className="flex items-center gap-3 py-1 text-[0.7rem] text-muted-foreground/80">
+    <div className="flex items-center gap-3 py-1 text-muted-foreground" title={detail || undefined}>
       <div className="h-px flex-1 bg-border" />
-      <span className="font-mono">
-        {aborted ? "interrumpido" : ok ? "turno terminado" : "error"} · {duration(durationMs)}
-        {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
-        {costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
+      <span className="turn-rule flex items-center gap-1">
+        {failed && <OctagonAlert className="size-3 text-status-error" />}
+        <span className={cn(failed && "font-medium text-status-error")}>
+          {aborted ? "Interrumpido" : ok ? "Turno terminado" : "Terminó con error"}
+        </span>
+        {parts.length > 0 && (
+          <span>
+            · {parts[0]!.name}
+            {parts.length > 1 && <span className="text-muted-foreground/70"> +{parts.length - 1}</span>}
+          </span>
+        )}
+        <span>
+          · {duration(durationMs)}
+          {tokens ? ` · ${tokensShort(tokens)} tokens` : ""}
+          {!parts.length && costUsd > 0 ? ` · ${usd(costUsd)} acumulado` : ""}
+        </span>
+        {parts.length > 0 && <span>· <span className="font-mono tabular-nums">{usd(turnUsd)}</span></span>}
       </span>
       <div className="h-px flex-1 bg-border" />
       {error && <span className="sr-only">{error}</span>}
@@ -167,35 +245,49 @@ function BatchCard({ ev }: { ev: Ev<"batch"> }) {
   const all = useStore((s) => s.reports)
   const reports = useMemo(() => ev.event.reportIds.map((id) => all[id]).filter(Boolean), [all, ev.event.reportIds])
   const [open, setOpen] = useState(false)
+  // Los mensajes de otras orquestadoras (llegan en el mismo lote, pero no son resultados de workers).
+  const fromProjects = ev.event.projectMessages ?? []
   return (
-    <div className="rounded-xl border border-status-attention/40 bg-status-attention/5 p-3.5">
+    <div className="surface-card px-4 py-3.5">
       <div className="flex items-center gap-2 text-sm font-medium">
-        <Inbox className="size-4 text-status-attention" />
-        {ev.event.followUp ? "Llegaron más resultados mientras analizaba" : "Cola de resultados"}
-        <span className="font-mono text-xs text-muted-foreground">{ev.event.reportIds.length}</span>
-        <span className="ml-auto font-mono text-[0.65rem] text-muted-foreground">{clock(ev.ts)}</span>
+        <Inbox className="size-4 shrink-0 text-status-pending" />
+        <span className="min-w-0 truncate">
+          {ev.event.reportIds.length === 0 && fromProjects.length > 0
+            ? "Mensajes de otros proyectos"
+            : ev.event.followUp
+              ? "Llegaron más resultados mientras analizaba"
+              : "Cola de resultados"}
+        </span>
+        <span className="text-xs font-normal text-muted-foreground">{ev.event.reportIds.length || fromProjects.length}</span>
+        <span className="ml-auto shrink-0 text-2xs font-normal text-muted-foreground">{clock(ev.ts)}</span>
       </div>
       {reports.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
+        <ul className="mt-2.5 space-y-2">
           {reports.map((r) => (
-            <li key={r!.id} className="flex items-start gap-2 text-[0.85rem]">
-              <TonePill tone={reportStatusView[r!.status].tone} className="mt-0.5 shrink-0">
-                {r!.sessionName}
+            <li key={r!.id} className="flex items-start gap-2.5 text-ui">
+              <TonePill tone={reportStatusView[r!.status].tone} className="mt-px max-w-40 shrink-0">
+                <span className="name truncate" title={r!.sessionName}>
+                  {r!.sessionName}
+                </span>
               </TonePill>
-              <span className="line-clamp-2 text-foreground/85">{r!.summary}</span>
+              <span className="line-clamp-2 text-foreground/85" title={r!.summary}>
+                {r!.summary}
+              </span>
             </li>
           ))}
         </ul>
       )}
+      {fromProjects.length > 0 && <IncomingProjectMessages messages={fromProjects} version={ev.id} />}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        aria-expanded={open}
+        className="mt-2.5 inline-flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground"
       >
         <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
         {open ? "Ocultar el mensaje que recibió" : "Ver el mensaje que recibió"}
       </button>
-      {open && <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-background/70 p-3 font-mono text-[0.72rem] whitespace-pre-wrap">{ev.event.text}</pre>}
+      {open && <pre className="mt-2 max-h-96 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-2xs leading-relaxed whitespace-pre-wrap">{ev.event.text}</pre>}
     </div>
   )
 }
@@ -205,26 +297,31 @@ function ReportCall({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false)
   const status = reportStatusView[input.status ?? "done"] ?? reportStatusView.done
   return (
-    <div className="rounded-xl border bg-card p-3.5">
-      <div className="flex items-center gap-2 text-sm font-medium">
+    <div className="surface-card px-4 py-3.5">
+      <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
         <Rows3 className="size-4 text-muted-foreground" />
         Reportó su resultado
         <TonePill tone={status.tone}>{status.label}</TonePill>
-        {call.result?.isError && <span className="text-xs text-status-error">no se registró</span>}
+        {call.result?.isError && <span className="text-xs text-status-error">No se registró</span>}
       </div>
-      {input.summary && <p className="mt-1.5 text-[0.87rem] leading-relaxed whitespace-pre-wrap">{input.summary}</p>}
+      {input.summary && (
+        <p className="mt-1.5 text-sm leading-relaxed whitespace-pre-wrap wrap-anywhere">
+          <RefText text={input.summary} />
+        </p>
+      )}
       {input.details && (
         <>
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            aria-expanded={open}
+            className="mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
             Detalles
           </button>
           {open && (
-            <div className="mt-1.5 rounded-lg bg-muted/50 p-3">
+            <div className="mt-2 border-t pt-3">
               <Markdown text={input.details} />
             </div>
           )}
@@ -251,7 +348,10 @@ function ToolItem({ call, root, live }: { call: ToolCall; root?: string; live: b
       return <ReportCall call={call} />
     case "mcp__control-plane__propose_prompt":
     case "mcp__control-plane__propose_session":
+    case "mcp__control-plane__propose_plan":
       return <ProposalCall call={call} root={root} live={live} />
+    case MESSAGE_TOOL:
+      return <OutgoingProjectMessage call={call} />
     case "Agent":
     case "Task":
       return <SubagentCard call={call} live={live} />
@@ -268,16 +368,17 @@ function CompactCard({ ev }: { ev: Ev<"compact"> }) {
   const curated = e.kept !== undefined
   return (
     <div className="py-1">
-      <div className="flex items-center gap-3 text-[0.7rem] text-muted-foreground">
+      <div className="flex items-center gap-3 text-muted-foreground">
         <div className="h-px flex-1 bg-border" />
         <button
           type="button"
           onClick={() => e.summary && setOpen((v) => !v)}
-          className={cn("flex items-center gap-1.5 font-mono", e.summary && "hover:text-foreground")}
+          aria-expanded={e.summary ? open : undefined}
+          className={cn("turn-rule flex items-center gap-1.5 rounded-md", e.summary && "hover:text-foreground")}
           disabled={!e.summary}
         >
           <Layers className="size-3" />
-          contexto compactado {e.trigger === "auto" ? "solo" : "a mano"}
+          Contexto compactado {e.trigger === "auto" ? "solo" : "a mano"}
           {size ? ` · ${size} tokens` : ""}
           {curated ? ` · ${e.kept} conservados${e.dropped ? `, ${e.dropped} descartados` : ""}` : ""}
           {e.summary && <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />}
@@ -285,7 +386,7 @@ function CompactCard({ ev }: { ev: Ev<"compact"> }) {
         <div className="h-px flex-1 bg-border" />
       </div>
       {open && e.summary && (
-        <div className="mt-2 rounded-lg border bg-muted/40 px-4 py-3">
+        <div className="mt-2 rounded-2xl bg-muted/60 px-4 py-3">
           <p className="eyebrow mb-2">Con esto siguió la conversación</p>
           <Markdown text={e.summary} />
         </div>
@@ -346,13 +447,13 @@ function ContextFullBar({ session, events }: { session: Session; events: StoredE
     try {
       await api.compactionResend(session.id)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("compactar y reenviar")(err)
     } finally {
       setBusy(false)
     }
   }
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-status-attention/40 bg-status-attention/5 px-3 py-2 text-sm">
+    <div role="alert" className="surface-card flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-sm ring-2 ring-status-attention-lamp/70">
       <TriangleAlert className="size-4 shrink-0 text-status-attention" />
       <span className="min-w-0 flex-1">El contexto está lleno y el último mensaje no salió. Compactá la conversación y se reenvía.</span>
       <Button size="sm" onClick={() => void resend()} disabled={busy}>
@@ -404,17 +505,136 @@ export function TimelineItems({
     }
     return -1
   }, [items])
-  return (
-    <>
-      {items.map((it, i) =>
-        it.type === "tool" ? (
-          <ToolItem key={it.id} call={it.call} root={root} live={live && i > lastTurnIndex} />
-        ) : (
-          <EventItem key={it.ev.id} ev={it.ev} sessionId={sessionId} />
-        )
-      )}
-    </>
+  const render = (it: Item, i: number) =>
+    it.type === "tool" ? (
+      <ToolItem key={it.id} call={it.call} root={root} live={live && i > lastTurnIndex} />
+    ) : (
+      <EventItem key={it.ev.id} ev={it.ev} sessionId={sessionId} />
+    )
+  // Lo que hace la sesión entre mensaje y mensaje (herramientas y pensamiento) va junto, en un
+  // bloque apretado: el chat se lee por los mensajes y las tarjetas, no por cada paso. Cuando el
+  // turno terminó, el bloque se pliega en una línea que lo resume.
+  const out: React.ReactNode[] = []
+  let run: { it: Item; i: number }[] = []
+  const flush = () => {
+    if (run.length) {
+      const list = run
+      const first = list[0]!.it
+      const key = `steps-${first.type === "tool" ? first.id : first.ev.id}`
+      const settled = !(live && list[list.length - 1]!.i > lastTurnIndex)
+      out.push(
+        <StepRun key={key} settled={settled} items={list.map((r) => r.it)}>
+          {(only) => list.filter((r) => !only || only(r.it)).map((r) => render(r.it, r.i))}
+        </StepRun>
+      )
+    }
+    run = []
+  }
+  items.forEach((it, i) => {
+    if (isStep(it)) run.push({ it, i })
+    else {
+      flush()
+      out.push(render(it, i))
+    }
+  })
+  flush()
+  return <>{out}</>
+}
+
+const EDITS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"])
+const failedStep = (it: Item) => it.type === "tool" && Boolean(it.call.result?.isError)
+/** Sin resultado en un turno que ya terminó: la sesión se cortó mientras corría. */
+const unfinishedStep = (it: Item) => it.type === "tool" && !it.call.result
+/** Lo que nunca queda escondido adentro del pliegue. */
+const visibleStep = (it: Item) => failedStep(it) || unfinishedStep(it)
+
+/** "12 pasos · 2 archivos editados · 3 comandos": de qué se trató el bloque, sin abrirlo. */
+function stepSummary(items: Item[]): string {
+  const tools = items.filter((it): it is Extract<Item, { type: "tool" }> => it.type === "tool")
+  const files = new Set(
+    tools.filter((t) => EDITS.has(t.call.use.name)).map((t) => String((t.call.use.input as Record<string, unknown>)?.file_path ?? (t.call.use.input as Record<string, unknown>)?.notebook_path ?? t.id))
   )
+  const commands = tools.filter((t) => t.call.use.name === "Bash").length
+  return [
+    items.length === 1 ? "1 paso" : `${items.length} pasos`,
+    files.size ? (files.size === 1 ? "1 archivo editado" : `${files.size} archivos editados`) : null,
+    commands ? (commands === 1 ? "1 comando" : `${commands} comandos`) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+}
+
+/**
+ * Un bloque de pasos seguidos. Mientras el turno corre, se ven todos. Cuando terminó, se pliega en
+ * una línea (si son dos o más); lo que falló queda siempre a la vista, debajo.
+ */
+function StepRun({
+  items,
+  settled,
+  children,
+}: {
+  items: Item[]
+  settled: boolean
+  children: (only?: (it: Item) => boolean) => React.ReactNode
+}) {
+  // El bloque que viste correr queda abierto al terminar el turno (no salta la página); se pliegan
+  // solos los que ya llegan terminados.
+  const [open, setOpen] = useState(!settled)
+  const foldable = settled && items.length > 1 && items.some((it) => it.type === "tool")
+  if (!foldable) return <div className="flex flex-col gap-0.5">{children()}</div>
+  const failures = items.filter(failedStep).length
+  const unfinished = items.filter(unfinishedStep).length
+  const summary = stepSummary(items)
+  const label = [
+    summary,
+    failures ? (failures === 1 ? "1 falló" : `${failures} fallaron`) : null,
+    unfinished ? (unfinished === 1 ? "1 sin terminar" : `${unfinished} sin terminar`) : null,
+  ]
+    .filter(Boolean)
+    .join(", ")
+  return (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={`${open ? "Ocultar" : "Ver"} los pasos: ${label}`}
+        className={cn(
+          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+          open && "bg-muted/50"
+        )}
+      >
+        <ListTree className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{summary}</span>
+        {failures > 0 && (
+          <span className="shrink-0 font-medium text-status-error">· {failures === 1 ? "1 falló" : `${failures} fallaron`}</span>
+        )}
+        {unfinished > 0 && <span className="shrink-0">· {unfinished === 1 ? "1 sin terminar" : `${unfinished} sin terminar`}</span>}
+        <ChevronRight className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
+      </button>
+      {open ? (
+        <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children()}</div>
+      ) : (
+        failures + unfinished > 0 && <div className="ml-3 flex flex-col gap-0.5 border-l pl-2">{children(visibleStep)}</div>
+      )}
+    </div>
+  )
+}
+
+/** Las herramientas que no son una tarjeta propia y el pensamiento: los pasos chicos del trabajo. */
+const CARD_TOOLS = new Set([
+  "TodoWrite",
+  "SendMessage",
+  "mcp__control-plane__report_result",
+  "mcp__control-plane__propose_prompt",
+  "mcp__control-plane__propose_session",
+  "mcp__control-plane__propose_plan",
+  MESSAGE_TOOL,
+  "Agent",
+  "Task",
+])
+function isStep(it: Item): boolean {
+  return it.type === "tool" ? !CARD_TOOLS.has(it.call.use.name) : it.ev.event.kind === "thinking"
 }
 
 export function Timeline({ session, events }: { session: Session; events: StoredEvent[] }) {
@@ -424,6 +644,7 @@ export function Timeline({ session, events }: { session: Session; events: Stored
   const live = session.status === "working" || session.status === "needs_input" || session.subagentsRunning > 0
 
   return (
+    <ProjectIdContext.Provider value={session.projectId}>
     <SubagentContext.Provider value={subagents}>
       <div className="flex flex-col gap-3">
         <TimelineItems items={items} sessionId={session.id} root={session.cwd} live={live} />
@@ -431,5 +652,6 @@ export function Timeline({ session, events }: { session: Session; events: Stored
         <LiveTail session={session} partial={partial} />
       </div>
     </SubagentContext.Provider>
+    </ProjectIdContext.Provider>
   )
 }

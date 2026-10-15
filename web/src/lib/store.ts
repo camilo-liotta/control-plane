@@ -3,9 +3,11 @@ import { create } from "zustand"
 
 import type {
   Account,
+  AppView,
   CompactionState,
   Draft,
   UserTask,
+  Environment,
   Meta,
   ModelOption,
   Project,
@@ -34,6 +36,10 @@ interface State {
   sessions: Record<string, Session>
   drafts: Record<string, Draft>
   tasks: Record<string, UserTask>
+  /** Entornos con sus credenciales (sin los secretos: se piden aparte). */
+  environments: Record<string, Environment>
+  /** Las apps levantables de cada proyecto, por id de proyecto. */
+  apps: Record<string, AppView[]>
   reports: Record<string, Report>
   events: Record<string, StoredEvent[]>
   hasMore: Record<string, boolean>
@@ -62,6 +68,11 @@ interface State {
 }
 
 const byId = <T extends { id: string }>(list: T[]) => Object.fromEntries(list.map((x) => [x.id, x]))
+const groupApps = (list: AppView[]) => {
+  const out: Record<string, AppView[]> = {}
+  for (const a of list) (out[a.projectId] ??= []).push(a)
+  return out
+}
 
 function mergeEvents(current: StoredEvent[], incoming: StoredEvent[]): StoredEvent[] {
   const map = new Map<number, StoredEvent>()
@@ -77,6 +88,8 @@ export const useStore = create<State>((set, get) => ({
   sessions: {},
   drafts: {},
   tasks: {},
+  environments: {},
+  apps: {},
   reports: {},
   events: {},
   hasMore: {},
@@ -106,6 +119,8 @@ export const useStore = create<State>((set, get) => ({
           sessions: byId(snapshot.sessions),
           drafts: byId(snapshot.drafts),
           tasks: byId(snapshot.tasks ?? []),
+          environments: byId(snapshot.environments ?? []),
+          apps: groupApps(snapshot.apps ?? []),
           reports: byId(snapshot.reports),
           accounts: byId(snapshot.accounts),
           compactions: Object.fromEntries((snapshot.compactions ?? []).map((c) => [c.sessionId, c])),
@@ -140,6 +155,8 @@ export const useStore = create<State>((set, get) => ({
             sessions: keep(s.sessions),
             drafts: keep(s.drafts),
             tasks: keep(s.tasks),
+            environments: keep(s.environments),
+            apps: Object.fromEntries(Object.entries(s.apps).filter(([pid]) => pid !== msg.id)),
             reports: keep(s.reports),
             events: bySession(s.events),
             hasMore: bySession(s.hasMore),
@@ -206,6 +223,19 @@ export const useStore = create<State>((set, get) => ({
         break
       case "task":
         set((s) => ({ tasks: { ...s.tasks, [msg.task.id]: msg.task } }))
+        break
+      case "environment":
+        set((s) => ({ environments: { ...s.environments, [msg.environment.id]: msg.environment } }))
+        break
+      case "environment_removed":
+        set((s) => {
+          const environments = { ...s.environments }
+          delete environments[msg.id]
+          return { environments }
+        })
+        break
+      case "apps":
+        set((s) => ({ apps: { ...s.apps, [msg.projectId]: msg.apps } }))
         break
       case "report":
         set((s) => ({ reports: { ...s.reports, [msg.report.id]: msg.report } }))

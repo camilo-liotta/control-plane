@@ -91,30 +91,33 @@ export function SubagentCard({ call, live }: { call: ToolCall; live: boolean }) 
     <button
       type="button"
       onClick={() => setUi({ subagent: { sessionId, toolUseId: call.use.id } })}
-      className={cn(
-        "group/sub w-full rounded-xl border bg-card px-3.5 py-3 text-left shadow-xs transition-all hover:border-foreground/25 hover:shadow-sm focus-visible:ring-3 focus-visible:ring-ring/40 focus-visible:outline-none",
-        status === "running" && "border-status-working/40"
-      )}
+      className="group/sub surface-card w-full px-4 py-3 text-left transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       <div className="flex items-center gap-2">
         <Bot className={cn("size-4 shrink-0", status === "running" ? "text-status-working" : "text-muted-foreground")} />
-        <span className="truncate font-mono text-[0.84rem] font-semibold">{title}</span>
+        <span className="name truncate text-sm" title={title}>
+          {title}
+        </span>
         <span className="hidden truncate text-xs text-muted-foreground sm:inline">
           {[type, model, background ? "en segundo plano" : null].filter(Boolean).join(" · ")}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs">
           <Lamp tone={view.tone} pulse={status === "running"} className="size-1.5" />
           <span className="font-medium">{view.label}</span>
-          {elapsed !== null && <span className="font-mono text-muted-foreground">{duration(elapsed)}</span>}
+          {elapsed !== null && <span className="text-muted-foreground">{duration(elapsed)}</span>}
         </span>
       </div>
       {name && (state?.description || input.description) && (
-        <p className="mt-1 truncate text-xs text-muted-foreground">{state?.description ?? input.description}</p>
+        <p className="mt-1 truncate text-xs text-muted-foreground" title={state?.description ?? input.description}>
+          {state?.description ?? input.description}
+        </p>
       )}
       <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="min-w-0 flex-1 truncate font-mono">{activity ?? (status === "running" ? "arrancando…" : "—")}</span>
+        <span className="min-w-0 flex-1 truncate" title={activity ?? undefined}>
+          {activity ?? (status === "running" ? "Arrancando…" : "—")}
+        </span>
         {(toolUses > 0 || state?.usage) && (
-          <span className="shrink-0 font-mono">
+          <span className="hidden shrink-0 sm:inline">
             {toolUses} {toolUses === 1 ? "herramienta" : "herramientas"}
             {state?.usage?.tokens ? ` · ${compactTokens(state.usage.tokens)} tokens` : ""}
           </span>
@@ -148,16 +151,16 @@ export function SubagentList({ sessionId, events, limit }: { sessionId: string; 
               onClick={() => setUi({ subagent: { sessionId, toolUseId: s.toolUseId } })}
               className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted"
             >
-              <Lamp tone={view.tone} pulse={s.status === "running"} className="mt-1.5 size-1.5" />
+              <Lamp tone={view.tone} pulse={s.status === "running"} label={view.label} className="mt-1.5 size-1.5" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
-                  <span className="truncate font-mono text-[0.8rem] font-medium">{s.name ?? s.description}</span>
-                  <span className="ml-auto shrink-0 font-mono text-[0.7rem] text-muted-foreground">
-                    {duration((s.endedAt ?? now) - s.startedAt)}
+                  <span className="name truncate text-ui" title={s.name ?? s.description}>
+                    {s.name ?? s.description}
                   </span>
+                  <span className="ml-auto shrink-0 text-2xs text-muted-foreground">{duration((s.endedAt ?? now) - s.startedAt)}</span>
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {s.status === "running" ? (s.lastActivity ?? "arrancando…") : (s.summary ?? view.label)}
+                <span className="block truncate text-xs text-muted-foreground" title={s.status === "running" ? (s.lastActivity ?? undefined) : (s.summary ?? undefined)}>
+                  {s.status === "running" ? (s.lastActivity ?? "Arrancando…") : (s.summary ?? view.label)}
                 </span>
               </span>
             </button>

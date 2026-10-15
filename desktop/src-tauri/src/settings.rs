@@ -43,6 +43,10 @@ pub struct Settings {
     pub check_updates: bool,
     /// La última versión nueva de la que ya se avisó (un solo aviso por versión).
     pub update_notified: Option<String>,
+    /// Claude Code elegido a mano (si no, `CLAUDE_BIN` o el del PATH de la shell de login).
+    pub claude_path: Option<PathBuf>,
+    /// Ya se avisó, al cerrar la ventana, que la app sigue en el ícono de la barra.
+    pub close_hint_shown: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +59,8 @@ impl Default for Settings {
             import_env: Vec::new(),
             check_updates: true,
             update_notified: None,
+            claude_path: None,
+            close_hint_shown: false,
         }
     }
 }
@@ -74,6 +80,8 @@ impl Settings {
             import_env: field(&map, "importEnv", d.import_env),
             check_updates: field(&map, "checkUpdates", d.check_updates),
             update_notified: field(&map, "updateNotified", d.update_notified),
+            claude_path: field(&map, "claudePath", d.claude_path),
+            close_hint_shown: field(&map, "closeHintShown", d.close_hint_shown),
         }
     }
 
@@ -176,6 +184,8 @@ mod tests {
             import_env: vec!["AWS_PROFILE".into()],
             check_updates: false,
             update_notified: Some("0.2.0".into()),
+            claude_path: Some(PathBuf::from("/opt/claude/bin/claude")),
+            close_hint_shown: true,
         };
         s.save_to(&file).unwrap();
         assert_eq!(Settings::load_from(&file), s);

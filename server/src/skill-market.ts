@@ -200,7 +200,7 @@ export class SkillMarket {
     }
     if (!scanSkillTree(rec.path).length) {
       if (rec.kind === "git") fs.rmSync(rec.path, { recursive: true, force: true })
-      throw new Error("No encontré ninguna skill (carpetas con SKILL.md) ahí")
+      throw new Error("Ahí no hay ninguna skill (carpetas con SKILL.md)")
     }
     this.save([...list, rec])
     return rec

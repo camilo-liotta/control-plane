@@ -1,9 +1,13 @@
 import { inDesktop } from "@/lib/notify"
 
-const isEditable = (el: EventTarget | null) =>
+/** Un campo donde se escribe (las teclas sueltas son del campo, no atajos). */
+export const isEditable = (el: EventTarget | null) =>
   el instanceof HTMLTextAreaElement ||
   (el instanceof HTMLInputElement && !["checkbox", "radio", "button", "submit", "file", "range", "color"].includes(el.type)) ||
   (el instanceof HTMLElement && el.isContentEditable)
+
+/** Lo que está adentro de la terminal (xterm recibe el teclado en un textarea escondido). */
+export const inTerminal = (el: EventTarget | null) => el instanceof Element && el.closest("[data-terminal]") !== null
 
 /**
  * Ctrl+Z, Ctrl+Shift+Z y Ctrl+Y en la app de escritorio en Linux. WebKitGTK guarda la pila de
@@ -14,6 +18,8 @@ export function installUndoKeys() {
   if (!inDesktop() || !/Linux/.test(navigator.userAgent)) return
   window.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || !e.ctrlKey || e.altKey || e.metaKey || !isEditable(e.target)) return
+    // En la terminal, Ctrl+Z (suspender) y Ctrl+Y (yank de readline) son de la shell.
+    if (inTerminal(e.target)) return
     const key = e.key.toLowerCase()
     const command = key === "z" ? (e.shiftKey ? "redo" : "undo") : key === "y" && !e.shiftKey ? "redo" : null
     if (!command) return

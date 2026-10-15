@@ -4,20 +4,11 @@ import { useLocation } from "wouter"
 
 import type { CompactMode, Project, ProjectSettings } from "@shared/types"
 
+import { comeBackFromAfk } from "@/components/afk-dialog"
 import { COMPACT_MODES } from "@/components/context-meter"
 import { EffortSelect, ModelSelect } from "@/components/new-session-dialog"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ConfirmAction } from "@/components/ui/confirm-action"
 import {
   Dialog,
   DialogContent,
@@ -32,7 +23,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { afkOf, afkSummary } from "@/lib/afk"
 import { api } from "@/lib/api"
+import { shortPath } from "@/lib/format"
+import { effortName, effortsFor, modelName } from "@/lib/models"
+import { useModels } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
 export function ProjectSettingsDialog({
@@ -49,6 +44,7 @@ export function ProjectSettingsDialog({
   const [name, setName] = useState(project.name)
   const [settings, setSettings] = useState<ProjectSettings>(project.settings)
   const [saving, setSaving] = useState(false)
+  const afk = afkOf(project)
 
   useEffect(() => {
     if (open) {
@@ -67,29 +63,28 @@ export function ProjectSettingsDialog({
       toast.success("Configuración guardada")
       onOpenChange(false)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo guardar la configuración", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setSaving(false)
     }
   }
 
+  // Si falla, ConfirmAction muestra el error y queda abierto.
   const archive = async () => {
-    try {
-      await api.archiveProject(project.id)
-      toast.success(`Proyecto ${project.name} archivado`)
-      onOpenChange(false)
-      navigate("/")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
+    await api.archiveProject(project.id)
+    toast.success(`Proyecto ${project.name} archivado`)
+    onOpenChange(false)
+    navigate("/")
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Configuración de {project.name}</DialogTitle>
-          <DialogDescription className="font-mono text-xs">{project.repoPath}</DialogDescription>
+          <DialogTitle>Ajustes de {project.name}</DialogTitle>
+          <DialogDescription className="truncate font-mono text-xs" title={project.repoPath}>
+            {shortPath(project.repoPath)}
+          </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field>
@@ -100,13 +95,30 @@ export function ProjectSettingsDialog({
           <FieldSeparator>Orquestación</FieldSeparator>
           <Field orientation="horizontal">
             <FieldContent>
-              <FieldLabel htmlFor="p-auto">Enviar las propuestas solas</FieldLabel>
+              <FieldLabel>Modo AFK</FieldLabel>
               <FieldDescription>
-                Cuando la orquestadora termina de revisar la cola, sus prompts salen sin esperar tu aprobación. Las
-                sesiones nuevas siempre las aprobás vos.
+                {afk
+                  ? `${afkSummary(afk)}. La orquestadora envía sus prompts, planes y sesiones nuevas sin esperarte.`
+                  : "Cuando te vas, la orquestadora envía sus prompts, planes y sesiones nuevas sin esperar tu aprobación, hasta que vuelvas, se acabe el tiempo o se gaste el tope."}
               </FieldDescription>
             </FieldContent>
-            <Switch id="p-auto" checked={settings.autoDispatch} onCheckedChange={(v) => set("autoDispatch", v)} />
+            {afk ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => void comeBackFromAfk(project)}>
+                Volver
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false)
+                  setUi({ afkFor: project.id })
+                }}
+              >
+                Ponerse AFK…
+              </Button>
+            )}
           </Field>
           <Field orientation="horizontal">
             <FieldContent>
@@ -121,7 +133,7 @@ export function ProjectSettingsDialog({
               type="number"
               min={0}
               max={600}
-              className="w-24 font-mono"
+              className="w-24"
               value={settings.batchWindowSec}
               onChange={(e) => set("batchWindowSec", Number(e.target.value))}
             />
@@ -173,24 +185,35 @@ export function ProjectSettingsDialog({
                 type="number"
                 min={1}
                 max={45}
-                className="w-24 font-mono"
+                className="w-24"
                 value={settings.compactWaitMin}
                 onChange={(e) => set("compactWaitMin", Number(e.target.value))}
               />
             </Field>
           )}
 
-          <FieldSeparator>Sesiones nuevas</FieldSeparator>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel>Modelo por defecto</FieldLabel>
-              <ModelSelect value={settings.defaultModel} onChange={(v) => set("defaultModel", v)} />
-            </Field>
-            <Field>
-              <FieldLabel>Esfuerzo por defecto</FieldLabel>
-              <EffortSelect value={settings.defaultEffort} onChange={(v) => set("defaultEffort", v)} />
-            </Field>
-          </div>
+          <FieldSeparator>Modelos</FieldSeparator>
+          <FieldDescription>
+            La orquestadora piensa y reparte: conviene Opus. Las sesiones ejecutan lo que ella define: con Sonnet alcanza
+            y gasta menos. Cada propuesta puede elegir otro.
+          </FieldDescription>
+          <ModelRow
+            id="p-orch-model"
+            label="Orquestadora"
+            description="Aplica al reiniciarla."
+            model={settings.defaultModel}
+            effort={settings.defaultEffort}
+            onChange={(model, effort) => setSettings((s) => ({ ...s, defaultModel: model, defaultEffort: effort }))}
+          />
+          <ModelRow
+            id="p-worker-model"
+            label="Sesiones"
+            description="Las que creás vos y las que propone la orquestadora sin elegir modelo. Aplica desde que arrancan o se reanudan."
+            model={settings.workerModel}
+            effort={settings.workerEffort}
+            inherit={{ model: settings.defaultModel, effort: settings.defaultEffort }}
+            onChange={(model, effort) => setSettings((s) => ({ ...s, workerModel: model, workerEffort: effort }))}
+          />
 
           <FieldSeparator>Instrucciones del proyecto</FieldSeparator>
           <Field>
@@ -202,7 +225,7 @@ export function ProjectSettingsDialog({
               placeholder="Convenciones de commits, comandos para correr tests, zonas del repo que no se tocan…"
               className="min-h-24"
             />
-            <FieldDescription>Se suman al protocolo de cada worker. Aplican al iniciar o reanudar la sesión.</FieldDescription>
+            <FieldDescription>Se suman al protocolo de cada worker. Aplican desde que la sesión arranca o se reanuda.</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="p-orch">Para la orquestadora</FieldLabel>
@@ -214,49 +237,104 @@ export function ProjectSettingsDialog({
               className="min-h-24"
             />
           </Field>
-        </FieldGroup>
-        <DialogFooter className="sm:justify-between">
-          <div className="flex gap-2">
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive">Archivar proyecto</Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>¿Archivar {project.name}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Se detienen todas sus sesiones y desaparece del dashboard. No se borra nada del repo ni de las
-                    conversaciones de Claude Code.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={archive}>Archivar</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+
+          {/* Lo que saca al proyecto, al final y lejos de Guardar: ninguna de las dos se guarda con el resto. */}
+          <FieldSeparator>Archivar o borrar</FieldSeparator>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel>Archivar el proyecto</FieldLabel>
+              <FieldDescription>Detiene sus sesiones y lo saca de la barra lateral. Lo restaurás desde el inicio, en Archivados.</FieldDescription>
+            </FieldContent>
+            <ConfirmAction
+              title={`¿Archivar ${project.name}?`}
+              description={
+                <>
+                  <p>Se detienen todas sus sesiones y deja de aparecer en la barra lateral.</p>
+                  <p>No se borra nada: lo restaurás cuando quieras desde el inicio, en Archivados.</p>
+                </>
+              }
+              confirmLabel="Archivar"
+              destructive={false}
+              onConfirm={archive}
+            >
+              <Button variant="outline" className="shrink-0">
+                Archivar…
+              </Button>
+            </ConfirmAction>
+          </Field>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel>Borrar el proyecto</FieldLabel>
+              <FieldDescription>Se pierden sus sesiones, su historial y sus tareas. No toca el repo.</FieldDescription>
+            </FieldContent>
             <Button
               variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => {
-                onOpenChange(false)
-                setUi({ deleteFor: project.id })
-              }}
+              className="shrink-0"
+              // Los ajustes quedan abiertos abajo: si cancelás el borrado, no perdés lo que estabas editando.
+              onClick={() => setUi({ deleteFor: project.id })}
             >
-              Borrar…
+              Borrar proyecto…
             </Button>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={save} disabled={saving}>
-              {saving && <Spinner />}
-              Guardar
-            </Button>
-          </div>
+          </Field>
+        </FieldGroup>
+        <DialogFooter sticky>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Spinner />}
+            Guardar
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * Modelo y esfuerzo de la orquestadora o de las sesiones. Con `inherit` (las sesiones), null es
+ * "Igual que la orquestadora"; sin él, "El de tu configuración".
+ */
+function ModelRow({
+  id,
+  label,
+  description,
+  model,
+  effort,
+  inherit,
+  onChange,
+}: {
+  id: string
+  label: string
+  description: string
+  model: string | null
+  effort: string | null
+  inherit?: { model: string | null; effort: string | null }
+  onChange: (model: string | null, effort: string | null) => void
+}) {
+  const models = useModels()
+  const efforts = effortsFor(models, model ?? inherit?.model ?? null)
+  const same = (v: string | null) => (v ? `Igual que la orquestadora (${v})` : "Igual que la orquestadora")
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <div className="grid gap-2 sm:grid-cols-[1.4fr_1fr]">
+        <ModelSelect
+          id={id}
+          value={model}
+          // Si el modelo nuevo no tiene el esfuerzo elegido, vuelve al heredado.
+          onChange={(v) => onChange(v, effort && effortsFor(models, v ?? inherit?.model ?? null).includes(effort) ? effort : null)}
+          placeholder={inherit ? same(inherit.model && modelName(models, inherit.model)) : undefined}
+        />
+        <EffortSelect
+          value={effort}
+          onChange={(v) => onChange(model, v)}
+          efforts={efforts}
+          placeholder={inherit ? same(inherit.effort && effortName(inherit.effort)) : undefined}
+          aria-label={`Esfuerzo: ${label.toLowerCase()}`}
+        />
+      </div>
+      <FieldDescription>{description}</FieldDescription>
+    </Field>
   )
 }

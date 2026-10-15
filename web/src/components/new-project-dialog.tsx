@@ -23,13 +23,39 @@ import { useAccounts, useCurrentAccount } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
+const DEFAULT_DIR = "~/projects/"
+const PARENT_KEY = "control-plane:last-repo-parent"
+
+/** Dónde empieza a buscar: la carpeta madre del último proyecto que creaste, o ~/projects/. */
+function startDir() {
+  try {
+    return localStorage.getItem(PARENT_KEY) || DEFAULT_DIR
+  } catch {
+    return DEFAULT_DIR
+  }
+}
+
+function rememberParent(repoPath: string) {
+  const parent = repoPath.replace(/\/+$/, "").replace(/\/[^/]*$/, "/")
+  try {
+    if (parent) localStorage.setItem(PARENT_KEY, parent)
+  } catch {
+    // sin almacenamiento local: la próxima arranca en ~/projects/
+  }
+}
+
 export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [, navigate] = useLocation()
-  const [path, setPath] = useState("~/projects/")
+  const [path, setPath] = useState(startDir)
   const [name, setName] = useState("")
   const [nameTouched, setNameTouched] = useState(false)
   const [suggest, setSuggest] = useState<DirSuggestion | null>(null)
   const [creating, setCreating] = useState(false)
+  /** La sugerencia de carpeta marcada con ↑/↓ (-1: ninguna; Enter crea). */
+  const [highlight, setHighlight] = useState(-1)
+  const dirs = suggest?.dirs ?? []
+  useEffect(() => setHighlight(-1), [suggest])
+  const canCreate = Boolean(suggest?.exists) && !creating
   const accounts = useAccounts()
   const current = useCurrentAccount()
   const selectAccount = useUi((s) => s.selectAccount)
@@ -52,16 +78,23 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
     if (!nameTouched && suggest?.exists) setName(basename(suggest.path))
   }, [suggest, nameTouched])
 
+  // La primera vez no hay carpeta reciente: si ~/projects/ no existe, se arranca en tu carpeta personal.
+  useEffect(() => {
+    if (suggest && !suggest.exists && path === DEFAULT_DIR && !suggest.dirs.length) setPath("~/")
+  }, [suggest, path])
+
   const create = async () => {
+    if (!canCreate) return
     setCreating(true)
     try {
       const project = await api.createProject({ repoPath: path, name: name.trim() || undefined, accountId: account?.id })
+      rememberParent(project.repoPath)
       if (account && account.id !== current?.id) selectAccount(account.id)
       toast.success(`Proyecto ${project.name} creado`, { description: "La orquestadora ya está arrancando." })
       onOpenChange(false)
       navigate(`/p/${project.id}`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error("No se pudo crear el proyecto", { description: err instanceof Error ? err.message : String(err) })
     } finally {
       setCreating(false)
     }
@@ -76,6 +109,13 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             Elegí la carpeta del repo. Se crea la orquestadora del proyecto y después sumás las sesiones que necesites.
           </DialogDescription>
         </DialogHeader>
+        <form
+          id="new-project-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void create()
+          }}
+        >
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="repo-path">Carpeta del repo</FieldLabel>
@@ -83,34 +123,63 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
               id="repo-path"
               value={path}
               onChange={(e) => setPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (!dirs.length) return
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault()
+                  const step = e.key === "ArrowDown" ? 1 : -1
+                  // De "ninguna" (-1) a la última, dando la vuelta.
+                  setHighlight((h) => {
+                    const next = h + step
+                    return next < -1 ? dirs.length - 1 : next >= dirs.length ? -1 : next
+                  })
+                  return
+                }
+                if (e.key === "Enter" && highlight >= 0 && dirs[highlight]) {
+                  // Enter con una sugerencia marcada entra a esa carpeta; sin ninguna, crea el proyecto.
+                  e.preventDefault()
+                  setPath(dirs[highlight].path + "/")
+                }
+              }}
               className="font-mono text-sm"
               spellCheck={false}
               autoFocus
+              aria-controls="repo-path-suggestions"
+              aria-activedescendant={highlight >= 0 ? `repo-dir-${highlight}` : undefined}
             />
             {suggest && (
-              <FieldDescription className={cn(suggest.exists && !suggest.isGitRepo && "text-status-attention")}>
+              <FieldDescription className={cn(suggest.exists && !suggest.isGitRepo && "text-status-pending")}>
                 {!suggest.exists
-                  ? "La carpeta no existe todavía."
+                  ? suggest.dirs.length
+                    ? "La carpeta no existe todavía: elegí una de abajo o seguí escribiendo."
+                    : "La carpeta no existe todavía: el proyecto va en un repo que ya tengas."
                   : suggest.isGitRepo
                     ? "Repositorio git encontrado."
-                    : "Esta carpeta no es un repositorio git: funciona igual, pero los workers no van a poder usar worktrees."}
+                    : "Esta carpeta no es un repositorio git: funciona igual, pero las sesiones no van a poder usar worktrees."}
               </FieldDescription>
             )}
             {suggest && suggest.dirs.length > 0 && (
-              <div className="max-h-48 overflow-y-auto rounded-lg border p-1">
-                {suggest.dirs.map((d) => (
+              <div id="repo-path-suggestions" role="listbox" aria-label="Carpetas" className="max-h-48 overflow-y-auto rounded-xl bg-muted/50 p-1">
+                {suggest.dirs.map((d, i) => (
                   <button
                     key={d.path}
+                    id={`repo-dir-${i}`}
                     type="button"
+                    role="option"
+                    aria-selected={i === highlight}
+                    tabIndex={-1}
+                    ref={(el) => {
+                      if (el && i === highlight) el.scrollIntoView({ block: "nearest" })
+                    }}
                     onClick={() => setPath(d.path + "/")}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                    className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-background", i === highlight && "bg-background shadow-raised")}
                   >
                     {d.isGitRepo ? (
-                      <FolderGit2 className="size-4 text-status-done" />
+                      <FolderGit2 className="size-4 text-foreground" aria-label="Repo de git" />
                     ) : (
                       <FolderOpen className="size-4 text-muted-foreground" />
                     )}
-                    <span className="truncate font-mono text-[0.8rem]">{shortPath(d.path)}</span>
+                    <span className="truncate font-mono text-xs" title={d.path}>{shortPath(d.path)}</span>
                   </button>
                 ))}
               </div>
@@ -147,11 +216,12 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
             />
           </Field>
         </FieldGroup>
+        </form>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={create} disabled={!suggest?.exists || creating}>
+          <Button type="submit" form="new-project-form" disabled={!canCreate}>
             {creating && <Spinner />}
             Crear proyecto
           </Button>

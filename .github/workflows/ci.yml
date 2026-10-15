@@ -1,0 +1,35 @@
+# Typecheck, tests y build del server y la web en cada PR y en cada push a main, sin filtro de paths.
+# La app de escritorio (Rust, Tauri) se compila y se prueba en release.yml.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Un PR cancela su run anterior; los de main van cada uno en su grupo (por commit) y no se cancelan.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # Incluye el chequeo de versión y el de los scripts de shell.
+      - run: npm test
+      - run: npm run build

@@ -30,13 +30,13 @@ npm start
 
 En Windows, `npm start` anda igual (Node 24). El server busca `claude.exe` en el PATH o en `~\.local\bin`; si lo tenés en otro lado, definí `CLAUDE_BIN` con la ruta a `claude.exe`.
 
-Si preferís una ventana propia con bandeja y avisos nativos, está la [app de escritorio](#app-de-escritorio).
+Si preferís una ventana propia con un ícono en la barra del sistema y avisos nativos, está la [app de escritorio](#app-de-escritorio).
 
 Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga en **http://localhost:4701**). Tests del server: `npm test`.
 
 ## App de escritorio
 
-Una ventana propia para el dashboard, con ícono en la bandeja (Linux) o en la barra de menú (macOS), avisos nativos y arranque al iniciar sesión. Por dentro es el mismo server de siempre: la app lo lanza, o usa el que ya tengas corriendo, y abre su página en `127.0.0.1`.
+Una ventana propia para el dashboard, con un ícono en la barra de arriba (Linux) o en la barra de menú (macOS), avisos nativos y arranque al iniciar sesión. Por dentro es el mismo server de siempre: la app lo lanza, o usa el que ya tengas corriendo, y abre su página en `127.0.0.1`.
 
 - Linux (Ubuntu) y macOS. Windows no.
 - Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
@@ -68,8 +68,8 @@ git pull && npm run app:install
   - En la Mac queda en `/Applications/control-plane.app`, o en `~/Applications` si no podés escribir en `/Applications`.
   - En Linux se instala el `.deb` con `sudo apt install`.
 - Antes revisa lo que hace falta (Node 24, Rust, y las herramientas de Xcode en la Mac o las librerías de Tauri en Linux). Si falta algo, te dice cómo instalarlo o te pregunta si lo instala.
-- **Actualizar no corta las sesiones**: si la app está abierta, la cierra dejando el server corriendo (`--quit --keep-server`, sin preguntar y sin tocar tu ajuste de **Al salir**), instala la nueva y la vuelve a abrir, y esa adopta el mismo server.
-  - La primera vez que actualizás en Linux una app instalada antes de este cambio, no la cierra, porque esa versión no sabe salir dejando el server. Reiniciala vos una vez: bandeja → Al salir ▸ "Dejarlo corriendo" → Salir, y abrila de nuevo. En la Mac, esa primera vez la cierra como desde el Dock, que también deja el server.
+- **App y server se actualizan juntos, y las sesiones siguen solas**: instala la nueva, cierra la app abierta con `--quit --restart-for-update` (el server guarda qué sesiones estaban activas y se detiene, sin preguntar y sin tocar tu ajuste de **Al salir**) y la vuelve a abrir. La nueva lanza el server nuevo, que retoma esas sesiones: las que estaban trabajando siguen desde donde quedaron.
+  - Si la app abierta es de antes de este cambio, no sabe reiniciarse para actualizar. En Linux no la cierra y te dice cómo hacerlo (menú del ícono → Salir → "Detener y salir"). En la Mac la cierra como desde el Dock, que deja su server: la nueva lo detecta y lo reinicia (ver [Un server más viejo que la app](#un-server-más-viejo-que-la-app)).
 - `npm run app:install -- --dry-run` muestra lo que haría sin tocar nada. `-- --no-install` compila y deja el paquete sin instalarlo.
 - Si falla, el detalle de la compilación queda en `/tmp/control-plane-install.log` (o en `$TMPDIR` en la Mac).
 
@@ -131,32 +131,37 @@ La ventana aparece enseguida ("Abriendo control-plane…"). Mientras tanto, la a
 Si el server se cae:
 
 - **El que lanzó la app**: avisa siempre. Lo relanza solo si había andado más de un minuto, y como mucho 3 veces cada 5 minutos.
-- **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzarlo** y **Reintentar**. La app no lo relanza sola.
+- **El tuyo**: a los 10 s muestra "El server se detuvo", con **Lanzar el server** y **Reintentar**. La app no lo relanza sola.
 
-**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde la bandeja.
+**Cerrar la ventana** la esconde: el server y las sesiones siguen, y la volvés a abrir desde el menú del ícono. La primera vez, un aviso dice dónde quedó la app y cómo volver a abrirla.
+
+- **Si no se ve el ícono** (GNOME sin la extensión AppIndicator): no habría cómo volver a la ventana ni cómo salir, así que cerrar la ventana es **Salir**, con lo que diga **Al salir**. Si pregunta, el diálogo lo explica. La app se da cuenta por D-Bus: no hay `StatusNotifierWatcher`, o no hay quien muestre los íconos.
 
 ### Salir
 
-Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde una terminal en Linux: `control-plane-desktop --quit` si la instalaste con el `.deb`, o el propio `.AppImage` con `--quit`:
+Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde una terminal en Linux: `control-plane-desktop --quit` si la instalaste con el `.deb`, o el propio `.AppImage` con `--quit`:
 
 - Si el server no lo lanzó la app, sale sin tocarlo.
-- Si lo lanzó ella, hace lo que diga **Al salir ▸** en la bandeja:
-  - **Preguntar** (el default): "Hay N sesiones abiertas: detener el server las cierra (se reanudan después)", con **Detener y salir**, **Dejarlo corriendo** y **Cancelar**.
-  - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en la bandeja.
+- Si lo lanzó ella, hace lo que diga **Al salir ▸** en el menú del ícono:
+  - **Preguntar** (el default): separa las sesiones que están trabajando, que cortan su turno a la mitad, de las quietas. Por ejemplo: "Hay 2 sesiones trabajando y 1 quieta". Los botones: **Detener y salir**, **Dejarlo corriendo** y **Cancelar**. Si tildás **Recordar mi elección**, tu respuesta queda en **Al salir** (el mismo ajuste del menú) y no vuelve a preguntar. Para que pregunte de nuevo, elegí **Al salir ▸ Preguntar**.
+  - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en el menú del ícono.
   - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
-- `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia). Es lo que usa `npm run app:install` para actualizar sin cortar las sesiones.
+- `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia).
+- `--quit --restart-for-update` sale sin preguntar y detiene el server, que antes guarda las sesiones activas para que el próximo las retome. Es lo que usan el botón **Actualizar a…**, `get.sh` y `npm run app:install` al actualizar.
 - Al apagar el equipo o cerrar la sesión no pregunta: el sistema le avisa al server y se cierra ordenado.
-- **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o la barra de menú.
+- **En la Mac, "Salir" desde el Dock** no pasa por esa decisión: sale y deja el server corriendo. Para detenerlo, usá <kbd>⌘</kbd> + <kbd>Q</kbd> o el menú del ícono.
 
-### La bandeja
+### El ícono de la barra
 
-- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va cuántas cosas te necesitan. Cuando algo te necesita, el ícono lleva un punto.
-- El menú: **Abrir**, **Bandeja**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
+El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú (Mac). Acá le decimos **el menú del ícono**, para no confundirlo con la **Bandeja** de la web.
+
+- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". "Te necesitan" es el mismo número que el de la **Bandeja** de la web: las sesiones que te necesitan, las propuestas listas y las tareas que frenan a una sesión. Los dos salen de la misma función (`server/src/shared/inbox-count.ts`). Tocar la línea abre la Bandeja. En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va el mismo número. Cuando algo te necesita, el ícono lleva un punto.
+- El menú: la línea de estado, **Abrir**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Buscar ahora**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
 - En GNOME hace falta la extensión AppIndicator, que Ubuntu trae activada.
 
 ### Avisos y sonidos
 
-- Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en bandeja → **Avisos**.
+- Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en el menú del ícono → **Avisos**.
 - Si tenés el dashboard abierto también en una pestaña, esa pestaña deja de mandar los suyos mientras la app está conectada, así no se duplican.
 - En Linux los avisos nativos piden no sonar (`suppress-sound`): el sonido lo pone la página, así no suenan dos.
 - Los [sonidos](#sonidos) siguen saliendo de la página y se configuran con el parlante de la barra lateral. **Avisos** no los apaga. Dentro de la app esa configuración es propia, aparte de la del navegador.
@@ -164,39 +169,51 @@ Con bandeja → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--quit` desde
 ### Actualizaciones
 
 - **Cómo busca**: al abrir y después una vez por día, la app le pregunta a GitHub cuál es el último release publicado de este repo (no mira borradores ni prereleases) y lo compara con su versión. Usa el `curl` del sistema, no manda ningún dato tuyo (solo un User-Agent con la versión) y, si no hay red o GitHub no contesta, no dice nada y prueba al día siguiente.
-- **Se apaga** en bandeja → **Buscar actualizaciones**. Apagado, no consulta nada.
+- **Se apaga** en el menú del ícono → **Buscar actualizaciones**. Apagado, no consulta nada por su cuenta.
+- **Buscar ahora** (en el mismo menú) consulta en el momento, aunque esté apagado, y siempre responde con un diálogo: "Estás en la última versión", "Hay una versión nueva: vX.Y.Z" (con **Actualizar ahora** y **Más tarde**) o "No se pudieron buscar actualizaciones", con el motivo.
 - **Cuando hay una versión nueva**:
-  - En la bandeja aparece **Actualizar a vX.Y.Z**.
+  - En el menú del ícono aparece **Actualizar a vX.Y.Z**.
   - Llega un solo aviso del sistema por versión, y tocarlo actualiza.
-  - En el dashboard aparece un cartel con un link a las notas. Solo informa: desde la página no se puede actualizar.
+  - En el dashboard aparece un cartel que dice dónde está **Actualizar a vX.Y.Z** (el ícono de control-plane en la barra de arriba, o en la barra de menú en la Mac), con un link a las notas. Solo informa: desde la página no se puede actualizar.
 - **Al actualizar**, la app lanza el instalador que vino con ella (`get.sh`), aparte de sí misma:
   1. Baja el paquete del release y lo verifica contra `SHA256SUMS`. Si no coincide, no instala nada.
   2. Instala.
-  3. Cierra la app sin cortar las sesiones (`--quit --keep-server`) y la vuelve a abrir. La nueva adopta el mismo server.
+  3. Cierra la app con `--quit --restart-for-update`: el server guarda las sesiones activas y se detiene. La vuelve a abrir, y la nueva lanza el server nuevo, que las retoma. **App y server se actualizan siempre juntos.**
+  - **Si hay sesiones trabajando**, antes de empezar pregunta: **Esperar a que terminen** (el menú del ícono dice "Actualizando cuando terminen…"; tocalo para cancelar, y a los 30 minutos actualiza igual), **Actualizar ahora** (lo que están haciendo se corta y siguen desde ahí) o **Cancelar**.
   - En Linux, el `.deb` necesita permisos de administrador: **el sistema te pide la contraseña** con su diálogo (`pkexec`). Si lo cancelás, no se instala nada y la app sigue como estaba.
   - Un AppImage se reemplaza en su lugar, sin contraseña.
   - En la Mac se reemplaza la `.app` que tenés abierta.
-- Si algo falla, llega un aviso con el motivo (tocalo para ver el log, `update.log` en la carpeta de logs), y la app vieja sigue andando. Mientras actualiza, la bandeja dice **Actualizando…**.
+  - El instalador corre con el mismo entorno que el server: el PATH de tu shell de login y el `node` que encontró la app (en `CONTROL_PLANE_NODE`). Así encuentra el Node de nvm, Volta o Homebrew aunque hayas abierto la app desde el lanzador. Sin eso, busca en las mismas rutas de respaldo que la app.
+- Si algo falla, llega un aviso del sistema con el motivo, aunque tengas la ventana al frente (tocalo para ver el log, `update.log` en la carpeta de logs). En el dashboard aparece además un toast con **Ver log**, que muestra lo último del log, con **Copiar log** y **Reintentar**. La app vieja sigue andando. **Reintentar** es lo único de las actualizaciones que se dispara desde la página. Navega a una URL de acción de la app con un token de un solo uso, que la app genera con cada falla y le pasa solo a su propia ventana: vuelve a intentar esa versión y nada más. Mientras actualiza, el menú del ícono dice **Actualizando…**.
+
+#### Un server más viejo que la app
+
+Si la app adopta un server de una versión anterior (el de una app vieja que se cerró dejándolo corriendo), lo compara con la suya:
+
+- **Si es de la app** y no hay sesiones trabajando, lo reinicia sola, con el mismo guardar y retomar de la actualización, y te avisa.
+- Si hay sesiones trabajando, te avisa y deja en el menú del ícono **Reiniciar el server (vA → vB)**.
+- Si no lo lanzó la app (un `npm start`), solo te avisa: reinicialo vos.
+- En el dashboard aparece un cartel si la versión del server no coincide con la de la app o la de la página. Si una función nueva (la terminal, **Cambios**) le pega a un server viejo, dice que el server es de una versión anterior en lugar de "no encontrado".
 
 ### Pantallas de error
 
-Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
+Cuando algo no anda, la ventana lo dice y ofrece qué hacer. Las pantallas usan el mismo estilo que la web (Estudio), en claro u oscuro según el sistema, con las fuentes de la web incluidas en la app: no se baja nada de afuera.
 
-- **Falta Node 24**: no hay `node` en el PATH de tu shell de login, o es viejo. El detalle dice qué versión encontró y dónde buscó. **Elegir node…** (queda guardado en los ajustes), **Reintentar** o **Descargar Node** (nodejs.org).
-- **No encontré Claude Code**: instalalo o definí `CLAUDE_BIN` en tu shell, y **Reintentar**.
+- **Falta Node 24**: no hay `node` en el PATH de tu shell de login, o es viejo. El detalle dice qué versión encontró y dónde buscó. **Elegir Node…** (queda guardado en los ajustes), **Reintentar** o **Descargar Node** (nodejs.org).
+- **No se encontró Claude Code**: **Elegir Claude Code…** (queda guardado en los ajustes, y el server y las sesiones usan ese), **Reintentar** o **Ver cómo instalarlo** (la guía de instalación). El texto trae el comando para instalarlo desde una terminal.
 - **El puerto X lo usa otro programa**: lo que escucha ahí no es un control-plane. La app no lo toca: elegí otro puerto en la misma pantalla (**Usar este puerto**, queda guardado) o cerrá ese programa y **Reintentar**.
 - **Hay un control-plane viejo en este puerto**: un server de antes de la app, sin `/api/health`. Reinicialo o actualizalo; si no, **Abrir igual**.
-- **Ya hay un server usando esta carpeta de datos**: otro control-plane usa la misma `CONTROL_PLANE_HOME` en otro puerto. **Usar ese**, o detenelo y **Reintentar**.
-- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**.
-- **El server tarda más de lo normal**: a los 30 s todavía no responde. **Esperar**, **Ver log** o **Detener**.
+- **Ya hay un server usando esta carpeta de datos**: otro control-plane usa la misma `CONTROL_PLANE_HOME` en otro puerto. **Usar ese server**, o detenelo y **Reintentar**.
+- **El server se cerró** / **El server no encontró Claude Code**: terminó al arrancar. Muestra lo último del log (40 líneas), con **Reintentar** y **Ver log**. Si fue por Claude Code, además, **Elegir Claude Code…** y **Ver cómo instalarlo**.
+- **El server tarda más de lo normal**: a los 30 s todavía no responde. **Esperar**, **Ver log** o **Detener el server**.
 - **El server se sigue cayendo**: ya lo relanzó 3 veces en 5 minutos. Mirá el log antes de reintentar.
 - **El server no responde**: está vivo pero no contesta, y la app no puede verificar que sea el suyo, así que no lo toca. Si no se recupera, detenelo a mano y **Reintentar**.
-- **El server se detuvo**: se cayó uno que no había lanzado la app. **Lanzarlo** o **Reintentar**.
-- **Aviso amarillo "No pude leer el entorno de tu shell…"**: la shell de login no respondió en 5 s o falló. La app usa las rutas de siempre (ver abajo).
+- **El server se detuvo**: se cayó uno que no había lanzado la app. **Lanzar el server** o **Reintentar**.
+- **Aviso amarillo "No se pudo leer el entorno de tu shell…"**: la shell de login no respondió en 5 s o falló. La app usa las rutas de siempre (ver abajo).
 
 ### Log y ajustes
 
-- **Log del server**: bandeja → **Ver log del server**, o **Ver log** en las pantallas de error. Pasados los 5 MB rota a `.1`.
+- **Log del server**: menú del ícono → **Ver log del server**, o **Ver log** en las pantallas de error. Pasados los 5 MB rota a `.1`.
   - Linux: `~/.local/share/app.control-plane.desktop/logs/server-<puerto>.log`
   - Mac: `~/Library/Logs/app.control-plane.desktop/server-<puerto>.log`
 - **Ajustes**: `settings.json`, en `~/.config/app.control-plane.desktop/` (Linux) o `~/Library/Application Support/app.control-plane.desktop/` (Mac). Los campos:
@@ -205,6 +222,8 @@ Cuando algo no anda, la ventana lo dice y ofrece qué hacer:
   - `notifications`: los avisos del sistema (lo mismo que **Avisos**).
   - `checkUpdates`: buscar versiones nuevas (lo mismo que **Buscar actualizaciones**). `updateNotified`: la última de la que ya avisó.
   - `nodePath`: el `node` a usar. Lo guarda **Elegir node…**.
+  - `claudePath`: el `claude` a usar (le gana a `CLAUDE_BIN`). Lo guarda **Elegir Claude Code…**.
+  - `closeHintShown`: ya mostró el aviso de la primera vez que cerrás la ventana.
   - `importEnv`: variables extra que se traen de tu shell (ver abajo).
 
 ### El entorno de tu shell
@@ -230,7 +249,7 @@ Atajos: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> para saltar a cualquier se
 
 ### Sonidos
 
-El parlante, al lado de la campana, configura los **sonidos de la bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), todos suaves, elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
+El parlante, al lado de la campana, configura los **sonidos de la Bandeja**, aparte de los avisos del sistema. Hay un sonido distinto por tipo de aviso (te necesita, resultado, bloqueado, propuestas listas, compactación y error), todos suaves, elegible entre varios y con botón para escucharlo. También hay volumen y la opción de que suenen solo si no estás mirando el dashboard. Se guardan en ese navegador, así que la PC y la Mac pueden tener los suyos. El navegador no deja sonar nada hasta que tocás la página una vez.
 
 ### Tareas para vos
 
@@ -279,6 +298,16 @@ Con un proyecto entero pasa lo mismo: **Archivar proyecto** (en su configuració
 - **Adjuntos**: con el clip, pegando (<kbd>Ctrl</kbd>+<kbd>V</kbd> de una captura) o arrastrando archivos al chat. Las imágenes Claude las ve directo; cualquier archivo queda guardado en disco y Claude recibe su ruta para abrirlo con sus herramientas. Las imágenes grandes se achican antes de subirlas. Se ven en el mensaje y en la sección **Adjuntos** del panel; las imágenes que devuelve una herramienta (capturas, imágenes leídas) aparecen en su fila.
 - **Modelo y esfuerzo**: se cambian desde el encabezado, en vivo: aplican desde el próximo turno sin reiniciar la sesión.
 - **Costo y tokens**: el encabezado muestra lo acumulado de la sesión (costo equivalente API y tokens, incluidos sus subagentes y todas las veces que se reanudó), el panel el desglose (entrada, salida, caché) y cada separador de turno los tokens de ese turno. El tablero suma los totales del proyecto. Una sesión importada trae lo que la conversación ya había gastado antes.
+
+### La terminal
+
+Cada sesión tiene su terminal, al pie del chat: se abre y se esconde con el botón del encabezado o con <kbd>Ctrl</kbd>+<kbd>`</kbd>. Es tu shell de login (la de `$SHELL`, con tu entorno), en la carpeta de la sesión. <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>Z</kbd> y el resto de las teclas son de la shell; para copiar y pegar, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> y <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> (o <kbd>Shift</kbd>+<kbd>Insert</kbd>), y en la Mac <kbd>⌘</kbd>+<kbd>C</kbd> y <kbd>⌘</kbd>+<kbd>V</kbd>. Un archivo que soltás sobre la terminal se adjunta al mensaje, como en el resto del chat.
+
+- **Sigue viva** al cambiar de sesión o recargar la página: al volver ves lo último que mostró. Se cierra con la ✕, al archivar la sesión, al apagar el server o después de una hora sin ninguna pestaña mirándola. Cerrarla corta la shell y todo lo que lanzó.
+- **Llevar a la terminal**: los bloques de código de shell en el chat (`bash`, `sh`, `zsh`, `console`, o los que empiezan con `$ `) y los comandos entre backticks de las tareas para vos tienen un botón que abre la terminal y pega el comando **sin Enter**: lo revisás y lo corrés vos. Desde una tarea va a la terminal de la sesión que la pidió (o a la de la orquestadora, si la creaste vos).
+- **Valores para completar**: si un comando dice `{{PROYECTO_GCP: el id de tu proyecto}}`, antes de pegarlo te pide ese valor (y lo recuerda para el proyecto). Con `{{NOMBRE: qué es = valor}}` viene un valor sugerido. El valor se escribe citado para que la shell lo lea como texto: espacios, comillas o `$(…)` no rompen el comando ni ejecutan nada. Las sesiones saben usar esta sintaxis.
+- **Seguridad**: la terminal es del server, no de la pestaña ni de la app de escritorio. Solo se abre con un `POST` desde el propio dashboard (Origin y Host de esta máquina, JSON) que devuelve un token, y el WebSocket exige el mismo Origin y ese token. Una página de otro sitio en tu navegador no puede abrirla ni conectarse.
+- No suma dependencias nativas: el PTY lo abre `script(1)`, que viene con Linux (util-linux) y con macOS.
 
 ### Compactación: elegí qué sobrevive
 
@@ -399,9 +428,9 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
    claude (worker) ◄── SendMessage ──► claude (worker)     claude (orquestadora)
 ```
 
-- Cada sesión es `claude -p --input-format stream-json --output-format stream-json` con `--dangerously-skip-permissions`, `--name`, `--append-system-prompt` (el protocolo) y `--mcp-config` (el MCP local). Es un proceso largo que recibe mensajes por stdin, igual que una sesión interactiva.
+- Cada sesión es `claude -p --input-format stream-json --output-format stream-json` con `--dangerously-skip-permissions`, `--name`, `--append-system-prompt` (el protocolo) y `--mcp-config` (el MCP local). La config del MCP y los settings (con el token de la sesión) van como archivos 0600 en `CONTROL_PLANE_HOME/run/<sesión>/`, no en la línea de comandos, para que otros usuarios de la máquina no los vean con `ps`; se borran cuando la sesión termina. Es un proceso largo que recibe mensajes por stdin, igual que una sesión interactiva.
 - **Protocolo**: al arrancar, cada sesión recibe su rol, quiénes son las otras y las reglas (coordinar con `SendMessage` antes de tocar algo compartido, no pisar el checkout, reportar al terminar). Se arma en `server/src/prompts.ts` y se puede ampliar por proyecto en su configuración.
-- **Herramientas MCP de control-plane**: `list_sessions` (todas, con el contexto que usa cada una); `create_user_task`, `list_user_tasks` y `update_user_task` (todas, para las tareas para vos); `list_clis` (todas); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora). Las propuestas aceptan `subagents` para pedir subagentes específicos y `fresh` para empezar de cero.
+- **Herramientas MCP de control-plane**: `list_sessions` (todas, con el contexto que usa cada una); `create_user_task`, `list_user_tasks` y `update_user_task` (todas, para las tareas para vos); `list_clis` (todas); `report_result` (workers); `propose_prompt`, `propose_session`, `update_proposal`, `discard_proposal`, `list_proposals` y `read_results` (orquestadora, que también trae los mensajes de otros proyectos); `list_projects` y `message_project` (solo orquestadoras: el único canal entre proyectos; el mensaje queda registrado, le llega a la orquestadora destino como un resultado más y hay un límite de 10 por hora y por sentido entre dos proyectos). Las propuestas aceptan `subagents` para pedir subagentes específicos y `fresh` para empezar de cero.
 - **Adjuntos**: se guardan en `~/.control-plane/attachments/<sesión>/` y se sirven solo a esta máquina.
 - **Compactación**: cada sesión se lanza con hooks `PreCompact` y `PostCompact` (en `--settings`, se suman a los tuyos) que llaman al server. La salida de `PreCompact` es, para Claude Code, instrucciones extra del resumen: así viaja tu selección, y en modo "esperarme" el hook no responde hasta que elegís. El borrador se pide con `side_question` (lo mismo que `/btw`); si la sesión ya está compactando, se lee la conversación en una copia que no se guarda (`--resume --fork-session --no-session-persistence`).
 - **Herramientas**: se leen de una sesión abierta en esa carpeta (`mcp_status`, `get_context_usage`) o, si no hay, de un Claude Code sin conversación que carga la config, conecta los MCP y se cierra (no guarda nada ni corre tus hooks). Los cambios los hace Claude Code: `claude plugin`, `claude mcp`, `mcp_toggle` y `skillOverrides` en los settings.
@@ -409,7 +438,7 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
 - **Costo**: Claude Code guarda en el transcript el costo acumulado de cada conversación (entradas `cost-state`) y al reanudarla sigue sumando desde ahí; `/clear` lo vuelve a cero. El dashboard lee esa base antes de lanzar cada proceso y suma solo lo nuevo, así no cuenta nada dos veces.
 - **Conversaciones abiertas en otro lado**: antes de reanudar una sesión, el server mira las sesiones vivas de Claude Code de esa cuenta (`claude agents`). Si la conversación está abierta en una terminal o en segundo plano, no lanza otro proceso y lo muestra en la sesión.
 - **Skills con IA**: `claude -p` sin herramientas (o con `Read`, `Grep` y `Glob` sobre el repo), sin MCP, sin hooks y con `--no-session-persistence`. La búsqueda pide la respuesta con `--json-schema`.
-- **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una.
+- **Coordinación entre workers**: la mensajería nativa de Claude Code (`SendMessage`/`ListAgents`). Los mensajes entre sesiones se ven en el chat de cada una. Solo dentro del proyecto: un hook `PreToolUse` en cada sesión consulta al server (`server/src/send-guard.ts`) y bloquea el mensaje a una sesión de otro proyecto o de afuera del dashboard, también con `--dangerously-skip-permissions`. Entre proyectos, solo las orquestadoras, con `message_project`.
 - **La orquestadora no edita archivos** por defecto (se lanza sin `Edit`/`Write`); lo podés habilitar por proyecto.
 - **Mismo checkout** por defecto, como cuando trabajás con terminales. Al crear una sesión podés marcar **Worktree aparte** para que trabaje en su propia rama.
 
@@ -423,7 +452,7 @@ Variables de entorno (opcionales):
 | --- | --- | --- |
 | `CONTROL_PLANE_PORT` | `4700` | Puerto del server |
 | `CONTROL_PLANE_HOST` | `127.0.0.1` | Interfaz donde escucha (dejalo en localhost) |
-| `CONTROL_PLANE_HOME` | `~/.control-plane` | Base de datos local |
+| `CONTROL_PLANE_HOME` | `~/.control-plane` | Base de datos local y `run/` (archivos de lanzamiento de las sesiones) |
 | `CONTROL_PLANE_WEB_DIST` | `web/dist` | La web compilada que sirve el server (para probar otra build sin tocar la tuya) |
 | `CLAUDE_BIN` | `claude` | Binario de Claude Code (para las cuentas sin comando propio) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |
@@ -446,7 +475,7 @@ El estado del dashboard es local de cada máquina: el repo solo tiene el código
 - **Puerto ocupado**: `CONTROL_PLANE_PORT=4800 npm start`.
 - **"Ya hay un control-plane usando esta carpeta de datos"**: cada server toma `server.lock` en `CONTROL_PLANE_HOME` para que no haya dos sobre la misma base. Detené el otro (el mensaje dice su puerto y su pid) o usá otra carpeta. Si el server anterior se cortó de golpe, el lock viejo se toma solo.
 - **Los avisos del sistema no aparecen**: tocá la campana (abajo en la barra lateral). Ahí ves si el navegador los permite, los prendés o apagás y mandás uno de prueba. Si están bloqueados, se habilitan desde el ícono a la izquierda de la dirección → Notificaciones → Permitir. Si igual no llegan, revisá que tu navegador tenga permiso en los ajustes de notificaciones del sistema. Solo aparecen cuando no estás mirando el dashboard (si no, ves el aviso adentro).
-- **La app de escritorio muestra una pantalla de error**: cada una dice qué pasó y qué hacer; están todas en [Pantallas de error](#pantallas-de-error). El log del server está en bandeja → Ver log del server.
+- **La app de escritorio muestra una pantalla de error**: cada una dice qué pasó y qué hacer; están todas en [Pantallas de error](#pantallas-de-error). El log del server está en el menú del ícono → Ver log del server.
 - **`npm ci` falla o se saltea las devDependencies en una terminal abierta desde el dashboard**: las sesiones que lanza el dashboard heredan `NODE_ENV=production` y `npm_config_allow_scripts` del `npm start`. Instalá con `env -u NODE_ENV -u npm_config_allow_scripts npm ci`.
 - **Una cuenta figura "Sin login" pero en la terminal anda**: el directorio tiene que ser exactamente el que usa tu comando. `alias claude-personal` (o `type claude-personal`) te muestra cuál es.
 
@@ -469,15 +498,15 @@ server/   Node 24 + Fastify: procesos claude, cola, MCP, API y WebSocket
   src/prompts.ts        protocolo de orquestadora y workers
   src/http.ts           chequeo de host/origen, /api/health y /ws
   src/lock.ts           lock de la carpeta de datos (un server por base)
-  src/desktop.ts        resumen para la bandeja de la app de escritorio
+  src/desktop.ts        resumen para el ícono de la app de escritorio
 web/      Vite + React + Tailwind + shadcn/ui
-desktop/  Tauri v2: ventana, sidecar del server, bandeja y avisos
+desktop/  Tauri v2: ventana, sidecar del server, ícono de la barra y avisos
   ui/                   pantallas locales (cargando y errores)
   src-tauri/src/window.rs, screen.rs     ventana, puerto y pantallas
   src-tauri/src/sidecar.rs, policy.rs    lanzar, adoptar, supervisar y detener el server
   src-tauri/src/health.rs, server_state.rs, server_log.rs  reconocer el server, su estado y su log
   src-tauri/src/login_env.rs, launch_env.rs, node.rs      entorno de la shell de login, node y claude
-  src-tauri/src/desktop_ws.rs, tray.rs, notify.rs         WS de escritorio, bandeja y avisos nativos
+  src-tauri/src/desktop_ws.rs, tray.rs, notify.rs         WS de escritorio, ícono de la barra y avisos nativos
   src-tauri/src/startup.rs, settings.rs  instancia única, inicio automático y ajustes
   src-tauri/src/app_menu.rs, macos.rs    menú y apagado del sistema en la Mac
 ```

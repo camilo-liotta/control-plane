@@ -146,6 +146,7 @@ pub fn create_main<R: Runtime>(
     on_action: impl Fn(screen::Request) + Send + Sync + 'static,
 ) -> tauri::Result<WebviewWindow<R>> {
     let first = Screen::loading().url(&token);
+    let handle = app.clone();
     let start = WebviewUrl::App(format!("index.html?{}", first.query().unwrap_or_default()).into());
 
     WebviewWindowBuilder::new(app, MAIN, start)
@@ -166,6 +167,11 @@ pub fn create_main<R: Runtime>(
             if screen::is_action_url(url) {
                 if let Some(req) = screen::parse_action(url, &token) {
                     on_action(req);
+                } else if let Some(t) = crate::update::retry_token(url) {
+                    // "Reintentar" en "No se pudo actualizar" de la web (con su propio token).
+                    if let Some(u) = handle.try_state::<crate::update::Updater>() {
+                        u.retry(&t);
+                    }
                 }
                 return false;
             }
@@ -229,6 +235,75 @@ pub fn show_main_with<R: Runtime>(app: &AppHandle<R>, _token: Option<&str>) {
         let _ = w.show();
         let _ = w.set_focus();
     }
+}
+
+/// Cerrar la ventana: con el ícono a la vista, se esconde (la primera vez, con un aviso de dónde
+/// quedó la app); sin ícono (GNOME sin extensión de bandeja) no habría cómo volver ni cómo salir,
+/// así que es salir, con la decisión de "Al salir".
+pub fn close_main<R: Runtime>(app: &AppHandle<R>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let mac = cfg!(target_os = "macos");
+    match crate::policy::close_action(mac || tray_visible()) {
+        crate::policy::Close::Quit => {
+            eprintln!("Cerraron la ventana y no hay ícono en la barra: salgo.");
+            if let Some(s) = app.try_state::<crate::sidecar::Sidecar>() {
+                s.quit_from_close();
+            }
+            app.exit(0);
+        }
+        crate::policy::Close::Hide => {
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let _ = w.hide();
+            }
+            let state = app.state::<crate::AppState>();
+            if !state.settings().close_hint_shown {
+                state.update_settings(|s| s.close_hint_shown = true);
+                app.dialog()
+                    .message(crate::policy::close_hint(mac))
+                    .title("control-plane sigue abierta")
+                    .kind(MessageDialogKind::Info)
+                    .buttons(MessageDialogButtons::OkCustom("Entendido".into()))
+                    .show(|_| {});
+            }
+        }
+    }
+}
+
+/// ¿Se ve el ícono de la app en la barra? En Linux, si hay quien muestre los íconos de
+/// StatusNotifier (en GNOME, la extensión AppIndicator). Sin bus o sin respuesta a tiempo, se
+/// supone que sí (lo de siempre: esconder la ventana).
+pub fn tray_visible() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(status_notifier_host());
+        });
+        match rx.recv_timeout(std::time::Duration::from_millis(800)) {
+            Ok(Some(visible)) => visible,
+            _ => true,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
+/// `Some(false)`: no hay `StatusNotifierWatcher`, o no tiene un host que muestre los íconos.
+/// `None`: no se pudo saber.
+#[cfg(target_os = "linux")]
+fn status_notifier_host() -> Option<bool> {
+    const WATCHER: &str = "org.kde.StatusNotifierWatcher";
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let dbus = zbus::blocking::fdo::DBusProxy::new(&conn).ok()?;
+    let name = zbus::names::BusName::try_from(WATCHER).ok()?;
+    if !dbus.name_has_owner(name).ok()? {
+        return Some(false);
+    }
+    let watcher =
+        zbus::blocking::Proxy::new(&conn, WATCHER, "/StatusNotifierWatcher", WATCHER).ok()?;
+    watcher
+        .get_property::<bool>("IsStatusNotifierHostRegistered")
+        .ok()
 }
 
 /// Una ruta interna del dashboard (`/p/<id>`, `/p/<id>/s/<id>`); nada de URLs ni `//host`.

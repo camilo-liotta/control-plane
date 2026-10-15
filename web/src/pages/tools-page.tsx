@@ -1,7 +1,6 @@
 import { Blocks, RefreshCw } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import { toast } from "sonner"
-import { useLocation } from "wouter"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useLocation, useSearch } from "wouter"
 
 import type { ToolsView } from "@shared/types"
 
@@ -12,6 +11,7 @@ import { PluginSection } from "@/components/tools/plugin-section"
 import { SkillSection } from "@/components/tools/skill-section"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -21,32 +21,78 @@ import { useAccounts, useCurrentAccount, useProjects, useStore } from "@/lib/sto
 
 const ACCOUNT = "__account"
 
-/** Carga lo que tiene Claude Code (cuenta o proyecto) y lo recarga después de cada cambio. */
+const CACHE_PREFIX = "control-plane:tools:"
+const memory = new Map<string, ToolsView>()
+
+/** Lo último que se supo de una cuenta o un proyecto: en memoria y, entre recargas, en localStorage. */
+function cached(key: string): ToolsView | null {
+  const hit = memory.get(key)
+  if (hit) return hit
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key)
+    return raw ? (JSON.parse(raw) as ToolsView) : null
+  } catch {
+    return null
+  }
+}
+
+function remember(key: string, view: ToolsView) {
+  memory.set(key, view)
+  try {
+    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(view))
+  } catch {
+    // sin lugar o sin almacenamiento local: queda en memoria
+  }
+}
+
+/**
+ * Carga lo que tiene Claude Code (cuenta o proyecto) y lo recarga después de cada cambio. Mientras
+ * consulta, muestra lo último que se supo (`loading` dice que se está actualizando); si falla, el
+ * error convive con lo anterior.
+ */
 export function useToolsView(accountId: string | null, projectId: string | null) {
-  const [view, setView] = useState<ToolsView | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const key = `${accountId}:${projectId ?? ""}`
+  // El estado lleva su key: al cambiar de cuenta o proyecto nunca se pinta lo del anterior.
+  const [state, setState] = useState<{ key: string; view: ToolsView | null; loading: boolean; error: string | null }>({
+    key: "",
+    view: null,
+    loading: false,
+    error: null,
+  })
+  const current = useRef(key)
+  current.current = key
   const load = useCallback(
     async (refresh = false) => {
       if (!accountId) return
-      setLoading(true)
-      setError(null)
+      const asked = key
+      setState((s) => ({ key: asked, view: s.key === asked ? s.view : cached(asked), loading: true, error: null }))
       try {
-        setView(await api.tools(accountId, projectId, refresh))
+        const fresh = await api.tools(accountId, projectId, refresh)
+        remember(asked, fresh)
+        // Una respuesta que llega tarde (ya cambiaste de proyecto) solo se guarda: no pisa lo que ves.
+        if (current.current === asked) setState({ key: asked, view: fresh, loading: false, error: null })
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      } finally {
-        setLoading(false)
+        if (current.current === asked)
+          setState((s) => ({ ...s, loading: false, error: err instanceof Error ? err.message : String(err) }))
       }
     },
-    [accountId, projectId]
+    [accountId, projectId, key]
   )
   useEffect(() => {
-    setView(null)
     void load()
   }, [load])
-  return { view, loading, error, reload: () => load(true) }
+  const mine = state.key === key
+  return {
+    view: mine ? state.view : accountId ? cached(key) : null,
+    loading: mine ? state.loading : Boolean(accountId),
+    error: mine ? state.error : null,
+    reload: () => load(true),
+  }
 }
+
+/** Las pestañas: se pueden abrir directo con ?tab=clis (o mcp, plugins, skills). */
+const TABS = ["mcp", "plugins", "skills", "clis"] as const
+type Tab = (typeof TABS)[number]
 
 function viaText(view: ToolsView) {
   return view.via.kind === "session" ? `leído de la sesión ${view.via.name}` : "consultado a Claude Code"
@@ -61,17 +107,19 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
   const account = project ? (accounts.find((a) => a.id === project.accountId) ?? accounts.find((a) => a.isDefault) ?? current) : current
   const projects = useProjects(account)
   const { view, loading, error, reload } = useToolsView(account?.id ?? null, projectId)
-  const [tab, setTab] = useState("mcp")
+  const search = useSearch()
+  const asked = new URLSearchParams(search).get("tab")
+  const tab: Tab = TABS.includes(asked as Tab) ? (asked as Tab) : "mcp"
+  const base = projectId ? `/p/${projectId}/tools` : "/tools"
+  const setTab = (t: string) => navigate(t === "mcp" ? base : `${base}?tab=${t}`, { replace: true })
 
-  const refresh = () =>
-    reload().catch((err: Error) => {
-      toast.error(err.message)
-    })
+  // Si falla, el error se ve arriba (LoadError) y lo anterior queda abajo.
+  const refresh = () => reload()
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        leading={<Blocks className="size-4.5 shrink-0" />}
+        leading={<Blocks className="hidden size-4.5 shrink-0 sm:block" />}
         title="Herramientas"
         subtitle={
           <>
@@ -81,20 +129,23 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
         }
         actions={
           <>
-            <Select value={projectId ?? ACCOUNT} onValueChange={(v) => navigate(v === ACCOUNT ? "/tools" : `/p/${v}/tools`)}>
-              <SelectTrigger size="sm" className="w-52 text-xs">
+            <Select
+              value={projectId ?? ACCOUNT}
+              onValueChange={(v) => navigate(`${v === ACCOUNT ? "/tools" : `/p/${v}/tools`}${tab === "mcp" ? "" : `?tab=${tab}`}`)}
+            >
+              <SelectTrigger size="sm" className="w-36 text-xs sm:w-52" aria-label="De qué ver las herramientas">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ACCOUNT}>Toda la cuenta</SelectItem>
                 {projects.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
-                    Proyecto {p.name}
+                    {p.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
+            <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading} aria-label="Actualizar">
               {loading ? <Spinner /> : <RefreshCw />}
               <span className="hidden sm:inline">Actualizar</span>
             </Button>
@@ -102,24 +153,40 @@ export function ToolsPage({ projectId = null }: { projectId?: string | null }) {
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-4 py-6">
+        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
           <p className="mb-5 text-sm text-muted-foreground">
             {project
-              ? `Lo que usa Claude Code en ${project.name} (${project.repoPath}): lo de tu cuenta más lo propio del proyecto.`
+              ? <>
+                  Lo que usa Claude Code en <span title={project.repoPath}>{project.name}</span>: lo de tu cuenta más lo propio del
+                  proyecto.
+                </>
               : "Lo que tiene tu cuenta de Claude Code en todos los proyectos. Elegí un proyecto para ver y ajustar lo que aplica en él."}
           </p>
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="mb-5">
-              <TabsTrigger value="mcp">MCP{view ? ` · ${view.mcp.filter((s) => !s.internal).length}` : ""}</TabsTrigger>
-              <TabsTrigger value="plugins">Plugins{view ? ` · ${view.plugins.length}` : ""}</TabsTrigger>
-              <TabsTrigger value="skills">Skills{view ? ` · ${view.skills.length}` : ""}</TabsTrigger>
-              <TabsTrigger value="clis">CLIs</TabsTrigger>
-            </TabsList>
+            <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <TabsList className="max-w-full overflow-x-auto">
+                <TabsTrigger value="mcp">MCP{view ? ` · ${view.mcp.filter((s) => !s.internal).length}` : ""}</TabsTrigger>
+                <TabsTrigger value="plugins">Plugins{view ? ` · ${view.plugins.length}` : ""}</TabsTrigger>
+                <TabsTrigger value="skills">Skills{view ? ` · ${view.skills.length}` : ""}</TabsTrigger>
+                <TabsTrigger value="clis">CLIs</TabsTrigger>
+              </TabsList>
+              {/* Mientras consulta, se ve lo último que se supo con esta marca. La zona viva queda siempre montada. */}
+              <span role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground empty:hidden">
+                {tab !== "clis" && loading && view && (
+                  <>
+                    <Spinner className="size-3.5" />
+                    Actualizando…
+                  </>
+                )}
+              </span>
+            </div>
             {tab !== "clis" && error && (
-              <div className="mb-4 rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-sm">
-                <p className="font-medium">No pude leer las herramientas</p>
-                <p className="text-muted-foreground">{error}</p>
-              </div>
+              <LoadError
+                what="las herramientas"
+                error={view ? `${error} · Lo de abajo es de ${timeAgo(view.at)}.` : error}
+                onRetry={refresh}
+                className="mb-4"
+              />
             )}
             {tab !== "clis" && !view && !error && (
               <div className="space-y-3">

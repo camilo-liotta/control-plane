@@ -11,6 +11,7 @@ import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { CompactMode, TimelineEvent } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 describe("un mensaje que no entra porque el contexto está lleno", () => {
   let dir: string
@@ -28,6 +29,7 @@ describe("un mensaje que no entra porque el contexto está lleno", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
@@ -67,7 +69,7 @@ describe("un mensaje que no entra porque el contexto está lleno", () => {
       await until(() => texts().some((t) => t.startsWith("respuesta a: ## TAREA 1")), "la respuesta al reenvío")
       assert.ok(notices().some((t) => t.startsWith("El contexto se llenó")), "avisa qué pasó")
       assert.ok(events().some((e) => e.kind === "compact"), "compactó")
-      assert.ok(notices().includes("Reenvié el mensaje que no había entrado."))
+      assert.ok(notices().includes("Mensaje reenviado: antes no había entrado."))
       // En el chat el mensaje aparece una vez: el reenvío se ve como aviso.
       assert.equal(events().filter((e) => e.kind === "user").length, 1)
       const ends = events().filter((e) => e.kind === "turn_end")

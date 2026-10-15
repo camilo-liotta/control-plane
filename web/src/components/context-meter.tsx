@@ -10,6 +10,7 @@ import { tokens } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
+import { failed } from "@/lib/errors"
 
 export const COMPACT_MODES: Record<CompactMode, { label: string; description: string }> = {
   auto: { label: "Claude decide", description: "Compacta sola, como siempre, sin avisarte." },
@@ -24,7 +25,7 @@ export function contextLevel(ctx: NonNullable<Session["context"]>) {
   return ctx.tokens / Math.min(ctx.threshold ?? ctx.max, ctx.max)
 }
 
-function Ring({ value, className }: { value: number; className?: string }) {
+export function Ring({ value, className }: { value: number; className?: string }) {
   const r = 6
   const c = 2 * Math.PI * r
   return (
@@ -62,14 +63,14 @@ export function ContextMeter({ session }: { session: Session }) {
       await api.compactionDirect(session.id)
       toast.success("Compactando", { description: "Claude arma el resumen como siempre." })
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      failed("compactar")(err)
     }
   }
 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="ghost" className={cn("gap-1.5 px-2 font-mono text-xs", tone)} aria-label={`Contexto: ${pct}%`}>
+        <Button size="sm" variant="ghost" className={cn("gap-1.5 px-2 text-xs", tone)} aria-label={`Contexto: ${pct} % usado`} title="Contexto">
           <Ring value={ctx.tokens / ctx.max} className={waiting ? "animate-pulse" : undefined} />
           {pct}%
         </Button>
@@ -77,7 +78,7 @@ export function ContextMeter({ session }: { session: Session }) {
       <PopoverContent align="end" className="w-80 gap-3 p-3.5">
         <div className="flex items-baseline justify-between gap-2">
           <p className="text-sm font-medium">Contexto</p>
-          <p className="font-mono text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {tokens(ctx.tokens)} de {tokens(ctx.max)} · {pct}%
           </p>
         </div>
@@ -96,9 +97,11 @@ export function ContextMeter({ session }: { session: Session }) {
             {ctx.categories.map((c, i) => (
               <li key={c.name} className="flex items-center gap-2">
                 <span className={cn("size-2 rounded-full", SEGMENTS[i % SEGMENTS.length])} />
-                <span className="flex-1 truncate text-muted-foreground">{c.name}</span>
-                <span className="font-mono">{tokens(c.tokens)}</span>
-                <span className="w-9 text-right font-mono text-muted-foreground">{Math.round((c.tokens / used) * 100)}%</span>
+                <span className="flex-1 truncate text-muted-foreground" title={c.name}>
+                  {c.name}
+                </span>
+                <span>{tokens(c.tokens)}</span>
+                <span className="w-9 text-right text-muted-foreground">{Math.round((c.tokens / used) * 100)}%</span>
               </li>
             ))}
           </ul>

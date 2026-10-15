@@ -18,8 +18,6 @@ export type TaskState =
   | "reported_partial"
 
 export interface ProjectSettings {
-  /** Enviar automáticamente los prompts propuestos cuando la revisión termina. */
-  autoDispatch: boolean
   /** Ventana (segundos) para agrupar resultados que llegan casi juntos. */
   batchWindowSec: number
   /** Si la orquestadora puede editar archivos (por defecto no). */
@@ -30,6 +28,10 @@ export interface ProjectSettings {
   orchestratorInstructions: string
   defaultModel: string | null
   defaultEffort: string | null
+  /** Modelo de los workers que no tienen uno propio (null = igual que defaultModel). La orquestadora usa defaultModel. */
+  workerModel: string | null
+  /** Esfuerzo de los workers que no tienen uno propio (null = igual que defaultEffort). */
+  workerEffort: string | null
   /** Qué pasa cuando Claude Code va a compactar solo. */
   compactMode: CompactMode
   /** Modo "esperarme": cuántos minutos espera tu elección antes de compactar solo. */
@@ -98,11 +100,28 @@ export interface ReviewState {
   deliverAt: number | null
 }
 
+/**
+ * Modo AFK (away from keyboard): mientras dura, lo que propone la orquestadora sale sin esperar tu aprobación
+ * (salvo lo que marque con `hold`). Termina cuando lo apagás, cuando vence `until` o cuando se gasta `budgetUsd`.
+ */
+export interface AfkState {
+  /** Cuándo empezó. */
+  since: number
+  /** Cuándo termina solo (null = sin límite de tiempo). */
+  until: number | null
+  /** Cuánto se puede gastar en el proyecto desde `since` (US$; null = sin límite). */
+  budgetUsd: number | null
+  /** Lo que llevaba gastado el proyecto (suma del costUsd de sus sesiones) al entrar: lo gastado en AFK es la diferencia. */
+  spentAtStart: number
+}
+
 export interface Project {
   id: string
   name: string
   repoPath: string
   settings: ProjectSettings
+  /** null = estás presente. */
+  afk: AfkState | null
   accountId: string | null
   createdAt: number
   archivedAt: number | null
@@ -144,6 +163,8 @@ export interface Session {
   lastActivity: string | null
   lastActivityAt: number | null
   costUsd: number
+  /** Lo gastado por cada modelo (US$ por id resuelto, ej. claude-sonnet-5-5), incluidos los subagentes. */
+  costByModel: Record<string, number>
   createdAt: number
   archivedAt: number | null
   pending: PendingRequest | null
@@ -163,6 +184,8 @@ export interface Session {
   context: ContextUsage | null
   /** La conversación está abierta fuera del dashboard (en una terminal o en segundo plano). */
   external: ExternalSession | null
+  /** Lo que programó para más tarde (crons, wakeups de /loop, rutinas): lo activo y lo reciente. */
+  scheduled: ScheduledItem[]
 }
 
 export interface RepoInfo {
@@ -192,6 +215,8 @@ export interface ProjectOverview {
   /** Todo lo que gastaron las sesiones del proyecto, incluidas las archivadas. */
   tokens: TokenUsage
   costUsd: number
+  /** Lo mismo, por modelo (id resuelto → US$): la suma del `costByModel` de cada sesión. */
+  costByModel: Record<string, number>
   sessions: number
   lastActivity: { sessionId: string; name: string; kind: SessionKind; at: number; text: string | null } | null
   at: number
@@ -235,6 +260,42 @@ export interface EditorSettings {
   kind: EditorKind
   /** Comando propio: `{file}`, `{base}` (la versión anterior) y `{dir}` se reemplazan. */
   command: string
+}
+
+import type { CancelRequest } from "./cancel-scheduled.ts"
+
+/**
+ * Algo que una sesión programó para más tarde: un cron (`CronCreate`), un "despertame" de `/loop`
+ * (`ScheduleWakeup`) o una rutina en la nube (`RemoteTrigger`, no corre en esta máquina).
+ */
+export interface ScheduledItem {
+  /** El id del job de Claude Code (o el del tool_use, en los wakeups). */
+  id: string
+  kind: "cron" | "wakeup" | "routine"
+  cron: string | null
+  /** Cuándo corre, en palabras ("todos los días a las 9:00"). */
+  when: string
+  prompt: string
+  /** El motivo de un wakeup de `/loop`. */
+  reason: string | null
+  recurring: boolean
+  /** Persistido en `.claude/scheduled_tasks.json`: sobrevive a que se cierre la sesión. */
+  durable: boolean
+  createdAt: number
+  /** Próxima ejecución (hora de esta máquina); null si ya no va a correr o no se sabe. */
+  nextAt: number | null
+  lastFiredAt: number | null
+  fires: number
+  /**
+   * active: va a correr · done: ya corrió (una vez) · cancelled: la borró (CronDelete) ·
+   * expired: recurrente con más de 7 días · lost: era de la sesión y el proceso terminó ·
+   * missed: le llegó la hora sin que corriera.
+   */
+  status: "active" | "done" | "cancelled" | "expired" | "lost" | "missed"
+  /** Activa pero frenada: la sesión está detenida y no corre hasta que vuelva a arrancar. */
+  paused: boolean
+  /** Se le pidió a la sesión que la cancele (desde el panel) y todavía no lo hizo. */
+  cancelRequest: CancelRequest | null
 }
 
 export interface TurnProgress {
@@ -493,7 +554,30 @@ export interface SubagentUsage {
   durationMs: number
 }
 
-export type DraftKind = "prompt" | "session"
+export type DraftKind = "prompt" | "session" | "plan"
+
+/** En qué anda un plan aprobado. null mientras no se aprobó (o si la propuesta no es un plan). */
+export type PlanState = "running" | "paused" | "done" | "cancelled"
+
+export type PlanStepState = "pending" | "running" | "done" | "blocked" | "partial" | "skipped"
+
+/** Un paso de un plan: su prompt y con qué modelo, esfuerzo y contexto sale. */
+export interface PlanStep {
+  title: string
+  prompt: string
+  /** null = la sesión sigue con el modelo que tiene. */
+  model: string | null
+  effort: string | null
+  /** La sesión empieza de cero (/clear) antes de este paso; recibe lo que reportó el paso anterior. */
+  fresh: boolean
+  subagents: SubagentSpec[]
+  state: PlanStepState
+  startedAt: number | null
+  endedAt: number | null
+  /** Lo que reportó el worker en este paso (el último report_result). */
+  summary: string | null
+  details: string | null
+}
 
 export type DraftState =
   | "staged" // en preparación: la orquestadora está revisando, no se puede enviar
@@ -519,6 +603,74 @@ export interface Draft {
   subagents: SubagentSpec[]
   /** La sesión empieza de cero (/clear) antes de este prompt. */
   fresh: boolean
+  /** Modelo y esfuerzo con que sale (prompt o sesión nueva). null = la sesión sigue con el que tiene. En un plan, van por paso. */
+  model: string | null
+  effort: string | null
+  /** Los pasos, si es un plan ([] si no). En un plan, `prompt` queda vacío. */
+  steps: PlanStep[]
+  planState: PlanState | null
+  /** Índice (desde 0) del paso en curso, o del último que corrió. */
+  currentStep: number | null
+  /** Por qué el plan está pausado o cómo terminó, en una línea (null si sigue sin novedades). */
+  planNote: string | null
+  /**
+   * Si esta propuesta cambia los pasos de un plan ya aprobado: el id de ese plan. Trae todos los pasos
+   * (los ya hechos, tal cual) y, al aprobarla, el plan original sigue con los pasos nuevos.
+   */
+  revises: string | null
+  /** La orquestadora pidió que la apruebes vos aunque estés AFK. */
+  hold: boolean
+  /** Quién la aprobó: vos ("user") o el modo AFK ("afk"). null mientras no se envió. */
+  sentBy: "user" | "afk" | null
+}
+
+export type AfkEndReason = "user" | "until" | "budget"
+
+/** Una propuesta que pasó por un período AFK. */
+export interface AfkLogDraft {
+  id: string
+  kind: DraftKind
+  title: string
+  state: DraftState
+  hold: boolean
+  sentBy: Draft["sentBy"]
+  /** Sesión destino (la nueva, si se creó). */
+  sessionId: string | null
+  sessionName: string | null
+  /** true si al enviarse creó una sesión (propose_session, o un plan con newSession). */
+  createdSession: boolean
+  /** Cuándo se envió (null si no se envió). */
+  sentAt: number | null
+}
+
+export interface AfkLogResult {
+  id: string
+  sessionName: string
+  taskTitle: string | null
+  status: ReportStatus
+  summary: string
+  createdAt: number
+}
+
+/** Lo que pasó en un período AFK (el actual, o el último que hubo): para "Mientras estabas AFK". */
+export interface AfkLog {
+  projectId: string
+  since: number
+  /** Hasta cuándo se había pedido (null = sin límite). */
+  until: number | null
+  budgetUsd: number | null
+  /** null = el período sigue en curso. */
+  endedAt: number | null
+  endReason: AfkEndReason | null
+  /** Lo gastado en el proyecto durante el período (US$) y por modelo (si se conoce). */
+  spentUsd: number
+  costByModel: Record<string, number>
+  /** Lo que salió solo (sentBy = "afk"), en orden. */
+  sent: AfkLogDraft[]
+  /** Lo que la orquestadora marcó con hold en el período: esperó o espera tu aprobación. */
+  held: AfkLogDraft[]
+  /** Los resultados de los workers que llegaron en el período. */
+  results: AfkLogResult[]
 }
 
 export type ReportStatus = "done" | "blocked" | "partial"
@@ -540,6 +692,33 @@ export interface Report {
   reviewedAt: number | null
 }
 
+/** Un mensaje de la orquestadora de un proyecto a la de otro (por message_project). */
+export interface ProjectMessage {
+  id: string
+  fromProjectId: string
+  fromProjectName: string
+  toProjectId: string
+  toProjectName: string
+  fromSessionId: string
+  /** La orquestadora destino al entregarse (null mientras espera en la cola). */
+  toSessionId: string | null
+  text: string
+  /** El id del mensaje que contesta, para armar la conversación. */
+  replyTo: string | null
+  createdAt: number
+  /** null = todavía en la cola de la orquestadora destino. */
+  deliveredAt: number | null
+}
+
+/** Lo que el lote le muestra a la web de cada mensaje ajeno. */
+export interface BatchProjectMessage {
+  id: string
+  fromProjectId: string
+  fromProjectName: string
+  text: string
+  replyTo: string | null
+}
+
 export type UserOrigin = "user" | "draft" | "control" | "external"
 
 export type TimelineEvent =
@@ -555,6 +734,8 @@ export type TimelineEvent =
       attachments?: AttachmentRef[]
       /** Subagentes que pidió la orquestadora en esta propuesta (el texto enviado incluye sus instrucciones). */
       subagents?: SubagentSpec[]
+      /** Si es un paso de un plan: step es el índice (desde 0), title el título del paso (draftTitle es el del plan). */
+      plan?: { draftId: string; step: number; total: number; title: string }
     }
   | { kind: "peer"; from: string; body: string }
   | {
@@ -590,6 +771,10 @@ export type TimelineEvent =
       costUsd: number
       /** Tokens de este turno (entrada + salida + caché). */
       tokens?: number
+      /** Lo que costó este turno por modelo (id resuelto, ej. claude-sonnet-5-5), de mayor a menor; incluye a los subagentes. */
+      models?: { model: string; usd: number }[]
+      /** El modelo de la sesión en este turno (sin sus subagentes), según el init del CLI. */
+      model?: string
       terminalReason?: string
       error?: string
     }
@@ -609,7 +794,7 @@ export type TimelineEvent =
       state: "pending" | "allowed" | "denied" | "cancelled"
     }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
-  | { kind: "batch"; reportIds: string[]; text: string; followUp: boolean }
+  | { kind: "batch"; reportIds: string[]; text: string; followUp: boolean; projectMessages?: BatchProjectMessage[] }
   | {
       kind: "compact"
       trigger: string
@@ -689,6 +874,9 @@ export interface Snapshot {
   compactions: CompactionState[]
   turns: { sessionId: string; turn: TurnProgress }[]
   tasks: UserTask[]
+  /** Entornos con sus credenciales, sin los secretos. */
+  environments: Environment[]
+  apps: AppView[]
   meta: Meta
 }
 
@@ -700,8 +888,9 @@ export type ToastLevel = "info" | "success" | "warn" | "error"
  * - compaction: el panel de compactación de la sesión.
  * - proposals: en el chat de la orquestadora, baja hasta la primera propuesta lista.
  * - tasks: el tablero del proyecto, en "Tareas para vos" (aunque venga la sesión que la pidió).
+ * - environments: el resumen del proyecto, con "Entornos" abierto.
  */
-export type NoticeOpen = "compaction" | "proposals" | "tasks"
+export type NoticeOpen = "compaction" | "proposals" | "tasks" | "environments"
 
 /** Lo que muestra la app de escritorio en la bandeja: cuántas te necesitan y cuántas trabajan. */
 export interface DesktopSummary {
@@ -727,6 +916,8 @@ export interface Health {
   startedAt: number
   /** El que puso la app al lanzarlo (CONTROL_PLANE_LAUNCH_ID), o null. */
   launchId: string | null
+  /** Retomando las sesiones de un reinicio para actualizar (ver restart.ts). */
+  resuming: boolean
 }
 
 export type ServerMessage =
@@ -762,6 +953,11 @@ export type ServerMessage =
   /** Solo a la web: si hay una app de escritorio conectada (al conectar y cuando cambia). */
   | { type: "desktop"; connected: boolean }
   | { type: "task"; task: UserTask }
+  /** Cambió un entorno o sus credenciales (sin los secretos). */
+  | { type: "environment"; environment: Environment }
+  | { type: "environment_removed"; id: string; projectId: string }
+  /** Cambiaron las apps de un proyecto (una definición o un estado): todas las del proyecto. */
+  | { type: "apps"; projectId: string; apps: AppView[] }
   | {
       type: "toast"
       level: ToastLevel
@@ -809,6 +1005,22 @@ export interface UserTask {
   createdAt: number
   updatedAt: number
   closedAt: number | null
+  /**
+   * Si la tarea es loguearse en un CLI del catálogo: cuál (y qué credencial, si tiene más de una).
+   * La tarea muestra el botón para hacerlo y se cierra sola si el login sale bien.
+   */
+  cli: UserTaskCli | null
+  /** En qué orden hacerla: 1 va primero. null: sin orden (va después de las que tienen). */
+  priority: number | null
+  /** Para relacionar dos o más tareas que van juntas (ej. postmark-dominios). No para clasificar. */
+  tags: string[]
+}
+
+export interface UserTaskCli {
+  /** El id del catálogo de CLIs (gh, gcloud, aws…). */
+  id: string
+  /** Qué credencial, si tiene más de una (gcloud: 0 tu usuario, 1 las de aplicación). */
+  credential: number
 }
 
 export type CliAuthState = "ok" | "expired" | "logged_out" | "unknown"
@@ -875,4 +1087,117 @@ export interface CliView {
   used: UsedProgram[]
   /** Todavía está leyendo los transcripts (la primera vez tarda). */
   usageScanning: boolean
+}
+
+// ------------------------------------------------------------------ Entornos
+
+/**
+ * Una credencial de prueba de un entorno, como la ve la web: **sin el secreto**. El secreto se pide
+ * aparte (GET /api/credentials/:id/secret) solo al mostrarlo o copiarlo.
+ */
+export interface Credential {
+  id: string
+  environmentId: string
+  /** Para qué es ("Inquilino", "Usuario admin"). Único dentro del entorno. */
+  name: string
+  username: string | null
+  /** Si tiene contraseña o token guardado. */
+  hasSecret: boolean
+  loginUrl: string | null
+  notes: string | null
+  /** La sesión que la dejó, o null si la cargaste vos. */
+  createdBy: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** Un entorno local o de staging del proyecto ("Local", "Staging"), con sus credenciales de prueba. */
+export interface Environment {
+  id: string
+  projectId: string
+  /** Único dentro del proyecto. */
+  name: string
+  url: string | null
+  /** Una app levantable del proyecto (ver "Apps"): si está, su URL manda sobre `url`. */
+  appId: string | null
+  notes: string | null
+  createdBy: string | null
+  createdAt: number
+  updatedAt: number
+  credentials: Credential[]
+}
+
+// ------------------------------------------------------------------ Apps (TRAY)
+
+/** Cómo se verifica que una app está levantada: una URL que responde o un puerto que acepta conexiones. */
+export type AppHealth = { kind: "http"; url: string } | { kind: "tcp"; port: number; host?: string }
+
+/** Una app del proyecto que se levanta localmente (un backend, un frontend, un worker). */
+export interface AppDef {
+  id: string
+  projectId: string
+  name: string
+  /** Se parte en argumentos y se corre sin shell, salvo que `shell` sea true (para && o pipes). */
+  command: string
+  shell: boolean
+  /** La carpeta donde corre, relativa a la del proyecto ("" es la raíz); puede ser un worktree o un subrepo. */
+  cwd: string
+  env: Record<string, string>
+  health: AppHealth | null
+  /** La URL para abrir en el navegador, si no es la de salud. */
+  url: string | null
+  /** Cómo se baja, si no alcanza con terminar el proceso (ej. `docker compose down`). */
+  stopCommand: string | null
+  /** La sesión que la registró (null: el usuario). */
+  createdBy: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/**
+ * - stopped: no corre. - starting: la lanzó el dashboard y espera a que la salud responda.
+ * - up: levantada (la salud responde, o sin salud definida, el proceso vive).
+ * - unresponsive: el proceso vive pero la salud no contesta. - crashed: el proceso terminó solo.
+ * - external: la salud responde pero no la lanzó el dashboard (no se toca).
+ */
+export type AppStatus = "stopped" | "starting" | "up" | "unresponsive" | "crashed" | "external"
+
+export interface AppState {
+  status: AppStatus
+  pid: number | null
+  startedAt: number | null
+  /** Si se cayó: el código de salida o la señal, y las últimas líneas del log. */
+  exitCode: number | null
+  signal: string | null
+  error: string | null
+  tail: string[]
+  checkedAt: number | null
+}
+
+export interface AppView extends Omit<AppDef, "url"> {
+  /** La URL para abrir: la definida, la de salud o http://127.0.0.1:<puerto>. */
+  url: string | null
+  /** La que se definió (para editarla). */
+  definedUrl: string | null
+  state: AppState
+}
+
+/** Lo que se pide para registrar o cambiar una app. */
+export interface AppInput {
+  name?: string
+  command?: string
+  shell?: boolean
+  cwd?: string
+  env?: Record<string, string>
+  health?: AppHealth | null
+  url?: string | null
+  stopCommand?: string | null
+}
+
+/** Una app que parece haber en el repo (scripts de package.json, docker compose, Procfile): el usuario la confirma. */
+export interface AppSuggestion extends AppInput {
+  name: string
+  command: string
+  /** De dónde salió (ej. "package.json: dev"). */
+  source: string
 }

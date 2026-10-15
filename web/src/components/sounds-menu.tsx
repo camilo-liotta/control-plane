@@ -7,10 +7,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { EVENTS, playSound, setSoundSettings, SOUNDS, useSoundSettings, type SoundId } from "@/lib/sounds"
 import { cn } from "@/lib/utils"
 
-/** Sonidos de la bandeja: uno por tipo de aviso, aparte de las notificaciones del sistema. */
+/** Sonidos de la Bandeja: uno por tipo de aviso, aparte de las notificaciones del sistema. */
 export function SoundsMenu() {
   const s = useSoundSettings()
-  const label = s.enabled ? "Sonidos de la bandeja: activados" : "Sonidos de la bandeja: apagados"
+  const label = s.enabled ? "Sonidos de la Bandeja: activados" : "Sonidos de la Bandeja: apagados"
   const Icon = s.enabled ? Volume2 : VolumeX
   return (
     <Popover>
@@ -19,7 +19,7 @@ export function SoundsMenu() {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className={cn("rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground", s.enabled && "text-foreground")}
+              className={cn("rounded-md p-1.5 text-muted-foreground outline-hidden hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring", s.enabled && "text-foreground")}
               aria-label={label}
             >
               <Icon className="size-4" />
@@ -28,16 +28,16 @@ export function SoundsMenu() {
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
-      <PopoverContent side="top" align="start" className="w-96 gap-3 p-3.5">
+      <PopoverContent side="top" align="start" className="w-96 max-w-[calc(100vw-1.5rem)] gap-3 p-3.5">
         <div>
-          <p className="text-sm font-medium">Sonidos de la bandeja</p>
+          <p className="text-sm font-medium">Sonidos de la Bandeja</p>
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             Un sonido distinto según qué pasó. Van aparte de los avisos del sistema y se guardan en este navegador.
           </p>
         </div>
         <label className="flex items-center justify-between gap-3 text-sm">
           <span>{s.enabled ? "Activados" : "Apagados"}</span>
-          <Switch checked={s.enabled} onCheckedChange={(v) => setSoundSettings({ enabled: v })} aria-label="Sonidos de la bandeja" />
+          <Switch checked={s.enabled} onCheckedChange={(v) => setSoundSettings({ enabled: v })} aria-label="Sonidos de la Bandeja" />
         </label>
         <div className={cn("space-y-3", !s.enabled && "pointer-events-none opacity-50")}>
           <label className="flex items-center gap-3 text-sm">
@@ -49,24 +49,24 @@ export function SoundsMenu() {
               value={Math.round(s.volume * 100)}
               onChange={(e) => setSoundSettings({ volume: Number(e.target.value) / 100 })}
               onPointerUp={() => playSound(s.byEvent.result)}
-              className="w-full accent-[var(--claude)]"
+              className="w-full accent-claude"
               aria-label="Volumen"
             />
-            <span className="w-8 text-right font-mono text-xs">{Math.round(s.volume * 100)}</span>
+            <span className="w-8 text-right text-xs">{Math.round(s.volume * 100)}</span>
           </label>
           <label className="flex items-center justify-between gap-3 text-sm">
-            <span>Solo si no estoy mirando el dashboard</span>
-            <Switch checked={s.onlyAway} onCheckedChange={(v) => setSoundSettings({ onlyAway: v })} aria-label="Solo si no estoy mirando" />
+            <span>Solo si no estás mirando el dashboard</span>
+            <Switch checked={s.onlyAway} onCheckedChange={(v) => setSoundSettings({ onlyAway: v })} aria-label="Solo si no estás mirando el dashboard" />
           </label>
-          <ul className="divide-y rounded-lg border">
+          <ul className="divide-y rounded-xl bg-muted/50">
             {EVENTS.map((e) => (
               <li key={e.id} className="flex items-center gap-2 px-2.5 py-1.5">
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm">{e.label}</span>
-                  <span className="block truncate text-[0.7rem] text-muted-foreground">{e.hint}</span>
+                  <span className="line-clamp-2 text-2xs text-muted-foreground" title={e.hint}>{e.hint}</span>
                 </span>
                 <Select value={s.byEvent[e.id]} onValueChange={(v) => (setSoundSettings({ byEvent: { [e.id]: v as SoundId } }), playSound(v as SoundId))}>
-                  <SelectTrigger size="sm" className="w-32 text-xs">
+                  <SelectTrigger size="sm" className="w-28 text-xs sm:w-32" aria-label={`Sonido de ${e.label}`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -79,7 +79,7 @@ export function SoundsMenu() {
                 </Select>
                 <button
                   type="button"
-                  className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                  className="rounded-md p-1 text-muted-foreground outline-hidden hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                   onClick={() => playSound(s.byEvent[e.id])}
                   disabled={s.byEvent[e.id] === "ninguno"}
                   aria-label={`Escuchar el sonido de ${e.label}`}

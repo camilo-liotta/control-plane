@@ -182,12 +182,12 @@ pub enum LoginEnvError {
 impl fmt::Display for LoginEnvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Spawn(e) => write!(f, "no pude abrirla ({e})"),
+            Self::Spawn(e) => write!(f, "no se pudo abrir ({e})"),
             Self::Timeout(t) => write!(f, "no respondió en {} s", t.as_secs()),
             Self::NoOutput(Some(code)) => {
-                write!(f, "terminó con código {code} sin darme el entorno")
+                write!(f, "terminó con código {code} sin pasar el entorno")
             }
-            Self::NoOutput(None) => write!(f, "terminó sin darme el entorno"),
+            Self::NoOutput(None) => write!(f, "terminó sin pasar el entorno"),
         }
     }
 }

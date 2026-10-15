@@ -26,7 +26,7 @@ Opciones:
                     sirve para probar los artifacts de un build
   -h, --help        esta ayuda
 
-Las que usa la app cuando se actualiza sola ("Actualizar a vX.Y.Z" en la bandeja):
+Las que usa la app cuando se actualiza sola ("Actualizar a vX.Y.Z" en el menú del ícono):
   --app-pid <pid>     el pid de la app abierta: se la cierra dejando el server y se la reabre
   --appimage <ruta>   reemplaza ese AppImage (el que está corriendo), aunque haya apt
   --mac-app <ruta>    en la Mac, reemplaza esa control-plane.app (la que está corriendo)
@@ -44,6 +44,35 @@ die() {
   exit 1
 }
 
+# El node a usar, como lo busca la app: el que resolvió ella (CONTROL_PLANE_NODE), el del PATH si
+# es ≥ 24 o, si no, el de las rutas de respaldo (Homebrew, ~/.local/bin, Volta, nvm, fnm). Una app
+# abierta desde el lanzador no trae el PATH de tu shell: sin esto no ve el node de nvm.
+node_major_of() { "$1" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+use_node() {
+  local n="${CONTROL_PLANE_NODE:-}" d best=""
+  if [[ -n "$n" ]]; then
+    [[ "$n" == */* ]] || n="$(command -v "$n" || true)"
+    [[ -n "$n" && -x "$n" ]] || die "CONTROL_PLANE_NODE=${CONTROL_PLANE_NODE} no es un ejecutable."
+    PATH="$(dirname "$n"):$PATH"
+    export PATH
+    return 0
+  fi
+  if command -v node >/dev/null && (($(node_major_of node) >= 24)); then return 0; fi
+  for d in /opt/homebrew/bin /usr/local/bin "${HOME:-}/.local/bin" "${HOME:-}/.volta/bin" "${HOME:-}/.bun/bin" \
+    "${HOME:-}"/.nvm/versions/node/*/bin "${HOME:-}"/.local/share/fnm/node-versions/*/installation/bin \
+    "${HOME:-}/Library/Application Support/fnm/node-versions"/*/installation/bin; do
+    # En nvm y fnm, las carpetas van en orden: queda la última que sirve (la más nueva).
+    if [[ -x "$d/node" ]] && (($(node_major_of "$d/node") >= 24)); then
+      best="$d"
+      case "$d" in */.nvm/* | */fnm/*) ;; *) break ;; esac
+    fi
+  done
+  if [[ -n "$best" ]]; then
+    PATH="$best:$PATH"
+    export PATH
+  fi
+}
+
 DRY=0
 APP_PID=""
 APPIMAGE_TARGET=""
@@ -59,11 +88,13 @@ run() {
   fi
 }
 
-# ¿El binario instalado entiende `--quit --keep-server` (salir dejando el server, sin preguntar)?
-# Se busca el texto en el binario, sin ejecutarlo: correrlo con un flag que no conoce le llegaría
-# a la app abierta como una segunda apertura.
-knows_keep_server() { grep -qaF -- "--quit --keep-server" "$1" 2>/dev/null; }
-WAIT_SECS=15
+# ¿El binario instalado sabe reiniciarse para actualizar (`--quit --restart-for-update`: el server
+# guarda las sesiones activas, se detiene y la app sale)? Se busca el texto en el binario, sin
+# ejecutarlo: correrlo con un flag que no conoce le llegaría a la app abierta como una segunda
+# apertura.
+knows_restart() { grep -qaF -- "--quit --restart-for-update" "$1" 2>/dev/null; }
+# Cerrar ahora incluye detener el server (el camino ordenado, hasta 15 s y lo que tarde en guardar).
+WAIT_SECS=45
 
 fetch() { curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$2" "$1"; }
 
@@ -110,7 +141,7 @@ main() {
         usage
         exit 0
         ;;
-      *) die "No conozco la opción $1. Probá con --help." ;;
+      *) die "La opción $1 no existe. Probá con --help." ;;
     esac
     shift
   done
@@ -130,12 +161,13 @@ main() {
   if [[ "$os" == Linux && "$arch" != x86_64 ]]; then
     die "En Linux, por ahora, solo hay paquetes para x86_64 (esta máquina es $arch). Con el repo clonado podés compilarla: npm run app:install."
   fi
-  ((DRY)) && say "Modo prueba (--dry-run): bajo y verifico el paquete, pero no instalo nada."
+  ((DRY)) && say "Modo prueba (--dry-run): se baja y se verifica el paquete, pero no se instala nada."
 
   # ---- 1. Lo que hace falta ----
 
   command -v curl >/dev/null || die "Hace falta curl."
-  command -v node >/dev/null || die "No encuentro Node. Instalá Node 24 (nvm, fnm o nodejs.org) y volvé a probar."
+  use_node
+  command -v node >/dev/null || die "No se encontró Node. Instalá Node 24 (nvm, fnm o nodejs.org) y volvé a probar."
   local node_major
   node_major="$(node -p 'process.versions.node.split(".")[0]')"
   ((node_major >= 24)) || die "Tenés Node $(node --version) y hace falta el 24 o más nuevo."
@@ -149,7 +181,7 @@ main() {
     [[ -f "$from/SHA256SUMS" ]] || die "En $from no hay SHA256SUMS."
     if [[ -z "$want" ]]; then
       want="$(sed -n 's/.*control-plane_\([^_]*\)_.*/\1/p' "$from/SHA256SUMS" | head -n 1)"
-      [[ -n "$want" ]] || die "No encuentro la versión en $from/SHA256SUMS: pasala con --version."
+      [[ -n "$want" ]] || die "No se encontró la versión en $from/SHA256SUMS: pasala con --version."
     fi
     version="$want"
   elif [[ -n "$want" ]]; then
@@ -158,7 +190,7 @@ main() {
     # /releases/latest redirige al último publicado (no a borradores ni prereleases).
     local url
     url="$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" ||
-      die "No pude consultar los releases en GitHub. ¿Hay internet?"
+      die "No se pudieron consultar los releases en GitHub. ¿Hay internet?"
     case "$url" in
       */releases/tag/v*) version="${url##*/releases/tag/v}" ;;
       *) die "Todavía no hay ninguna versión publicada en https://github.com/$REPO/releases." ;;
@@ -192,17 +224,17 @@ main() {
     [[ -f "$from/$file" ]] || die "En $from no está $file."
     cp "$from/SHA256SUMS" "$from/$file" "$TMP/"
   else
-    say "Bajo ${file}…"
+    say "Bajando ${file}…"
     fetch "$base/SHA256SUMS" "$TMP/SHA256SUMS" ||
-      die "No encontré la versión $version en https://github.com/$REPO/releases (¿está publicada?)."
-    fetch "$base/$file" "$TMP/$file" || die "No pude bajar $base/$file."
+      die "No se encontró la versión $version en https://github.com/$REPO/releases (¿está publicada?)."
+    fetch "$base/$file" "$TMP/$file" || die "No se pudo bajar $base/$file."
   fi
   local expected actual
   expected="$(awk -v f="$file" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS")"
-  [[ -n "$expected" ]] || die "SHA256SUMS no tiene $file: no lo instalo."
+  [[ -n "$expected" ]] || die "SHA256SUMS no tiene $file: no se instala."
   actual="$(sha256_of "$TMP/$file")"
   [[ "$actual" == "$expected" ]] ||
-    die "El sha256 de $file no coincide con SHA256SUMS (bajó $actual, esperaba $expected): no lo instalo."
+    die "El sha256 de $file no coincide con SHA256SUMS (bajó $actual, se esperaba $expected): no se instala."
   chmod 644 "$TMP/$file"
   say "Verificado (sha256 ${actual:0:16}…)."
 
@@ -223,7 +255,7 @@ main() {
     if [[ "$mode" == mac ]]; then
       say "No tiene firma de Apple: si la Mac no te deja abrirla, mirá \"La primera vez, sin firma de Apple\" en el README."
     fi
-    say "Si algo falla, el detalle está en \"Ver log del server\" de la bandeja."
+    say "Si algo falla, el detalle está en el ícono de control-plane → \"Ver log del server\"."
   fi
 }
 
@@ -269,7 +301,7 @@ install_mac() {
     dest=/Applications
     if [[ ! -w "$dest" ]]; then
       dest="$HOME/Applications"
-      say "No puedo escribir en /Applications: la instalo en $dest."
+      say "No se puede escribir en /Applications: se instala en $dest."
       run mkdir -p "$dest"
     fi
     target="$dest/$APP.app"
@@ -279,19 +311,22 @@ install_mac() {
   run ditto "$pkg" "$target.nueva"
   run xattr -dr com.apple.quarantine "$target.nueva" || true
 
-  # 2. Cerrarla (si está abierta), sin cortar las sesiones.
+  # 2. Cerrarla (si está abierta): la app y el server se actualizan juntos.
   if still_open mac_running; then
     local exe=""
     if [[ -d "$target" ]]; then
       exe="$target/Contents/MacOS/$(defaults read "$target/Contents/Info" CFBundleExecutable 2>/dev/null)"
     fi
-    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-    # Con --app-pid, la que llama ya sabe --keep-server.
-    if [[ -n "$APP_PID" ]] || { [[ -x "$exe" ]] && knows_keep_server "$exe"; }; then
-      run "$exe" --quit --keep-server
+    # Con --app-pid, la que llama es de esta versión: ya sabe --restart-for-update.
+    if [[ -n "$APP_PID" ]] || { [[ -x "$exe" ]] && knows_restart "$exe"; }; then
+      say "Cerrando la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+      run "$exe" --quit --restart-for-update
     else
-      # Una app vieja no conoce --keep-server: salir como desde el Dock tampoco pregunta y deja
-      # el server corriendo.
+      # Una app de antes no sabe reiniciarse para actualizar: salir como desde el Dock deja su
+      # server corriendo. La nueva lo detecta al abrir y lo reinicia (sola si no hay sesiones
+      # trabajando; si hay, desde el menú del ícono).
+      say "La app abierta es de una versión anterior: se cierra, pero su server queda corriendo."
+      say "Al abrirse, la nueva lo reinicia sola (si hay sesiones trabajando, te lo ofrece en el ícono de control-plane → Reiniciar el server)."
       run osascript -e "quit app \"$APP\""
     fi
     ((DRY)) || REOPEN_ON_FAIL="$target"
@@ -306,7 +341,7 @@ install_mac() {
   fi
   if ! run mv "$target.nueva" "$target"; then
     [[ -e "$target.vieja" ]] && mv "$target.vieja" "$target"
-    die "No pude poner la versión nueva en $target."
+    die "No se pudo poner la versión nueva en $target."
   fi
   run rm -rf "$target.vieja"
   REOPEN_ON_FAIL=""
@@ -326,9 +361,9 @@ install_linux() {
     bin="$HOME/.local/bin/$APP.AppImage"
   fi
 
-  # Antes de instalar: ¿está abierta, y sabe salir dejando el server? Después del apt, el binario
-  # ya es el nuevo. Con --app-pid la llama la propia app, que sabe; un .AppImage no se puede
-  # revisar con grep (está comprimido).
+  # Antes de instalar: ¿está abierta, y sabe reiniciarse para actualizar? Después del apt, el
+  # binario ya es el nuevo. Con --app-pid la llama la propia app, que sabe; un .AppImage no se
+  # puede revisar con grep (está comprimido).
   local open=0 knows=0
   if [[ -n "$APP_PID" ]]; then
     # Se vuelve a mirar ahora (después de bajar y verificar): si la app ya no está, no hay nada
@@ -339,25 +374,27 @@ install_linux() {
     fi
   elif app_pids "$bin" >/dev/null; then
     open=1
-    knows_keep_server "$bin" && knows=1
+    knows_restart "$bin" && knows=1
   fi
 
   # 1. Instalar, con la app todavía abierta (sigue con su archivo hasta que se cierre). Si esto
   #    falla o se cancela, la app nunca se cerró.
   if [[ "$mode" == deb ]]; then
     if [[ -t 0 ]]; then
-      say "Instalo el paquete (te va a pedir la contraseña)…"
-      run sudo apt install -y "$pkg"
+      say "Instalando el paquete (te va a pedir la contraseña)…"
+      run sudo env DEBIAN_FRONTEND=noninteractive apt install -y "$pkg"
     elif command -v pkexec >/dev/null && [[ -x /usr/bin/apt ]]; then
       # Sin terminal (la lanzó la app): el sistema muestra su diálogo para la contraseña. apt por
-      # su ruta: corre como root, no puede ser el primero que aparezca en el PATH.
-      say "Instalo el paquete (el sistema te va a pedir la contraseña)…"
-      run pkexec /usr/bin/apt install -y "$pkg"
+      # su ruta: corre como root, no puede ser el primero que aparezca en el PATH. Y sin terminal
+      # debconf no puede preguntar nada: que no lo intente (si no, llena el log de "unable to
+      # initialize frontend").
+      say "Instalando el paquete (el sistema te va a pedir la contraseña)…"
+      run pkexec /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt install -y "$pkg"
     else
       die "Para instalar el .deb hace falta pkexec o correr esto desde una terminal."
     fi
   else
-    say "Dejo el AppImage en $bin."
+    say "El AppImage queda en $bin."
     run mkdir -p "$(dirname "$bin")"
     # Copia aparte y después el cambio: la app abierta sigue con su archivo hasta que la cierres.
     run cp "$pkg" "$bin.nueva"
@@ -372,16 +409,17 @@ install_linux() {
   fi
   WHERE="$bin"
 
-  # 2. Cerrar la vieja dejando el server y abrir la nueva, que lo adopta.
+  # 2. Cerrar la vieja (el server guarda las sesiones activas y se detiene) y abrir la nueva, que
+  #    lanza el server nuevo y las retoma. App y server se actualizan juntos.
   if ((open && knows)); then
-    say "Cierro la app abierta; el server y las sesiones siguen y la versión nueva lo adopta."
-    run "$bin" --quit --keep-server
+    say "Cerrando la app abierta: el server guarda las sesiones activas y se detiene; la nueva lo vuelve a lanzar y las retoma."
+    run "$bin" --quit --restart-for-update
     if ! wait_closed app_pids "$bin"; then
       warn "La app no se cerró en ${WAIT_SECS} s: no la vuelvo a abrir."
       return 0
     fi
     if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-      say "No veo una sesión gráfica en esta terminal: abrí control-plane desde el lanzador."
+      say "Esta terminal no tiene una sesión gráfica: abrí control-plane desde el lanzador."
     else
       # Sin atarla a esta terminal y sin lo que la app no tiene que heredar de ella: NODE_ENV,
       # lo de npm y, si esto corre desde una sesión del dashboard, las CONTROL_PLANE_* del server.
@@ -391,7 +429,7 @@ install_linux() {
           npm_* | CONTROL_PLANE_*) unset_+=(-u "$v") ;;
         esac
       done < <(compgen -e)
-      say "Vuelvo a abrir la app."
+      say "Abriendo la app de nuevo."
       if ((DRY)); then
         printf '  (haría) env %s setsid %s\n' "${unset_[*]}" "$bin"
       else
@@ -399,10 +437,11 @@ install_linux() {
       fi
     fi
   elif ((open)); then
-    say "La app está abierta y es de una versión que no sabe salir dejando el server: no la cierro."
-    say "Sigue con la versión anterior hasta que la reinicies. Para pasar a la nueva sin cortar las"
-    say "sesiones: bandeja → Al salir ▸ \"Dejarlo corriendo\" → Salir, y volvé a abrirla desde el"
-    say "lanzador (adopta el mismo server)."
+    say "La app abierta es de una versión anterior, que no sabe reiniciarse para actualizar: no se cierra."
+    say "Para pasar a la nueva: ícono de control-plane → Salir → \"Detener y salir\", y volvé a abrirla desde el"
+    say "lanzador: arranca con el server nuevo (las sesiones se reanudan cuando les escribís)."
+    say "Si la cerrás dejando el server, la nueva lo detecta y te ofrece reiniciarlo (ícono de control-plane →"
+    say "Reiniciar el server)."
   fi
 }
 

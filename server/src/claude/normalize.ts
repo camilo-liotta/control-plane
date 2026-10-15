@@ -23,7 +23,8 @@ export type Action =
     }
   | { type: "partial_clear" }
   | { type: "activity"; text: string }
-  | { type: "cost"; totalUsd: number; tokens: TokenUsage | null }
+  /** Totales de la conversación (acumulados: siguen desde lo que se restauró al reanudar). byModel: US$ por modelo. */
+  | { type: "cost"; totalUsd: number; tokens: TokenUsage | null; byModel: Record<string, number> }
   | { type: "usage"; usage: UsageInfo }
   | {
       type: "init"
@@ -115,6 +116,20 @@ export function sessionTokens(modelUsage: unknown): TokenUsage | null {
   if (!any) return null
   t.total = t.input + t.output + t.cacheRead + t.cacheWrite
   return t
+}
+
+/**
+ * Lo gastado por cada modelo de la conversación (modelUsage[id].costUSD), acumulado como total_cost_usd:
+ * los subagentes que corren en otro modelo aparecen con su propio id.
+ */
+export function modelCosts(modelUsage: unknown): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (!modelUsage || typeof modelUsage !== "object") return out
+  for (const [id, u] of Object.entries(modelUsage as Record<string, Record<string, unknown>>)) {
+    const usd = Number(u?.costUSD)
+    if (Number.isFinite(usd) && usd > 0) out[id] = usd
+  }
+  return out
 }
 
 /** El turno no salió porque la conversación ya no entra en el contexto (Claude Code lo corta antes de llamar a la API). */
@@ -218,6 +233,10 @@ export function toolActivity(name: string, input: Record<string, unknown>): stri
       return `Propuso una sesión nueva: ${String(input.name ?? "")}`
     case "mcp__control-plane__read_results":
       return "Leyendo la cola de resultados"
+    case "mcp__control-plane__list_projects":
+      return "Mirando los otros proyectos"
+    case "mcp__control-plane__message_project":
+      return `Mensaje a la orquestadora de «${String(input.project ?? "otro proyecto")}»`
     default:
       return name.startsWith("mcp__") ? name.split("__").slice(2).join("__") : name
   }
@@ -245,6 +264,9 @@ function usageFrom(info: Record<string, unknown> | undefined): UsageInfo | null 
  * Convierte el stream del CLI en eventos de timeline y acciones de estado.
  * Guarda el tipo de cada bloque en streaming para rutear los deltas parciales.
  */
+/** El aviso del chat cuando la conversación se reinicia (también marca cuándo fue cada /clear). */
+export const RESET_NOTICE = "La conversación se reinició (/clear)."
+
 export class StreamNormalizer {
   private currentMessageId: string | null = null
   private blockKinds = new Map<number, "text" | "thinking" | "other">()
@@ -280,7 +302,7 @@ export class StreamNormalizer {
               { type: "reset", newSessionId: msg.new_conversation_id },
               {
                 type: "event",
-                event: { kind: "notice", level: "info", text: "La conversación se reinició (/clear)." },
+                event: { kind: "notice", level: "info", text: RESET_NOTICE },
               },
             ]
           : []
@@ -427,7 +449,12 @@ export class StreamNormalizer {
       : undefined
     const cost = Number(msg.total_cost_usd ?? 0)
     const tokens = turnTokens(msg.usage)
-    const actions: Action[] = [
+    const total = sessionTokens(msg.modelUsage)
+    const byModel = modelCosts(msg.modelUsage)
+    const actions: Action[] = []
+    // Antes que el fin de turno: así el evento puede llevar lo que costó el turno por modelo.
+    if (cost > 0 || total) actions.push({ type: "cost", totalUsd: cost, tokens: total, byModel })
+    actions.push(
       {
         type: "event",
         event: {
@@ -442,9 +469,7 @@ export class StreamNormalizer {
         },
       },
       { type: "turn_end", ok: !isError, aborted, result: String(msg.result ?? ""), contextFull: isError && isContextFull(terminal, errorText) },
-    ]
-    const total = sessionTokens(msg.modelUsage)
-    if (cost > 0 || total) actions.push({ type: "cost", totalUsd: cost, tokens: total })
+    )
     return actions
   }
 

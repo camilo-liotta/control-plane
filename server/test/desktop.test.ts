@@ -16,6 +16,7 @@ import { Hub } from "../src/hub.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { Draft, DesktopSummary, ServerMessage, Session, StoredEvent, UserTask } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 async function freePort(): Promise<number> {
   const srv = net.createServer()
@@ -44,7 +45,7 @@ describe("health", () => {
   it("responde quién es, sin rutas de la máquina", async () => {
     const res = await app.inject({ url: "/api/health", headers: { host: `127.0.0.1:${port}` } })
     assert.equal(res.statusCode, 200)
-    assert.deepEqual(res.json(), { app: "control-plane", version: "9.9.9", pid: process.pid, port, startedAt: 123, launchId: "lanzado-por-la-app" })
+    assert.deepEqual(res.json(), { app: "control-plane", version: "9.9.9", pid: process.pid, port, startedAt: 123, launchId: "lanzado-por-la-app", resuming: false })
   })
 
   it("pasa por el mismo chequeo de host y origen", async () => {
@@ -63,7 +64,7 @@ describe("resumen de escritorio", () => {
       db: {
         listProjects: () => [{ id: "p1", name: "Uno" }, { id: "p2", name: "Dos" }] as never,
         listDrafts: (opts) => {
-          assert.deepEqual(opts?.states, ["ready"])
+          assert.deepEqual(opts?.states, ["ready", "sent"])
           return [draft("d1", "p1", "ready"), draft("d2", "p3", "ready")]
         },
         // Solo suman las abiertas que frenan a una sesión, como en la web.
@@ -234,6 +235,7 @@ describe("running del resumen, contra el proceso real", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },

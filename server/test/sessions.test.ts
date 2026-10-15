@@ -11,6 +11,7 @@ import { lastCostState } from "../src/claude/local.ts"
 import { SessionManager } from "../src/sessions.ts"
 import type { ExternalSession } from "../src/shared/types.ts"
 import { writeFakeClaude } from "./fake-claude.ts"
+import { tmpRunRoot } from "./run-root.ts"
 
 describe("una conversación abierta en otro lado", () => {
   let dir: string
@@ -32,6 +33,7 @@ describe("una conversación abierta en otro lado", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => {
         launched++
         throw new Error("no debería lanzarse")
@@ -83,6 +85,7 @@ describe("lo gastado en una sesión", () => {
       attachments: new AttachmentStore(db),
       mcpUrlFor: () => "http://127.0.0.1/mcp",
       hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
       launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
       accountIdFor: () => "acc",
       meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
@@ -117,6 +120,35 @@ describe("lo gastado en una sesión", () => {
     assert.deepEqual([t.input, t.output, t.cacheRead, t.total], [30, 15, 300, 345])
     const ends = db.listEvents(rec.id).map((e) => e.event).filter((e) => e.kind === "turn_end")
     assert.deepEqual(ends.map((e) => e.kind === "turn_end" && e.costUsd), [0.25, 0.5, 0.75], "el acumulado del fin de turno sigue al de la sesión")
+    assert.deepEqual(db.getSession(rec.id)!.costByModel, { "claude-x": 0.75 })
+  })
+
+  it("cuenta lo de cada modelo por turno y en la sesión, aunque se reinicie o empiece de cero", async () => {
+    const s = sessions.create({ projectId: "p1", kind: "worker", name: "DELTA", role: "", cwd: dir, claudeSessionId: "c-4" })
+    const r6 = (o: Record<string, number>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v * 1e6) / 1e6]))
+    const turnModels = () =>
+      db.listEvents(s.id).map((e) => e.event).flatMap((e) => (e.kind === "turn_end" ? [(e.models ?? []).map((m) => `${m.model} ${Math.round(m.usd * 100) / 100}`)] : []))
+    await sessions.send(s.id, "uno", { origin: "user" })
+    await until(() => db.getSession(s.id)!.costUsd === 0.25)
+    await sessions.send(s.id, "usá HAIKU", { origin: "user" })
+    await until(() => db.getSession(s.id)!.costUsd > 0.5)
+    assert.deepEqual(r6(db.getSession(s.id)!.costByModel), { "claude-x": 0.5, "claude-y": 0.05 })
+    // Proceso nuevo: Claude Code restaura los totales; el turno cuenta solo lo suyo.
+    await sessions.stop(s.id)
+    await sessions.send(s.id, "tres", { origin: "user" })
+    await until(() => db.getSession(s.id)!.costUsd > 0.75)
+    assert.deepEqual(r6(db.getSession(s.id)!.costByModel), { "claude-x": 0.75, "claude-y": 0.05 })
+    // /clear: los totales vuelven a cero, lo de antes queda.
+    await until(() => sessions.statusOf(s.id) === "idle")
+    await sessions.clearConversation(s.id)
+    await sessions.send(s.id, "otra vez HAIKU", { origin: "user" })
+    await until(() => db.getSession(s.id)!.costUsd > 1)
+    assert.deepEqual(r6(db.getSession(s.id)!.costByModel), { "claude-x": 1, "claude-y": 0.1 })
+    assert.deepEqual(turnModels(), [["claude-x 0.25"], ["claude-x 0.25", "claude-y 0.05"], ["claude-x 0.25"], [], ["claude-x 0.25", "claude-y 0.05"]])
+    // Después del /clear el CLI informó su modelo (init): el fin de turno dice cuál es el de la sesión.
+    const last = db.listEvents(s.id).map((e) => e.event).filter((e) => e.kind === "turn_end").at(-1)
+    assert.equal(last?.kind === "turn_end" && last.model, "claude-x")
+    await sessions.stop(s.id)
   })
 
   it("/clear empieza una conversación nueva sin perder lo gastado antes", async () => {
@@ -140,7 +172,7 @@ describe("lo gastado en una sesión", () => {
     const usage = { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 1000, cacheCreationInputTokens: 0 }
     fs.writeFileSync(path.join(tdir, "c-2.jsonl"), JSON.stringify({ type: "cost-state", sessionId: "c-2", totalCostUSD: 10, modelUsage: { "claude-x": usage } }) + "\n")
     const spent = lastCostState(dir, "c-2", dir)
-    assert.deepEqual(spent, { usd: 10, tokens: { input: 100, output: 50, cacheRead: 1000, cacheWrite: 0, total: 1150 } })
+    assert.deepEqual(spent, { usd: 10, tokens: { input: 100, output: 50, cacheRead: 1000, cacheWrite: 0, total: 1150 }, byModel: {} })
     db.updateSession(other.id, { costUsd: spent!.usd, tokens: spent!.tokens })
     await sessions.send(other.id, "hola", { origin: "user" })
     await until(() => db.getSession(other.id)!.costUsd !== 10)
@@ -163,7 +195,7 @@ describe("el último cost-state del transcript", () => {
         line({ type: "assistant", message: { content: "x".repeat(3 * 1024 * 1024) } }) +
         line({ type: "cost-state", sessionId: "otra", totalCostUSD: 99, modelUsage: {} })
     )
-    assert.deepEqual(lastCostState("/repo", "s1", dir), { usd: 2.5, tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } })
+    assert.deepEqual(lastCostState("/repo", "s1", dir), { usd: 2.5, tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 }, byModel: {} })
     assert.equal(lastCostState("/repo", "no-existe", dir), null)
     fs.rmSync(dir, { recursive: true, force: true })
   })

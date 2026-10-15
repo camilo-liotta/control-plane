@@ -1,7 +1,8 @@
 //! Ícono en la bandeja (Linux) o en la barra de menú (macOS), con el estado del server y un menú.
 //!
 //! En Linux (appindicator) el ícono no recibe clics ni muestra tooltip: todo pasa por el menú, y la
-//! primera línea del menú dice cómo están las cosas. En macOS el ícono es template y lleva al lado
+//! primera línea del menú dice cómo están las cosas (con el mismo número que la Bandeja de la web)
+//! y, al tocarla, abre la Bandeja. En macOS el ícono es template y lleva al lado
 //! cuántas cosas te necesitan.
 
 use std::sync::Mutex;
@@ -19,12 +20,16 @@ use crate::AppState;
 
 const OPEN: &str = "open";
 const INBOX: &str = "inbox";
+/// La línea de estado: abre la Bandeja.
+const STATUS: &str = "status";
 const NOTIFICATIONS: &str = "notifications";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
 const LOG: &str = "log";
 const CHECK_UPDATES: &str = "check-updates";
+const CHECK_NOW: &str = "check-now";
 const UPDATE: &str = "update";
+const RESTART_SERVER: &str = "restart-server";
 const PROJECT_PREFIX: &str = "project:";
 const EXIT_OPTIONS: [(OnExit, &str, &str); 3] = [
     (OnExit::Ask, "exit:ask", "Preguntar"),
@@ -131,7 +136,9 @@ pub enum Action {
     OnExit(OnExit),
     ShowLog,
     ToggleCheckUpdates,
+    CheckNow,
     Update,
+    RestartServer,
     Quit,
     None,
 }
@@ -142,6 +149,10 @@ pub fn update_item(st: crate::update::Status) -> Option<(String, bool)> {
     match st {
         Status::Idle => None,
         Status::Available(v) => Some((format!("Actualizar a v{v}"), true)),
+        Status::Waiting(_) => Some((
+            "Actualizando cuando terminen… (tocá para cancelar)".into(),
+            true,
+        )),
         Status::Updating(_) => Some(("Actualizando…".into(), false)),
     }
 }
@@ -155,12 +166,14 @@ pub fn action(id: &str) -> Action {
     }
     match id {
         OPEN => Action::Open,
-        INBOX => Action::Inbox,
+        INBOX | STATUS => Action::Inbox,
         NOTIFICATIONS => Action::ToggleNotifications,
         AUTOSTART => Action::ToggleAutostart,
         LOG => Action::ShowLog,
         CHECK_UPDATES => Action::ToggleCheckUpdates,
+        CHECK_NOW => Action::CheckNow,
         UPDATE => Action::Update,
+        RESTART_SERVER => Action::RestartServer,
         QUIT => Action::Quit,
         _ => Action::None,
     }
@@ -199,12 +212,20 @@ pub struct Tray<R: Runtime> {
     menu: Menu<R>,
     /// "Actualizar a vX.Y.Z" / "Actualizando…", solo cuando hay una versión nueva.
     update: Mutex<Option<MenuItem<R>>>,
+    /// "Reiniciar el server (vA → vB)", cuando la app adoptó uno más viejo que ella.
+    restart: Mutex<Option<MenuItem<R>>>,
     shown: Mutex<Shown<R>>,
 }
 
 pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let settings = app.state::<AppState>().settings();
-    let status = MenuItem::new(app, status_text(&Snapshot::default()), false, None::<&str>)?;
+    let status = MenuItem::with_id(
+        app,
+        STATUS,
+        status_text(&Snapshot::default()),
+        true,
+        None::<&str>,
+    )?;
     let projects = Submenu::new(app, "Proyectos", true)?;
     let notifications = CheckMenuItem::with_id(
         app,
@@ -252,12 +273,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&status)
         .separator()
         .text(OPEN, "Abrir")
-        .text(INBOX, "Bandeja")
         .item(&projects)
         .separator()
         .item(&notifications)
         .item(&autostart)
         .item(&check_updates)
+        .text(CHECK_NOW, "Buscar ahora")
         .item(&exit_menu)
         .text(LOG, "Ver log del server")
         .separator()
@@ -283,6 +304,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         on_exit,
         menu,
         update: Mutex::new(None),
+        restart: Mutex::new(None),
         // El builder ya puso el ícono tranquilo: no se vuelve a escribir.
         shown: Mutex::new(Shown {
             status: String::new(),
@@ -376,6 +398,28 @@ impl<R: Runtime> Tray<R> {
         }
     }
 
+    /// "Reiniciar el server (vA → vB)", abajo de la línea de estado (aparece y desaparece).
+    pub fn set_restart_server(&self, text: Option<String>) {
+        let mut slot = self.restart.lock().unwrap();
+        match (text, slot.as_ref()) {
+            (None, Some(item)) => {
+                let _ = self.menu.remove(item);
+                *slot = None;
+            }
+            (Some(text), Some(item)) => {
+                let _ = item.set_text(text);
+            }
+            (Some(text), None) => {
+                let app = self.menu.app_handle();
+                if let Ok(item) = MenuItem::with_id(app, RESTART_SERVER, text, true, None::<&str>) {
+                    let _ = self.menu.insert(&item, 1);
+                    *slot = Some(item);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
     /// El ítem de actualizar, justo abajo de la línea de estado (aparece y desaparece).
     pub fn set_update(&self, st: crate::update::Status) {
         let mut slot = self.update.lock().unwrap();
@@ -399,7 +443,8 @@ impl<R: Runtime> Tray<R> {
         }
     }
 
-    fn sync_toggles(&self, app: &AppHandle<R>) {
+    /// Los tildes como dicen los ajustes (también cuando "Recordar mi elección" cambia "Al salir").
+    pub fn sync_toggles(&self, app: &AppHandle<R>) {
         let settings = app.state::<AppState>().settings();
         let _ = self.notifications.set_checked(settings.notifications);
         let _ = self.check_updates.set_checked(settings.check_updates);
@@ -446,9 +491,19 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
                 }
             }
         }
+        Action::CheckNow => {
+            if let Some(u) = app.try_state::<crate::update::Updater>() {
+                u.check_manual();
+            }
+        }
         Action::Update => {
             if let Some(u) = app.try_state::<crate::update::Updater>() {
                 u.update();
+            }
+        }
+        Action::RestartServer => {
+            if let Some(s) = app.try_state::<crate::sidecar::Sidecar>() {
+                s.restart_server();
             }
         }
         // El sidecar lo intercepta en RunEvent::ExitRequested y decide qué hacer con el server.
@@ -552,6 +607,9 @@ mod tests {
     fn menu_ids_map_to_actions() {
         assert_eq!(action("open"), Action::Open);
         assert_eq!(action("inbox"), Action::Inbox);
+        // La línea de estado lleva a la Bandeja.
+        assert_eq!(action("status"), Action::Inbox);
+        assert_eq!(action("check-now"), Action::CheckNow);
         assert_eq!(action("project:x:y"), Action::Project("x:y".into()));
         assert_eq!(action("exit:stop"), Action::OnExit(OnExit::Stop));
         assert_eq!(action("exit:leave"), Action::OnExit(OnExit::Leave));
@@ -561,6 +619,7 @@ mod tests {
         assert_eq!(action("log"), Action::ShowLog);
         assert_eq!(action("check-updates"), Action::ToggleCheckUpdates);
         assert_eq!(action("update"), Action::Update);
+        assert_eq!(action("restart-server"), Action::RestartServer);
         assert_eq!(action("quit"), Action::Quit);
         assert_eq!(action("otra"), Action::None);
     }

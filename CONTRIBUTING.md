@@ -65,7 +65,7 @@ Puertos y datos en la app de desarrollo:
 - Sin `CONTROL_PLANE_HOME` usa `$TMPDIR/control-plane-dev-<puerto>`, y `~/.control-plane` se rechaza salvo con `CONTROL_PLANE_ALLOW_REAL_HOME=1`.
 - **El build de release no tiene estas guardas.** Si probás un `.AppImage` o un binario de release, pasale siempre un puerto y carpetas temporales.
 - `npm run app:install` (`desktop/scripts/install.sh`) instala en tu máquina. Para probar el script sin instalar, usá `-- --dry-run` o `-- --no-install`.
-- Para probar el reinicio del script (cerrar con `--quit --keep-server` y volver a abrir) sin instalar nada, pasale otro binario con `CONTROL_PLANE_INSTALL_BIN`. **Siempre dentro de `dbus-run-session`**, con un puerto y carpetas temporales: el binario de release comparte la instancia única con la app instalada, y el script se niega a correr en el bus de siempre.
+- Para probar el reinicio del script (cerrar con `--quit --restart-for-update` y volver a abrir) sin instalar nada, pasale otro binario con `CONTROL_PLANE_INSTALL_BIN`. **Siempre dentro de `dbus-run-session`**, con un puerto y carpetas temporales: el binario de release comparte la instancia única con la app instalada, y el script se niega a correr en el bus de siempre.
 
   ```bash
   dbus-run-session -- bash -c 'export HOME=$(mktemp -d) CONTROL_PLANE_PORT=4730 CONTROL_PLANE_HOME=$(mktemp -d) CLAUDE_CONFIG_DIR=$(mktemp -d)
@@ -79,7 +79,7 @@ Puertos y datos en la app de desarrollo:
   - `CONTROL_PLANE_UPDATE_URL`: a dónde preguntar por el último release, en lugar de la API de GitHub (https, o `http://127.0.0.1:<puerto>`). Sin ella, la app de desarrollo no busca nada. Por ejemplo, un server local que conteste `{"tag_name":"v9.9.9","draft":false,"prerelease":false}`.
   - `CONTROL_PLANE_UPDATE_SCRIPT`: el instalador que lanza **Actualizar**, en lugar de `desktop/scripts/get.sh`. Lo recibe como `--version X.Y.Z --app-pid <pid> [--appimage <ruta> | --mac-app <ruta>]`, en su propia sesión.
   - `get.sh --from <carpeta> --dry-run` prueba los pasos del instalador con archivos locales y su `SHA256SUMS`.
-  - Dentro de `dbus-run-session` no hay demonio de avisos ni bandeja de GNOME. El menú se puede manejar igual por D-Bus (`com.canonical.dbusmenu`). Para ver los avisos, levantá un demonio de prueba en ese bus que anote los `Notify`.
+  - Dentro de `dbus-run-session` no hay demonio de avisos ni barra de arriba de GNOME (el ícono no se ve). El menú se puede manejar igual por D-Bus (`com.canonical.dbusmenu`). Para ver los avisos, levantá un demonio de prueba en ese bus que anote los `Notify`.
 
 Para tener sesiones sin una cuenta de Claude, usá el Claude falso de los tests:
 
@@ -93,7 +93,8 @@ Probar sin mouse, con una segunda apertura del mismo binario (en desarrollo, `de
 
 - `--quit`: sale como con **Salir** (pasa por **Al salir**). Anda también en release.
 - `--quit --keep-server`: sale sin preguntar y deja el server corriendo, sin cambiar **Al salir**. Anda también en release. `--keep-server` solo no hace nada.
-- `--help`: el uso. Sale antes de la instancia única, así que no le llega a una app abierta. `install.sh` busca el texto `--quit --keep-server` de esa ayuda en el binario instalado para saber si lo entiende.
+- `--quit --restart-for-update`: sale sin preguntar; antes, el server guarda las sesiones activas (`POST /api/restart/prepare`) y se detiene por el camino ordenado. El próximo server las retoma.
+- `--help`: el uso. Sale antes de la instancia única, así que no le llega a una app abierta. `install.sh` y `get.sh` buscan el texto `--quit --restart-for-update` de esa ayuda en el binario instalado para saber si lo entiende.
 - `--action <id> [--port N]`: aprieta un botón de la pantalla que se ve. Solo en desarrollo. Los ids: `retry`, `launch`, `pick-node`, `get-node`, `open-anyway`, `cancel`, `set-port` (con `--port`), `use-that`, `wait`, `log` y `stop`.
 
 Para abrirla como desde el menú de GNOME, sin heredar el entorno de tu terminal: `systemd-run --user --collect --unit=<nombre> -E CONTROL_PLANE_PORT=4710 -E CONTROL_PLANE_HOME=<carpeta> <binario>`, y la cortás con `systemctl --user stop <nombre>`.
@@ -109,7 +110,9 @@ Cuidados:
 
 1. `npm run version:set X.Y.Z` (la cambia en todos lados; `npm test` falla si quedan desparejas) y commiteá en `main`.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`: el workflow [release](.github/workflows/release.yml) corre los tests, arma el `.dmg`, el `.deb` y el `.AppImage`, y deja un release **en borrador** con `SHA256SUMS`.
-3. Revisalo en GitHub → Releases y publicalo a mano: recién ahí lo ve `get.sh`.
+3. Verificalo: `gh release download vX.Y.Z` tiene que traer los 5 archivos (`.dmg`, `.app.tar.gz`, `.deb`, `.AppImage` y `SHA256SUMS`), `sha256sum -c SHA256SUMS` tiene que dar OK en todos y el release no tiene que ser prerelease.
+4. Sumá las novedades arriba de las notas del workflow, sin sacar el bloque de instalación (`gh release edit vX.Y.Z --notes-file <archivo>`), y publicalo: `gh release edit vX.Y.Z --draft=false --latest`. Recién ahí lo ven `get.sh` y el aviso de actualización de la app. No se dejan borradores: si algo de lo anterior no coincide, no se publica.
+5. Confirmá que `/releases/latest` devuelve la nueva: `curl -fsS -H "Accept: application/vnd.github+json" -A control-plane-desktop/X.Y.Z https://api.github.com/repos/camilo-liotta/control-plane/releases/latest`.
 
 Taggeá un commit de `main` con los mismos `.github/workflows/` que `main` tiene en ese momento: si difieren, GitHub no le deja al `GITHUB_TOKEN` crear el release (403). Para probar el workflow sin sacar una versión: Actions → release → Run workflow sobre `main`, con un tag que no empiece con `v` (por ejemplo `prueba-1`). Queda un borrador marcado como prerelease: borralo después.
 
@@ -118,11 +121,12 @@ Taggeá un commit de `main` con los mismos `.github/workflows/` que `main` tiene
 - Un cambio por PR, desde una rama propia, contra `main`.
 - Contá qué cambia, por qué y cómo lo probaste. Si toca la UI, sumá una captura.
 - `npm run typecheck` y `npm test` tienen que pasar. Si arreglás un bug del server, sumá un test que lo muestre.
+- El CI (`.github/workflows/ci.yml`) corre typecheck, tests y build en cada PR y en cada push a `main`.
 - Si tocás `desktop/`, también `npm run test -w desktop`.
 - Seguí el estilo del código que tocás: mismos nombres, mismos patrones, comentarios solo donde hacen falta. Nada de frameworks nuevos sin charlarlo antes.
 - Los textos de la UI van en castellano rioplatense (voseo), con el mismo tono del resto.
 - El dashboard es 100% local: nada de telemetría, servicios externos ni cuentas propias. Solo habla con Claude Code y con tu navegador.
-  - La única excepción: la app de escritorio consulta una vez al día los releases de este repo en GitHub para avisarte si hay una versión nueva. No manda ningún dato tuyo (solo un User-Agent con su versión) y se apaga en bandeja → **Buscar actualizaciones**. El server y la web no salen a internet.
+  - La única excepción: la app de escritorio consulta una vez al día los releases de este repo en GitHub para avisarte si hay una versión nueva. No manda ningún dato tuyo (solo un User-Agent con su versión) y se apaga en el menú del ícono → **Buscar actualizaciones**. El server y la web no salen a internet.
 - Si el cambio se ve desde afuera, actualizá el README.
 
 Al contribuir aceptás que tu código se publique con la [licencia MIT](LICENSE) del proyecto y que seguís el [código de conducta](CODE_OF_CONDUCT.md).

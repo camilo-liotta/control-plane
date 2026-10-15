@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
 import { describe, it } from "node:test"
 
-import { sessionTokens, StreamNormalizer, type Action } from "../src/claude/normalize.ts"
+import { modelCosts, sessionTokens, StreamNormalizer, type Action } from "../src/claude/normalize.ts"
 
 // Mensajes con la forma real que emite `claude -p --output-format stream-json`.
 const own = new Set(["own-1"])
@@ -210,5 +212,39 @@ describe("tokens", () => {
     assert.equal(ev!.tokens, 330)
     const cost = actions.find((a) => a.type === "cost") as { tokens: { total: number } }
     assert.equal(cost.tokens.total, 1000)
+  })
+})
+
+describe("el costo por modelo", () => {
+  // Grabados de Claude Code 2.1 (sonnet): "uno", después un subagente en haiku, después "tres".
+  const results = fs
+    .readFileSync(path.join(import.meta.dirname, "fixtures", "results-model-usage.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+  const round = (o: Record<string, number>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v * 1e6) / 1e6]))
+
+  it("modelUsage es acumulado de la conversación, con el subagente bajo su propio modelo", () => {
+    assert.deepEqual(round(modelCosts(results[0]!.modelUsage)), { "claude-sonnet-5-5": 0.050068 })
+    assert.deepEqual(round(modelCosts(results[1]!.modelUsage)), { "claude-sonnet-5-5": 0.152123, "claude-haiku-5-5": 0.001928 })
+    // El tercero suma solo lo suyo a sonnet: haiku queda igual.
+    assert.deepEqual(round(modelCosts(results[2]!.modelUsage)), { "claude-sonnet-5-5": 0.15609, "claude-haiku-5-5": 0.001928 })
+    for (const r of results) {
+      const sum = Object.values(modelCosts(r.modelUsage)).reduce((a, b) => a + b, 0)
+      assert.ok(Math.abs(sum - Number(r.total_cost_usd)) < 1e-9, "las partes suman el total")
+    }
+  })
+
+  it("el costo sale antes que el fin de turno, para que el evento lleve lo del turno", () => {
+    const actions = norm().handle(results[1] as never)
+    const types = actions.map((a) => (a.type === "event" ? a.event.kind : a.type))
+    assert.deepEqual(types, ["cost", "turn_end", "turn_end"])
+    const cost = actions[0] as { byModel: Record<string, number> }
+    assert.deepEqual(Object.keys(cost.byModel), ["claude-sonnet-5-5", "claude-haiku-5-5"])
+  })
+
+  it("ignora lo que no trae costUSD", () => {
+    assert.deepEqual(modelCosts({ "claude-x": { inputTokens: 1 }, y: { costUSD: 0 } }), {})
+    assert.deepEqual(modelCosts(null), {})
   })
 })

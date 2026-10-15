@@ -145,8 +145,10 @@ export class Overview {
     const every = [...all, ...archived.filter((a) => !all.some((s) => s.id === a.id))]
     const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
     let costUsd = 0
+    const costByModel: Record<string, number> = {}
     for (const s of every) {
       costUsd += s.costUsd
+      for (const [model, usd] of Object.entries(s.costByModel ?? {})) costByModel[model] = (costByModel[model] ?? 0) + usd
       if (!s.tokens) continue
       tokens.input += s.tokens.input
       tokens.output += s.tokens.output
@@ -162,6 +164,7 @@ export class Overview {
       repos: await this.repos(projectId, project.repoPath, refresh),
       tokens,
       costUsd,
+      costByModel,
       sessions: every.length,
       lastActivity: last ? { sessionId: last.id, name: last.name, kind: last.kind, at: last.lastActivityAt!, text: last.lastActivity } : null,
       at: now(),

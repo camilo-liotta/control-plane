@@ -25,10 +25,11 @@ export function ImageThumb({ att, className }: { att: AttachmentRef; className?:
       type="button"
       onClick={() => setUi({ lightbox: { id: att.id, name: att.name } })}
       className={cn(
-        "group/thumb relative overflow-hidden rounded-lg border bg-muted/40 transition hover:border-foreground/30 focus-visible:ring-3 focus-visible:ring-ring/40 focus-visible:outline-none",
+        "group/thumb relative overflow-hidden rounded-xl bg-muted/60 transition hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
         className
       )}
       title={att.name}
+      aria-label={`Ver ${att.name}`}
     >
       <img src={attachmentUrl(att.id)} alt={att.name} loading="lazy" className="size-full object-cover" />
     </button>
@@ -43,7 +44,7 @@ export function FileChip({ att, className }: { att: AttachmentRef; className?: s
       target="_blank"
       rel="noreferrer"
       className={cn(
-        "inline-flex max-w-full items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted",
+        "inline-flex max-w-full items-center gap-2 rounded-xl bg-muted/60 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted",
         className
       )}
       title={`Abrir ${att.name}`}
@@ -89,7 +90,9 @@ export function Lightbox() {
         {lightbox && (
           <>
             <div className="flex items-center gap-2 pr-8">
-              <DialogTitle className="truncate text-sm">{lightbox.name}</DialogTitle>
+              <DialogTitle className="truncate text-sm" title={lightbox.name}>
+                {lightbox.name}
+              </DialogTitle>
               <DialogDescription className="sr-only">Imagen adjunta</DialogDescription>
               {lightbox.id && (
                 <div className="ml-auto flex gap-1">
@@ -108,7 +111,7 @@ export function Lightbox() {
                 </div>
               )}
             </div>
-            <div className="flex min-h-0 items-center justify-center overflow-auto rounded-lg bg-muted/40">
+            <div className="flex min-h-0 items-center justify-center overflow-auto rounded-xl bg-muted/60">
               <img
                 src={lightbox.src ?? (lightbox.id ? attachmentUrl(lightbox.id) : undefined)}
                 alt={lightbox.name}

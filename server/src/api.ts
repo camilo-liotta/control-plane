@@ -5,23 +5,29 @@ import path from "node:path"
 import type { FastifyInstance, FastifyReply } from "fastify"
 
 import type { Accounts } from "./accounts.ts"
+import type { Apps } from "./apps.ts"
 import { toRef, type AttachmentStore } from "./attachments.ts"
 import { readSettings, writeSetting } from "./claude/config-settings.ts"
 import { sessionChanges } from "./changes.ts"
 import type { Compaction, CompactionSelection } from "./compaction.ts"
 import { listLiveSessions, listTranscripts } from "./claude/local.ts"
 import { defaultSettings, type Db } from "./db.ts"
-import type { Editor } from "./editor.ts"
+import { projectFolder, type Editor } from "./editor.ts"
+import { PathResolver } from "./file-refs.ts"
 import type { Hub } from "./hub.ts"
-import { importSession, type Orchestration } from "./orchestration.ts"
+import type { Afk } from "./afk.ts"
+import { importSession, type DraftEdits, type Orchestration } from "./orchestration.ts"
 import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
 import { deleteProject } from "./project-delete.ts"
+import { archiveProject, restoreProject } from "./project-archive.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
+import type { Environments } from "./environments.ts"
 import type { SkillMarket } from "./skill-market.ts"
-import type { ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
+import { checkModelChoice } from "./shared/models.ts"
+import type { AppInput, ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
 interface Deps {
@@ -29,6 +35,7 @@ interface Deps {
   hub: Hub
   sessions: SessionManager
   orchestration: Orchestration
+  afk: Afk
   attachments: AttachmentStore
   accounts: Accounts
   compaction: Compaction
@@ -37,7 +44,9 @@ interface Deps {
   skillMarket: SkillMarket
   clis: Clis
   tasks: UserTasks
+  environments: Environments
   editor: Editor
+  apps: Apps
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -46,7 +55,7 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
-export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks }: Deps): Snapshot {
+export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks, environments, apps }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
@@ -55,6 +64,8 @@ export function snapshot({ db, sessions, orchestration, accounts, compaction, ta
     accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
     compactions: compaction.list(),
     tasks: tasks.list(),
+    environments: environments.list(),
+    apps: apps.all(),
     turns: sessions.turns(),
     meta: sessions.meta,
   }
@@ -78,19 +89,96 @@ function isGitRepo(dir: string) {
 }
 
 export function registerApi(app: FastifyInstance, deps: Deps) {
-  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, editor } = deps
+  const { db, sessions, orchestration, attachments, accounts, compaction, tools, overview, skillMarket, clis, tasks, environments, editor, apps } = deps
+  const fileRefs = new PathResolver()
+
+  // ------------------------------------------------------------------ entornos (sin secretos, salvo /secret)
+
+  type EnvBody = { name?: string; url?: string | null; app?: string | null; notes?: string | null }
+  type CredBody = { name?: string; username?: string | null; secret?: string | null; loginUrl?: string | null; notes?: string | null }
+  app.post<{ Params: { id: string }; Body: EnvBody }>("/api/projects/:id/environments", (req, reply) =>
+    guard(reply, () => {
+      if (environments.list(req.params.id).some((e) => e.name.toLowerCase() === String(req.body?.name ?? "").trim().toLowerCase()))
+        throw new Error(`Ya hay un entorno "${String(req.body?.name).trim()}"`)
+      return environments.setEnvironment(req.params.id, { ...req.body, name: String(req.body?.name ?? "") }, "user").environment
+    })
+  )
+  app.patch<{ Params: { id: string }; Body: EnvBody }>("/api/environments/:id", (req, reply) =>
+    guard(reply, () => environments.updateEnvironment(req.params.id, req.body ?? {}, "user"))
+  )
+  app.delete<{ Params: { id: string } }>("/api/environments/:id", (req, reply) => guard(reply, () => environments.removeEnvironment(req.params.id, "user")))
+  app.post<{ Params: { id: string }; Body: CredBody }>("/api/environments/:id/credentials", (req, reply) =>
+    guard(reply, () => {
+      const env = db.getEnvironment(req.params.id)
+      if (!env) throw new Error("No existe el entorno")
+      if (db.findCredential(env.id, String(req.body?.name ?? "").trim())) throw new Error(`Ya hay una credencial "${String(req.body?.name).trim()}" en ese entorno`)
+      return environments.addCredential(env.projectId, env.id, { ...req.body, name: String(req.body?.name ?? "") }, "user").credential
+    })
+  )
+  app.patch<{ Params: { id: string }; Body: CredBody }>("/api/credentials/:id", (req, reply) =>
+    guard(reply, () => {
+      const c = db.getCredential(req.params.id)
+      const env = c && db.getEnvironment(c.environmentId)
+      if (!env) throw new Error("No existe la credencial")
+      return environments.updateCredential(env.projectId, { id: req.params.id }, req.body ?? {}, "user")
+    })
+  )
+  app.delete<{ Params: { id: string } }>("/api/credentials/:id", (req, reply) =>
+    guard(reply, () => {
+      const c = db.getCredential(req.params.id)
+      const env = c && db.getEnvironment(c.environmentId)
+      if (!env) throw new Error("No existe la credencial")
+      environments.removeCredential(env.projectId, { id: req.params.id }, "user")
+    })
+  )
+  // El secreto, solo al mostrarlo o copiarlo. Sin caché: no queda en el navegador.
+  app.get<{ Params: { id: string } }>("/api/credentials/:id/secret", (req, reply) => {
+    reply.header("cache-control", "no-store")
+    return guard(reply, () => ({ secret: environments.secret(req.params.id) }))
+  })
+
+  // ------------------------------------------------------------------ apps (TRAY)
+
+  // `watch=1`: la web está mirando el proyecto; mientras dure, se mira la salud de las que no corren.
+  app.get<{ Params: { id: string }; Querystring: { watch?: string } }>("/api/projects/:id/apps", (req, reply) =>
+    guard(reply, () => {
+      requireProject(req.params.id)
+      if (req.query.watch) apps.watch(req.params.id)
+      return apps.list(req.params.id)
+    })
+  )
+  app.get<{ Params: { id: string } }>("/api/projects/:id/apps/suggestions", (req, reply) => guard(reply, () => apps.suggest(req.params.id)))
+  app.post<{ Params: { id: string }; Body: AppInput }>("/api/projects/:id/apps", (req, reply) => guard(reply, () => apps.create(req.params.id, req.body ?? {}, null)))
+  app.post<{ Params: { id: string } }>("/api/projects/:id/apps/start-all", (req, reply) => guard(reply, () => apps.startAll(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/projects/:id/apps/stop-all", (req, reply) => guard(reply, () => apps.stopAll(req.params.id)))
+  app.patch<{ Params: { id: string }; Body: AppInput }>("/api/apps/:id", (req, reply) => guard(reply, () => apps.update(req.params.id, req.body ?? {})))
+  app.delete<{ Params: { id: string } }>("/api/apps/:id", (req, reply) => guard(reply, () => apps.remove(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/apps/:id/start", (req, reply) => guard(reply, () => apps.start(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/apps/:id/stop", (req, reply) => guard(reply, () => apps.stop(req.params.id)))
+  app.post<{ Params: { id: string } }>("/api/apps/:id/restart", (req, reply) => guard(reply, () => apps.restart(req.params.id)))
+  app.get<{ Params: { id: string } }>("/api/apps/:id/log", (req, reply) => guard(reply, () => ({ lines: apps.log(req.params.id) })))
 
   // ------------------------------------------------------------------ tareas para vos
 
-  app.post<{ Params: { id: string }; Body: { title?: string; steps?: string[]; why?: string; due?: number | null } }>("/api/projects/:id/tasks", (req, reply) =>
-    guard(reply, () => tasks.create(req.params.id, { title: String(req.body?.title ?? ""), steps: Array.isArray(req.body?.steps) ? req.body.steps.map(String) : [], why: req.body?.why ?? null, due: req.body?.due ?? null }, null).task)
-  )
-  app.patch<{ Params: { id: string }; Body: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[] } }>("/api/tasks/:id", (req, reply) =>
+  const tagList = (v: unknown) => (Array.isArray(v) ? v.map(String) : undefined)
+  app.post<{ Params: { id: string }; Body: { title?: string; steps?: string[]; why?: string; due?: number | null; priority?: number | null; tags?: string[] } }>("/api/projects/:id/tasks", (req, reply) =>
     guard(reply, () => {
       const b = req.body ?? {}
-      return tasks.update(req.params.id, { status: b.status, note: b.note, title: b.title, steps: b.steps }, "user", { notify: b.notify })
+      const steps = Array.isArray(b.steps) ? b.steps.map(String) : []
+      return tasks.create(req.params.id, { title: String(b.title ?? ""), steps, why: b.why ?? null, due: b.due ?? null, priority: b.priority ?? null, tags: tagList(b.tags) }, null).task
     })
   )
+  app.patch<{
+    Params: { id: string }
+    Body: { status?: "open" | "done" | "dismissed"; note?: string; notify?: boolean; title?: string; steps?: string[]; priority?: number | null; tags?: string[] }
+  }>("/api/tasks/:id", (req, reply) =>
+    guard(reply, () => {
+      const b = req.body ?? {}
+      return tasks.update(req.params.id, { status: b.status, note: b.note, title: b.title, steps: b.steps, priority: b.priority, tags: tagList(b.tags) }, "user", { notify: b.notify })
+    })
+  )
+  // El botón de la tarea: el mismo login que Herramientas → CLIs; si sale bien, la tarea se cierra sola.
+  app.post<{ Params: { id: string } }>("/api/tasks/:id/cli-login", (req, reply) => guard(reply, () => tasks.loginFromTask(req.params.id)))
 
   // ------------------------------------------------------------------ CLIs (de la máquina, para todos)
 
@@ -245,11 +333,14 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
           throw new Error("La carpeta del repo no existe")
         const name = req.body.name?.trim() || path.basename(repoPath)
         const account = req.body.accountId ? requireAccount(req.body.accountId) : accounts.defaultAccount()
+        const settings = { ...defaultSettings, ...(req.body.settings ?? {}) }
+        delete (settings as Record<string, unknown>).autoDispatch
         const project = {
           id: shortId("p_"),
           name,
           repoPath,
-          settings: { ...defaultSettings, ...(req.body.settings ?? {}) },
+          settings,
+          afk: null,
           accountId: account.id,
           createdAt: now(),
           archivedAt: null,
@@ -280,9 +371,20 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         const p = requireProject(req.params.id)
         const settings = req.body.settings ? { ...p.settings, ...req.body.settings } : undefined
         if (settings) {
+          // Lo reemplazó el AFK (POST /api/projects/:id/afk): una web vieja puede seguir mandándolo.
+          delete (settings as Record<string, unknown>).autoDispatch
           settings.batchWindowSec = Math.min(600, Math.max(0, Number(settings.batchWindowSec) || 0))
           if (!["auto", "notify", "ask"].includes(settings.compactMode)) settings.compactMode = defaultSettings.compactMode
           settings.compactWaitMin = Math.min(45, Math.max(1, Math.round(Number(settings.compactWaitMin) || defaultSettings.compactWaitMin)))
+          // El de los workers se valida contra el catálogo; null = igual que el del proyecto.
+          const worker = checkModelChoice(
+            sessions.meta.models,
+            settings.workerModel ?? null,
+            settings.workerEffort ?? null,
+            settings.workerModel ?? settings.defaultModel ?? null
+          )
+          settings.workerModel = worker.model
+          settings.workerEffort = worker.effort
         }
         db.updateProject(p.id, { name: req.body.name?.trim() || undefined, settings })
         const view = orchestration.projectView(db.getProject(p.id)!)
@@ -293,13 +395,54 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
   )
 
   app.delete<{ Params: { id: string } }>("/api/projects/:id", (req, reply) =>
-    guard(reply, async () => {
+    guard(reply, () => {
       const p = requireProject(req.params.id)
-      for (const s of db.listSessions().filter((s) => s.projectId === p.id)) await sessions.archive(s.id)
-      db.updateProject(p.id, { archivedAt: now() })
-      const view = orchestration.projectView(db.getProject(p.id)!)
-      deps.hub.broadcast({ type: "project", project: view })
-      return view
+      // Un proyecto archivado no puede quedar enviando solo.
+      deps.afk.stop(p.id, "user")
+      return archiveProject(deps, p)
+    })
+  )
+
+  // Modo AFK: la orquestadora envía sin esperar tu aprobación, con tiempo y presupuesto como topes.
+  app.post<{ Params: { id: string }; Body: { until?: number | null; budgetUsd?: number | null } }>("/api/projects/:id/afk", (req, reply) =>
+    guard(reply, () => {
+      requireProject(req.params.id)
+      return deps.afk.start(req.params.id, { until: req.body?.until, budgetUsd: req.body?.budgetUsd })
+    })
+  )
+  app.delete<{ Params: { id: string } }>("/api/projects/:id/afk", (req, reply) =>
+    guard(reply, () => {
+      const p = requireProject(req.params.id)
+      return deps.afk.stop(p.id, "user") ?? orchestration.projectView(p)
+    })
+  )
+  // Lo que pasó en el último período AFK (null si el proyecto nunca estuvo AFK).
+  app.get<{ Params: { id: string } }>("/api/projects/:id/afk-log", (req, reply) => {
+    try {
+      requireProject(req.params.id)
+      // A mano (no por guard): el "nunca estuvo AFK" es un JSON null, no { ok: true }.
+      return reply.type("application/json").send(JSON.stringify(deps.afk.log(req.params.id)))
+    } catch (err) {
+      return reply.code(400).send({ error: errorMessage(err) })
+    }
+  })
+
+  // Los archivados (de todas las cuentas: la web filtra por la que estás mirando).
+  // Los mensajes entre orquestadoras que mandó o recibió el proyecto, más nuevos primero.
+  app.get<{ Params: { id: string } }>("/api/projects/:id/messages", (req, reply) =>
+    guard(reply, () => {
+      if (!db.getProject(req.params.id)) throw new Error("El proyecto no existe")
+      return orchestration.projectMessages(req.params.id)
+    })
+  )
+
+  app.get("/api/projects/archived", () => db.listArchivedProjects().map((p) => orchestration.projectView(p)))
+
+  app.post<{ Params: { id: string } }>("/api/projects/:id/restore", (req, reply) =>
+    guard(reply, () => {
+      const result = restoreProject(deps, req.params.id)
+      if (result.project.accountId) broadcastAccount(result.project.accountId)
+      return result
     })
   )
 
@@ -365,6 +508,27 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       })
   )
 
+  // Pedirle a una sesión que cancele algo que programó (lo cancela ella, con sus herramientas).
+  app.post<{ Params: { id: string; itemId: string }; Body: { clientId?: string } }>("/api/sessions/:id/scheduled/:itemId/cancel", (req, reply) =>
+    guard(reply, () => {
+      const s = requireSession(req.params.id)
+      const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.slice(0, 100) : undefined
+      return sessions.requestCancelScheduled(s.id, req.params.itemId, clientId)
+    })
+  )
+
+  // Lo programado por todas las sesiones del proyecto (también viaja en cada sesión, por WS).
+  app.get<{ Params: { id: string } }>("/api/projects/:id/scheduled", (req, reply) =>
+    guard(reply, () => {
+      const p = requireProject(req.params.id)
+      return sessions
+        .list()
+        .filter((s) => s.projectId === p.id && !s.archivedAt)
+        .flatMap((s) => s.scheduled.map((item) => ({ ...item, sessionId: s.id, sessionName: s.name })))
+        .sort((a, b) => (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity))
+    })
+  )
+
   app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>("/api/projects/:id/overview", (req, reply) =>
     guard(reply, () => overview.get(requireProject(req.params.id).id, req.query.refresh === "1"))
   )
@@ -428,6 +592,40 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => {
       const s = requireSession(req.params.id)
       return editor.open(s.cwd, String(req.body?.path ?? ""), req.body?.side === "committed" ? "committed" : "uncommitted")
+    })
+  )
+
+  // Abrir el proyecto (o uno de sus repos o worktrees) en el editor configurado.
+  app.post<{ Params: { id: string }; Body: { path?: string } }>("/api/projects/:id/open-in-editor", (req, reply) =>
+    guard(reply, async () => {
+      const p = requireProject(req.params.id)
+      const dir = await projectFolder(p.repoPath, req.body?.path)
+      await editor.openFolder(dir)
+      return { dir }
+    })
+  )
+
+  // Rutas a archivos que mencionan las sesiones: cuáles existen (en lote) y abrir una en el editor.
+  const refBase = (projectId: string, sessionId?: string) => {
+    const p = requireProject(projectId)
+    const s = sessionId ? db.getSession(sessionId) : null
+    return { projectRoot: p.repoPath, sessionCwd: s && s.projectId === p.id ? s.cwd : undefined }
+  }
+
+  app.post<{ Params: { id: string }; Body: { paths?: unknown; sessionId?: string } }>("/api/projects/:id/resolve-paths", (req, reply) =>
+    guard(reply, async () => {
+      const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter((x): x is string => typeof x === "string") : []
+      const found = await fileRefs.resolve(paths, refBase(req.params.id, req.body?.sessionId))
+      return { ok: found.map(({ abs: _abs, root: _root, ...r }) => r) }
+    })
+  )
+
+  app.post<{ Params: { id: string }; Body: { path?: string; sessionId?: string } }>("/api/projects/:id/open-path", (req, reply) =>
+    guard(reply, async () => {
+      const f = await fileRefs.one(String(req.body?.path ?? ""), refBase(req.params.id, req.body?.sessionId))
+      if (f.kind === "dir") await editor.openFolder(f.abs)
+      else await editor.openAt(f.root, f.abs, f.line, f.col)
+      return { rel: f.rel, kind: f.kind }
     })
   )
 
@@ -780,7 +978,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   // ------------------------------------------------------------------ drafts
 
-  app.post<{ Params: { id: string }; Body: { title?: string; prompt?: string; name?: string; role?: string; subagents?: unknown; fresh?: boolean } }>(
+  app.post<{ Params: { id: string }; Body: DraftEdits & { name?: string; role?: string } }>(
     "/api/drafts/:id/send",
     (req, reply) => guard(reply, () => orchestration.sendDraft(req.params.id, req.body ?? {}))
   )
@@ -789,8 +987,21 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => orchestration.discardDraft(req.params.id))
   )
 
-  app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string; subagents?: unknown; fresh?: boolean } }>("/api/drafts/:id", (req, reply) =>
+  app.patch<{ Params: { id: string }; Body: DraftEdits }>("/api/drafts/:id", (req, reply) =>
     guard(reply, () => orchestration.editDraft(req.params.id, req.body ?? {}))
+  )
+
+  // Planes aprobados: pausar, reanudar (retry repite el paso que se frenó, next sigue con el siguiente) y cancelar.
+  app.post<{ Params: { id: string } }>("/api/drafts/:id/plan/pause", (req, reply) =>
+    guard(reply, () => orchestration.plans.userPause(req.params.id))
+  )
+
+  app.post<{ Params: { id: string }; Body: { mode?: "retry" | "next" } | null }>("/api/drafts/:id/plan/resume", (req, reply) =>
+    guard(reply, () => orchestration.plans.resume(req.params.id, req.body?.mode === "next" || req.body?.mode === "retry" ? req.body.mode : undefined))
+  )
+
+  app.post<{ Params: { id: string } }>("/api/drafts/:id/plan/cancel", (req, reply) =>
+    guard(reply, () => orchestration.plans.cancel(req.params.id, "Lo cancelaste.", "user"))
   )
 
   // ----------------------------------------------------------------- reports

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import fs from "node:fs"
 import { EventEmitter } from "node:events"
 
 import { shortId } from "../util.ts"
@@ -16,6 +17,15 @@ interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void
   reject: (err: Error) => void
   timer: NodeJS.Timeout
+}
+
+/** Por qué no arrancó el proceso, en palabras: sin Claude Code instalado, el error crudo es "spawn claude ENOENT". */
+export function spawnProblem(err: NodeJS.ErrnoException, bin: string, cwd: string): string {
+  // Node dice "spawn <bin> ENOENT" también cuando lo que falta es la carpeta (un worktree borrado).
+  if (err.code === "ENOENT" && !fs.existsSync(cwd)) return `No existe la carpeta de la sesión (${cwd}).`
+  if (err.code === "ENOENT") return `No se encontró Claude Code (${bin}). Instalalo o revisá CLAUDE_BIN, y reanudá la sesión.`
+  if (err.code === "EACCES") return `No se pudo ejecutar Claude Code (${bin}): no tiene permiso de ejecución.`
+  return String(err.message)
 }
 
 /**
@@ -71,7 +81,7 @@ export class ClaudeProcess extends EventEmitter<{
       // EPIPE si el proceso murió: lo reporta el evento exit.
     })
     child.on("error", (err) => {
-      this.stderrLines.push(String(err.message))
+      this.stderrLines.push(spawnProblem(err, this.bin, this.cwd))
       this.finish(null, null)
     })
     child.on("exit", (code, signal) => this.finish(code, signal))
@@ -80,9 +90,11 @@ export class ClaudeProcess extends EventEmitter<{
   private finish(code: number | null, signal: NodeJS.Signals | null) {
     if (this.exited) return
     this.exited = true
+    // Lo último que dijo por stderr explica por qué (p. ej. "No conversation found with session ID: …").
+    const why = this.stderrLines.at(-1)?.trim()
     for (const [id, p] of this.pending) {
       clearTimeout(p.timer)
-      p.reject(new Error("La sesión terminó"))
+      p.reject(new Error(why ? `La sesión terminó: ${why.slice(0, 300)}` : "La sesión terminó"))
       this.pending.delete(id)
     }
     this.emit("exit", {

@@ -8,7 +8,7 @@ import type { NoticeOpen, ServerMessage } from "@shared/types"
 import { draggingFromDesktop, dropFromDesktop } from "./desktop-drop"
 import { playNotice } from "./sounds"
 import { useStore } from "./store"
-import { useUi } from "./ui"
+import { useUi, type UpdateFailure } from "./ui"
 
 type ToastMessage = Extract<ServerMessage, { type: "toast" }>
 
@@ -28,6 +28,8 @@ declare global {
       dragging: (on: unknown) => void
       /** Hay una versión nueva de la app: solo para mostrar el cartel (no actualiza nada). */
       update: (info: unknown) => boolean
+      /** "Actualizar a…" falló: el motivo y lo último del log, para mostrarlo acá también. */
+      updateFailed: (info: unknown) => boolean
     }
   }
 }
@@ -35,6 +37,15 @@ declare global {
 /** Si la web corre dentro de la app de escritorio. */
 export function inDesktop() {
   return typeof window !== "undefined" && typeof window.__CONTROL_PLANE_DESKTOP__ === "object" && window.__CONTROL_PLANE_DESKTOP__ !== null
+}
+
+/**
+ * Dónde está el ícono de la app de escritorio. "Bandeja" es solo la de la web: el ícono del sistema
+ * se nombra así, para que no se confundan.
+ */
+export function trayIconPlace() {
+  const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent)
+  return mac ? "el ícono de control-plane en la barra de menú" : "el ícono de control-plane en la barra de arriba"
 }
 
 export type NotifyPermission = NotificationPermission | "unsupported"
@@ -110,6 +121,7 @@ function open(msg: Pick<ToastMessage, "projectId" | "sessionId" | "open">) {
   // La página de destino baja hasta lo que hay que mirar (ver `reveal` en ui.ts).
   if (msg.open === "proposals" && msg.sessionId) set({ reveal: { kind: "proposals", id: msg.sessionId, at: Date.now() } })
   if (msg.open === "tasks" && msg.projectId) set({ reveal: { kind: "tasks", id: msg.projectId, at: Date.now() } })
+  if (msg.open === "environments" && msg.projectId) set({ reveal: { kind: "environments", id: msg.projectId, at: Date.now() } })
 }
 
 /**
@@ -187,6 +199,43 @@ export function updateFromDesktop(info: unknown): boolean {
   return true
 }
 
+/** Solo la URL de acción de la app para reintentar (nada de navegar a otro lado). */
+export function retryUrlOf(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length > 300) return null
+  return /^(tauri:\/\/localhost|http:\/\/tauri\.localhost)\/__action\/update-retry\?t=[0-9a-f]{32}$/.test(raw) ? raw : null
+}
+
+/** "Reintentar": la app intercepta la navegación a su URL de acción (la página no se mueve). */
+export function retryUpdate(failure: UpdateFailure) {
+  if (!failure.retryUrl) return
+  toast.dismiss(`update-failed-${failure.version}`)
+  window.location.href = failure.retryUrl
+}
+
+/**
+ * La actualización falló. El aviso del sistema puede no verse (o haberse ido), así que la página
+ * también lo muestra, con "Ver log". Solo muestra: no le pide nada a la app.
+ */
+export function updateFailedFromDesktop(info: unknown): boolean {
+  if (!info || typeof info !== "object") return false
+  const { version, error, logPath, log, retryUrl } = info as Record<string, unknown>
+  if (typeof version !== "string" || !/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(version)) return false
+  const failure = {
+    version,
+    error: typeof error === "string" ? error.slice(0, 500) : "",
+    logPath: typeof logPath === "string" ? logPath.slice(0, 500) : "",
+    log: typeof log === "string" ? log.slice(-20_000) : "",
+    retryUrl: retryUrlOf(retryUrl),
+  }
+  toast.error(`No se pudo actualizar a v${version}`, {
+    id: `update-failed-${version}`,
+    description: failure.error || undefined,
+    duration: Infinity,
+    action: { label: "Ver log", onClick: () => useUi.getState().set({ updateFailure: failure }) },
+  })
+  return true
+}
+
 /** Registra window.__cpDesktop, solo dentro de la app de escritorio. */
 export function installDesktopApi() {
   if (!inDesktop()) return
@@ -196,5 +245,50 @@ export function installDesktopApi() {
     dropFiles: dropFromDesktop,
     dragging: draggingFromDesktop,
     update: updateFromDesktop,
+    updateFailed: updateFailedFromDesktop,
   }
+}
+
+// ------------------------------------------------------------------ qué trae esta versión (M10)
+
+const SEEN_VERSION = "cp:version-vista"
+
+/** a > b, comparando versiones x.y.z. */
+function newer(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number)
+  const pb = b.split(".").map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d) return d > 0
+  }
+  return false
+}
+
+/**
+ * Después de actualizar, un aviso (una sola vez por versión) con el link a las novedades. La primera
+ * vez que se abre la web solo se anota la versión: no hay "antes" con qué comparar.
+ */
+export function installWhatsNew() {
+  const check = (version: string | undefined, repoUrl: string | null | undefined) => {
+    if (!version) return
+    let seen: string | null = null
+    try {
+      seen = localStorage.getItem(SEEN_VERSION)
+      localStorage.setItem(SEEN_VERSION, version)
+    } catch {
+      return
+    }
+    if (!seen || seen === version || !newer(version, seen)) return
+    const notes = repoUrl ? `${repoUrl.replace(/\/$/, "")}/releases/tag/v${version}` : null
+    toast.success(`control-plane actualizado a v${version}`, {
+      id: `whats-new-${version}`,
+      description: notes ? "Las novedades están en las notas de la versión." : undefined,
+      duration: 20_000,
+      action: notes ? { label: "Ver novedades", onClick: () => window.open(notes, "_blank", "noopener") } : undefined,
+    })
+  }
+  check(useStore.getState().meta?.version, useStore.getState().meta?.repoUrl)
+  useStore.subscribe((s, prev) => {
+    if (s.meta?.version !== prev.meta?.version) check(s.meta?.version, s.meta?.repoUrl)
+  })
 }
