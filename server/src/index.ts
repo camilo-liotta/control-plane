@@ -210,6 +210,8 @@ async function main() {
       if (a) hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id)) })
     },
     accountName: (id) => accounts.get(id)?.name ?? "de siempre",
+    // Solo para las pruebas de punta a punta (scripts/ux/e2e-limite.mjs): los tiempos de verdad son de minutos.
+    ...(process.env.CONTROL_PLANE_LIMIT_FAST === "1" ? { sweepMs: 400, gapMs: 300, announceMs: 300, marginMs: 300, retryMs: 3000, probeMs: 700 } : {}),
   })
   const compaction = new Compaction({
     db,

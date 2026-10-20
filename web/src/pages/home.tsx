@@ -9,6 +9,7 @@ import { Mark, useInboxParts } from "@/components/app-sidebar"
 import { authLine } from "@/components/accounts"
 import { PageHeader } from "@/components/page-header"
 import { Lamp, SessionLamp, TonePill } from "@/components/status"
+import { limitTitle, limitWhen } from "@/lib/limit"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Shortcut } from "@/components/ui/kbd"
@@ -99,6 +100,7 @@ function ProjectCard({ project }: { project: Project }) {
   const needs = all.filter(sessionNeedsYou).length
   const working = all.filter((s) => s.status === "working" || s.status === "starting").length
   const ready = openDrafts(drafts, project.id).filter((d) => d.state === "ready").length
+  const limitedNow = all.filter((s) => s.limited)
   const last = Math.max(0, ...all.map((s) => s.lastActivityAt ?? 0))
   const t = totals(all)
   // Primero las que te necesitan, después las que trabajan; la orquestadora siempre arriba.
@@ -126,11 +128,16 @@ function ProjectCard({ project }: { project: Project }) {
       </div>
       <div className="flex min-h-5 flex-wrap items-center gap-1.5">
         {afkOf(project) && <TonePill tone="idle">AFK {afkUntil(afkOf(project)!.until)}</TonePill>}
+        {limitedNow.length > 0 && (
+          <TonePill tone="pending" title={limitTitle(limitedNow[0]!.limited!)}>
+            {limitedNow.length === 1 ? "1 sin uso" : `${limitedNow.length} sin uso`} · hasta {limitWhen(Math.max(...limitedNow.map((s) => s.limited!.resetsAt)))}
+          </TonePill>
+        )}
         {needs > 0 && <TonePill tone="attention">{needs} {needs === 1 ? "te necesita" : "te necesitan"}</TonePill>}
         {working > 0 && <TonePill tone="working">{working} trabajando</TonePill>}
         {ready > 0 && <TonePill tone="pending">{plural(ready, "propuesta", "propuestas")}</TonePill>}
         {project.review.queued > 0 && <TonePill tone="pending">{project.review.queued} en cola</TonePill>}
-        {!needs && !working && !ready && !project.review.queued && !afkOf(project) && <span className="text-xs text-muted-foreground">Todo quieto</span>}
+        {!needs && !working && !ready && !project.review.queued && !afkOf(project) && !limitedNow.length && <span className="text-xs text-muted-foreground">Todo quieto</span>}
       </div>
       <ul className="flex flex-col gap-1">
         {shown.map((s) => {
@@ -141,7 +148,9 @@ function ProjectCard({ project }: { project: Project }) {
               <span className={cn("name min-w-0 truncate", s.kind === "orchestrator" && "text-muted-foreground")} title={sessionName(s)}>
                 {sessionName(s)}
               </span>
-              <span className="ml-auto shrink-0 text-2xs text-muted-foreground">{st.label}</span>
+              <span className="ml-auto min-w-0 truncate text-2xs text-muted-foreground" title={s.limited ? limitTitle(s.limited) : undefined}>
+                {s.limited && st.tone === "pending" ? "Sin uso" : st.label}
+              </span>
             </li>
           )
         })}

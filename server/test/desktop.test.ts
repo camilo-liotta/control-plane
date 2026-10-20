@@ -92,7 +92,21 @@ describe("resumen de escritorio", () => {
         { id: "p1", name: "Uno", needs: 3, working: 1 },
         { id: "p2", name: "Dos", needs: 1, working: 1 },
       ],
+      limited: 0,
+      limitedUntil: null,
     })
+  })
+
+  it("las sesiones sin uso se cuentan aparte: no suman a «te necesita»", () => {
+    const resetsAt = Date.now() + 2 * 3_600_000
+    const limited = { ...session("a", "p1", "idle"), limited: { kind: "five_hour", resetsAt, source: "event", since: 1, interrupted: true, willResume: true } } as Session
+    const summary = desktopSummary({
+      db: { listProjects: () => [{ id: "p1", name: "Uno" }] as never, listDrafts: () => [], listTasks: () => [] },
+      sessions: { list: () => [limited, { ...limited, id: "b" } as Session, session("c", "p1", "idle")], isRunning: () => true },
+    })
+    assert.equal(summary.needs, 0)
+    assert.equal(summary.limited, 2)
+    assert.match(summary.limitedUntil ?? "", /^\d\d:\d\d$/)
   })
 })
 
@@ -139,7 +153,7 @@ describe("WS de escritorio", () => {
   before(async () => {
     const port = await freePort()
     base = `ws://127.0.0.1:${port}/ws`
-    summary = { needs: 0, working: 0, running: 0, projects: [] }
+    summary = { needs: 0, working: 0, running: 0, projects: [], limited: 0, limitedUntil: null }
     hub = new Hub()
     hub.setSummary(() => structuredClone(summary))
     app = Fastify()
@@ -190,7 +204,7 @@ describe("WS de escritorio", () => {
     summary.needs = 3
     hub.broadcast({ type: "project", project: { id: "p1" } as never })
     const next = await desk.waitFor((m) => m.type === "desktop_summary" && m.summary.needs > 0)
-    assert.deepEqual(next, { type: "desktop_summary", summary: { needs: 3, working: 2, running: 0, projects: [] } })
+    assert.deepEqual(next, { type: "desktop_summary", summary: { needs: 3, working: 2, running: 0, projects: [], limited: 0, limitedUntil: null } })
     await sleep(450)
     assert.equal(desk.got.filter((m) => m.type === "desktop_summary").length, 2)
     assert.ok(!web.got.some((m) => m.type === "desktop_summary"))

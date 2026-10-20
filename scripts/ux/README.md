@@ -107,3 +107,12 @@ Es el de los tests (`server/test/fake-claude.ts`), con algunos agregados en `fak
 - una sesión con `FACTURACION` en el nombre tiene el contexto lleno y un borrador de compactación por decidir;
 - `LARGO` se puede interrumpir (Esc dos veces o Interrumpir): el turno cierra como interrumpido;
 - del de los tests vienen `LARGO` (un turno que no termina), `PREGUNTA`, `SUBAGENTE`, `CRON …` y `WAKEUP …`.
+
+## Prueba de punta a punta del límite de uso
+
+```bash
+env -u NODE_ENV npm run build -w web
+node scripts/ux/e2e-limite.mjs          # server propio en :4733, datos y capturas en ~/.cache/cp-ux/limite
+```
+
+Recorre el límite de 5 h, el semanal y el de gasto con el Claude falso (`LIMITE <tipo> <segundos>`): frenar, retener, retomar al renovarse, volver a frenarse, «No retomar sola», server apagado y reinicio para actualizar. El server corre con `CONTROL_PLANE_LIMIT_FAST=1` (margen, barrido y pausas de décimas de segundo). Con `nocap` no saca capturas.

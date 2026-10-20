@@ -1,4 +1,4 @@
-import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, RotateCcw, Square, SquareTerminal } from "lucide-react"
+import { ArrowDown, Archive, Blocks, Compass, EllipsisVertical, Layers, PanelRight, Pencil, Play, RotateCcw, RotateCw, Square, SquareTerminal, TimerOff } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link, useLocation } from "wouter"
@@ -37,7 +37,7 @@ import { usePanelSections } from "@/lib/panel-sections"
 import { reveal } from "@/lib/reveal"
 import { scrollSpot } from "@shared/navigation"
 import { scrollMemory, useNav } from "@/lib/nav"
-import { archiveSession, openCompaction, openSessionTools, renameSession, startSession, stopSession } from "@/lib/session-actions"
+import { archiveSession, openCompaction, openSessionTools, renameSession, retrySessionLimit, skipResume, startSession, stopSession } from "@/lib/session-actions"
 import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
 import { useUi } from "@/lib/ui"
@@ -315,6 +315,21 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </div>
+                {session.limited && (
+                  <>
+                    <DropdownMenuItem onClick={() => void retrySessionLimit(session.id)} title="Probar ahora, sin esperar a que se renueve (por ejemplo, si subiste el tope de gasto)">
+                      <RotateCw />
+                      Reintentar ahora
+                    </DropdownMenuItem>
+                    {session.limited.willResume && (
+                      <DropdownMenuItem onClick={() => void skipResume(session.id)} title="No se le pide que siga cuando se renueve el uso">
+                        <TimerOff />
+                        No retomar sola
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem onClick={() => renameSession(session.id)}>
                   <Pencil />
                   Renombrar

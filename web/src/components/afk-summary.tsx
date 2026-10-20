@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { afkEndText, afkOf, afkPillText, afkSeen, afkSpent, markAfkSeen } from "@/lib/afk"
 import { api } from "@/lib/api"
 import { clock, plural, timeAgo, usd } from "@/lib/format"
+import { limitKindLabel } from "@/lib/limit"
 import { costsByModel } from "@/lib/models"
 import { reportStatusView } from "@/lib/status"
 import { useModels, useStore } from "@/lib/store"
@@ -80,6 +81,7 @@ function Rows({ title, count, children }: { title: string; count: number; childr
   )
 }
 
+const hour = (ms: number) => new Date(ms).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })
 const rowClass = "flex min-h-9 items-center gap-2 rounded-md px-2 py-1.5 text-sm"
 
 function DraftRow({ d, projectId, link = true }: { d: AfkLogDraft; projectId: string; link?: boolean }) {
@@ -191,6 +193,14 @@ export function AfkSummaryCard({ project }: { project: Project }) {
               </li>
             )
           })}
+        </Rows>
+        <Rows title="Esperó el uso" count={(log.limitWaits ?? []).length}>
+          {(log.limitWaits ?? []).map((w) => (
+            <li key={w.since} className={cn(rowClass, "text-sm")}>
+              {/* Una espera, no una falla: lo dice en neutro, con los dos horarios. */}
+              Esperó el {limitKindLabel[w.kind]} de {hour(w.since)} a {w.endedAt ? hour(w.endedAt) : "ahora"}
+            </li>
+          ))}
         </Rows>
         <section className="px-4 py-3">
           <h3 className="eyebrow mb-1.5">Costo</h3>
