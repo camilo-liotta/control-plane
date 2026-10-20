@@ -21,6 +21,7 @@ import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
 import { deleteProject } from "./project-delete.ts"
+import { nameTaken } from "./names.ts"
 import { archiveProject, restoreProject } from "./project-archive.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
@@ -929,8 +930,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         if (req.body.name !== undefined) {
           const name = sanitizeSessionName(req.body.name).toUpperCase()
           if (!name) throw new Error("El nombre no es válido")
-          const clash = db.listSessions().some((x) => x.id !== s.id && x.name.toLowerCase() === name.toLowerCase())
-          if (clash) throw new Error(`Ya existe una sesión llamada ${name}`)
+          if (nameTaken(db.listSessions(), s.projectId, name, s.id)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
           await sessions.rename(s.id, name)
         }
         if (req.body.role !== undefined) sessions.update(s.id, { role: req.body.role.trim() })
@@ -962,9 +962,9 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => {
       const s = db.getSession(req.params.id)
       if (!s) throw new Error("La sesión no existe")
-      const clash = db.listSessions().some((x) => x.id !== s.id && x.name.toLowerCase() === s.name.toLowerCase())
-      if (clash) throw new Error(`Ya hay otra sesión llamada ${s.name}: renombrala antes de restaurar esta`)
+      if (nameTaken(db.listSessions(), s.projectId, s.name, s.id)) throw new Error(`Ya hay otra sesión llamada ${s.name} en el proyecto: renombrala antes de restaurar esta`)
       sessions.update(s.id, { archivedAt: null, status: "stopped" })
+      sessions.refreshProcessName(s.id)
       return sessions.view(db.getSession(s.id)!)
     })
   )

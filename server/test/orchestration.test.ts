@@ -91,6 +91,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     projectId,
     kind,
     name,
+    processName: name,
     role: "",
     claudeSessionId: `uuid-${counter}`,
     startedOnce: true,
@@ -642,4 +643,19 @@ describe("mensajes entre orquestadoras", () => {
     assert.deepEqual([m!.fromProjectName, m!.toProjectName, m!.text], ["Alfa", "Beta", "uno"])
     assert.equal(orch.projectMessages("pc").length, 0)
   })
+
+  it("los nombres de sesión son únicos por proyecto: el mismo nombre en otro proyecto no choca, en el propio sí", () => {
+    // W-BETA es de Beta; Alfa puede tener una con ese nombre (sin distinguir mayúsculas), W-ALFA no.
+    assert.equal(orch.nameTaken("pa", "w-beta"), false)
+    assert.equal(orch.nameTaken("pb", "w-beta"), true)
+    assert.equal(orch.nameTaken("pa", "W-ALFA"), true)
+    assert.equal(orch.nameTaken("pa", "W-ALFA", workerA.id), false, "la misma sesión (al renombrarse) no choca consigo")
+    const draft = { role: "QA", title: "T", prompt: "P", model: "sonnet", effort: "medium" }
+    assert.match(orch.proposeSession(orqA, { name: "w-beta", ...draft }), /Propuesta .* creada: sesión nueva W-BETA/)
+    assert.throws(() => orch.proposeSession(orqA, { name: "w-alfa", ...draft }), /Ya existe una sesión llamada W-ALFA en este proyecto/)
+    const steps = [{ title: "a", prompt: "a", model: "sonnet" as const, effort: "low" as const }]
+    assert.match(orch.plans.propose(orqB, { newSession: { name: "w-alfa", role: "x" }, title: "Plan", steps }), /Plan/)
+    assert.throws(() => orch.plans.propose(orqB, { newSession: { name: "w-beta", role: "x" }, title: "Plan 2", steps }), /Ya existe una sesión llamada W-BETA en este proyecto/)
+  })
+
 })

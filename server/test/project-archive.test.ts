@@ -82,13 +82,13 @@ describe("archivar y restaurar un proyecto", () => {
     assert.ok(last?.type === "project" && last.project.archivedAt === null, "avisa por WS que volvió")
   })
 
-  it("si un nombre está tomado, la worker queda archivada y la orquestadora se renombra", async () => {
+  it("si un nombre está tomado en el mismo proyecto, la worker queda archivada y la orquestadora se renombra", async () => {
     const orch = make("orchestrator", "ORQ-VIEJO")
     const worker = make("worker", "W1")
     await archiveProject(deps, db.getProject("p1")!)
-    db.insertProject({ id: "p2", name: "Nuevo", repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 2, archivedAt: null })
-    sessions.create({ projectId: "p2", kind: "orchestrator", name: "ORQ-VIEJO", role: "", cwd: dir })
-    sessions.create({ projectId: "p2", kind: "worker", name: "w1", role: "", cwd: dir })
+    // Mientras el proyecto está archivado, alguien crea sesiones con los mismos nombres dentro de él.
+    sessions.create({ projectId: "p1", kind: "orchestrator", name: "ORQ-VIEJO", role: "", cwd: dir })
+    sessions.create({ projectId: "p1", kind: "worker", name: "w1", role: "", cwd: dir })
 
     const { restored, skipped } = restoreProject(deps, "p1")
     assert.equal(restored, 1)
@@ -96,6 +96,24 @@ describe("archivar y restaurar un proyecto", () => {
     assert.equal(db.getSession(orch.id)!.archivedAt, null)
     assert.equal(db.getSession(orch.id)!.name, "ORQ-VIEJO-2")
     assert.ok(db.getSession(worker.id)!.archivedAt)
+  })
+
+  it("los nombres de otros proyectos no chocan: vuelve todo, y el nombre del proceso se califica", async () => {
+    const orch = make("orchestrator", "ORQ-VIEJO")
+    const worker = make("worker", "W1")
+    await archiveProject(deps, db.getProject("p1")!)
+    db.insertProject({ id: "p2", name: "Nuevo", repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 2, archivedAt: null })
+    const other = sessions.create({ projectId: "p2", kind: "worker", name: "w1", role: "", cwd: dir })
+    assert.equal(other.processName, "w1")
+
+    const { restored, skipped } = restoreProject(deps, "p1")
+    assert.equal(restored, 2)
+    assert.deepEqual(skipped, [])
+    assert.equal(db.getSession(orch.id)!.name, "ORQ-VIEJO", "la orquestadora no se renombra")
+    assert.equal(db.getSession(worker.id)!.name, "W1")
+    assert.equal(db.getSession(worker.id)!.archivedAt, null)
+    assert.equal(db.getSession(worker.id)!.processName, "W1·viejo", "la que vuelve se califica con su proyecto")
+    assert.equal(db.getSession(other.id)!.processName, "w1", "la que estaba no cambia")
   })
 
   it("no restaura uno que no está archivado ni uno que no existe", () => {

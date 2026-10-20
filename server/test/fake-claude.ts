@@ -36,6 +36,10 @@ let sid = flag("--resume") ?? flag("--session-id")
 const dir = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"))
 let file = path.join(dir, sid + ".jsonl")
 const name = flag("--name") ?? ""
+// Como ListAgents: los procesos que corren, por su --name. Un SendMessage solo llega a un nombre que exista.
+const procs = path.join(process.env.CLAUDE_CONFIG_DIR, "fake-procs")
+fs.mkdirSync(procs, { recursive: true })
+fs.writeFileSync(path.join(procs, encodeURIComponent(name)), String(process.pid))
 if (name.includes("FALLA1")) {
   const mark = path.join(process.env.CLAUDE_CONFIG_DIR, "falla1-" + name.replace(/[^A-Za-z0-9]/g, "-"))
   if (!fs.existsSync(mark)) {
@@ -184,8 +188,11 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     let verdict = null
     try { verdict = JSON.parse(run.stdout).hookSpecificOutput } catch {}
     const denied = verdict?.permissionDecision === "deny"
-    tool("SendMessage", input, denied ? verdict.permissionDecisionReason : "Message sent to " + to + ".")
-    say(denied ? "BLOQUEADO: " + verdict.permissionDecisionReason : "ENVIADO a " + to)
+    // Con updatedInput, la herramienta corre con el destino que cambió el hook (probado con el binario real).
+    const final = verdict?.permissionDecision === "allow" && verdict.updatedInput ? String(verdict.updatedInput.to ?? to) : to
+    const exists = fs.existsSync(path.join(procs, encodeURIComponent(final)))
+    tool("SendMessage", { ...input, to: final }, denied ? verdict.permissionDecisionReason : exists ? "Message sent to " + final + "." : "No agent is named '" + final + "' exactly.")
+    say(denied ? "BLOQUEADO: " + verdict.permissionDecisionReason : exists ? "ENVIADO a " + final : "NO LLEGÓ: no hay un proceso llamado " + final)
     result({})
     continue
   }

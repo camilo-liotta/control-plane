@@ -7,6 +7,7 @@ import { promisify } from "node:util"
 import { config } from "../config.ts"
 import type { TimelineEvent, TokenUsage } from "../shared/types.ts"
 import { oneLine } from "../util.ts"
+import { shortName } from "../names.ts"
 import { childEnv } from "./env.ts"
 import { modelCosts, sessionTokens, StreamNormalizer } from "./normalize.ts"
 
@@ -196,7 +197,7 @@ export function readTranscript(
         const text = typeof content === "string" ? content : content.map((b: { text?: string }) => b.text ?? "").join("\n")
         if (obj.turnOrigin === "peer") {
           const m = PEER.exec(text)
-          if (m) push({ kind: "peer", from: m[1] || "otra sesión", body: m[2] ?? "" })
+          if (m) push({ kind: "peer", from: shortName(m[1] || "otra sesión"), body: m[2] ?? "" })
           continue
         }
         if (obj.isMeta || !text.trim() || text.startsWith("<")) continue

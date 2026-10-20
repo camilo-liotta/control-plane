@@ -84,6 +84,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     projectId,
     kind,
     name,
+    processName: name,
     role: "",
     claudeSessionId: `uuid-${counter}`,
     startedOnce: true,

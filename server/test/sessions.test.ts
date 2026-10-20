@@ -200,3 +200,87 @@ describe("el último cost-state del transcript", () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })
+
+describe("el nombre del proceso (--name) de cada sesión", () => {
+  let dir: string
+  let db: Db
+  let sessions: SessionManager
+  let argsFile: string
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-procname-"))
+    db = new Db(path.join(dir, "t.db"))
+    for (const [id, name] of [["p1", "Alfa"], ["p2", "Beta"]] as const)
+      db.insertProject({ id, name, repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 1, archivedAt: null })
+    // Un "claude" que solo anota con qué argumentos lo lanzaron.
+    argsFile = path.join(dir, "args.json")
+    const bin = path.join(dir, "claude-args.mjs")
+    fs.writeFileSync(bin, `#!/usr/bin/env node\nimport fs from "node:fs"\nfs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))\n`, { mode: 0o755 })
+    sessions = new SessionManager({
+      db,
+      hub: new Hub(),
+      attachments: new AttachmentStore(db),
+      mcpUrlFor: () => "http://127.0.0.1/mcp",
+      hookUrlFor: () => "http://127.0.0.1/hooks",
+      runRoot: tmpRunRoot(),
+      launchFor: () => ({ protocol: "", orchestratorCanEdit: false, model: null, effort: null, env: { CLAUDE_CONFIG_DIR: dir }, bin, accountId: "acc" }),
+      accountIdFor: () => "acc",
+      meta: { version: "test", claudeVersion: null, models: [], account: null, homeDir: dir },
+    })
+  })
+  afterEach(async () => {
+    await sessions.shutdown().catch(() => {})
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  const make = (projectId: string, name: string) => sessions.create({ projectId, kind: "worker", name, role: "", cwd: dir })
+  const until = async (check: () => boolean) => {
+    for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 50))
+    assert.ok(check(), "no llegó a tiempo")
+  }
+  const launchedName = async (id: string) => {
+    fs.rmSync(argsFile, { force: true })
+    await sessions.start(id).catch(() => {})
+    await until(() => fs.existsSync(argsFile))
+    const args = JSON.parse(fs.readFileSync(argsFile, "utf8")) as string[]
+    return args[args.indexOf("--name") + 1]
+  }
+
+  it("sin choque, el --name es el nombre tal cual; con una de otro proyecto, el segundo se califica", async () => {
+    const a = make("p1", "INFRA")
+    const web = make("p2", "WEB")
+    assert.equal(a.processName, "INFRA")
+    assert.equal(web.processName, "WEB")
+    const b = make("p2", "INFRA")
+    assert.equal(b.name, "INFRA", "el nombre que se ve sigue siendo el corto")
+    assert.equal(b.processName, "INFRA·beta")
+    assert.equal(db.getSession(a.id)!.processName, "INFRA", "la que ya estaba no cambia")
+    assert.equal(await launchedName(a.id), "INFRA")
+    assert.equal(await launchedName(b.id), "INFRA·beta")
+  })
+
+  it("el choque que aparece después: el que ya existe se queda con el nombre; al lanzar se recalcula", async () => {
+    const b = make("p2", "INFRA")
+    assert.equal(b.processName, "INFRA")
+    const a = make("p1", "INFRA")
+    assert.equal(a.processName, "INFRA·alfa", "la más nueva se califica")
+    await sessions.stop(b.id)
+    assert.equal(await launchedName(b.id), "INFRA", "la que ya existía sigue sin calificar")
+    // Si la que tenía el nombre se archiva, la otra lo recupera la próxima vez que se lance (y al restaurarse).
+    await sessions.archive(b.id)
+    assert.equal(await launchedName(a.id), "INFRA")
+    assert.equal(db.getSession(a.id)!.processName, "INFRA")
+    sessions.update(b.id, { archivedAt: null })
+    assert.equal(sessions.refreshProcessName(b.id), "INFRA·beta", "al restaurarse, la que llega después se califica")
+  })
+
+  it("renombrar recalcula el nombre del proceso; el nombre que se ve es el elegido", async () => {
+    make("p1", "INFRA")
+    const w = make("p2", "OTRA")
+    await sessions.rename(w.id, "INFRA")
+    assert.equal(db.getSession(w.id)!.name, "INFRA")
+    assert.equal(db.getSession(w.id)!.processName, "INFRA·beta")
+    await sessions.rename(w.id, "BACK")
+    assert.equal(db.getSession(w.id)!.processName, "BACK")
+  })
+})

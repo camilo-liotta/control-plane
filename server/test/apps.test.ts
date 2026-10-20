@@ -249,7 +249,7 @@ describe("herramientas MCP de las apps, por proyecto", () => {
   let apps: Apps
   const fastify = Fastify()
   const session = (id: string, projectId: string, token: string): SessionRecord => ({
-    id, projectId, kind: "worker", name: id.toUpperCase(), role: "", claudeSessionId: `c-${id}`, startedOnce: false, mcpToken: token, model: null, effort: null,
+    id, projectId, kind: "worker", name: id.toUpperCase(), processName: id.toUpperCase(), role: "", claudeSessionId: `c-${id}`, startedOnce: false, mcpToken: token, model: null, effort: null,
     worktree: false, cwd: dir, status: "idle", taskTitle: null, taskState: "none", lastActivity: null, lastActivityAt: null, costUsd: 0, costByModel: {}, tokens: null,
     context: null, createdAt: 1, archivedAt: null,
   })

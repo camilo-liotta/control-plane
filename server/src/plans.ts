@@ -158,7 +158,7 @@ export class Plans {
     if (input.newSession) {
       const name = sanitizeSessionName(input.newSession.name).toUpperCase()
       if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
-      if (this.o.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}. Usá session para un plan en una sesión existente.`)
+      if (this.o.nameTaken(orch.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto. Usá session para un plan en una sesión existente.`)
       newSession = { name, role: input.newSession.role.trim() }
     } else {
       target = input.session ? this.o.findSessionByName(orch.projectId, input.session) : null
@@ -312,7 +312,7 @@ export class Plans {
       const name = sanitizeSessionName(edits.name || d.newSession?.name || "").toUpperCase()
       const role = (edits.role ?? d.newSession?.role ?? "").trim()
       if (!name) throw new Error("Falta el nombre de la sesión")
-      if (this.o.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}`)
+      if (this.o.nameTaken(d.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
       // Se marca antes de crear la sesión: un doble click (o el auto-envío a la vez) no crea dos.
       this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now() })
       const first = steps[0]

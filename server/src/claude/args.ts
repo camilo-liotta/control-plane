@@ -58,7 +58,7 @@ export function buildLaunch(
     "stdio",
     "--dangerously-skip-permissions",
     "--name",
-    session.name,
+    session.processName,
     ...(session.startedOnce ? ["--resume", session.claudeSessionId] : ["--session-id", session.claudeSessionId]),
     "--append-system-prompt",
     opts.protocol,

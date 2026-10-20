@@ -8,6 +8,7 @@ import { removeSessionRunDir, sessionRunDir } from "./claude/run-files.ts"
 import { lastCostState, transcriptDir, type RestoredSpend } from "./claude/local.ts"
 import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
 import { findLostConversation } from "./claude/recover.ts"
+import { displayName, pickProcessName } from "./names.ts"
 import { HIDDEN_RESULT, hidesResult, redactInput } from "./secrets.ts"
 import { ClaudeProcess, type CliMessage, type ExitInfo } from "./claude/process.ts"
 import type { AttachmentRecord, Db, SessionRecord } from "./db.ts"
@@ -477,6 +478,7 @@ export class SessionManager extends EventEmitter<{
       projectId: input.projectId,
       kind: input.kind,
       name: input.name,
+      processName: input.name,
       role: input.role,
       claudeSessionId: input.claudeSessionId ?? uuid(),
       startedOnce: Boolean(input.claudeSessionId),
@@ -497,9 +499,24 @@ export class SessionManager extends EventEmitter<{
       createdAt: now(),
       archivedAt: null,
     }
+    rec.processName = this.processNameFor(rec)
     this.db.insertSession(rec)
     this.broadcastSession(rec.id)
     return rec
+  }
+
+  /** El --name que le toca a la sesión ahora (ver names.ts): su nombre, o calificado con el proyecto si otro proyecto ya lo usa. */
+  processNameFor(rec: Pick<SessionRecord, "id" | "projectId" | "name">): string {
+    return pickProcessName(this.db.listSessions(), rec, this.db.getProject(rec.projectId)?.name ?? "")
+  }
+
+  /** Recalcula el --name de una sesión que no está corriendo (al restaurarla, o antes de lanzarla) y lo guarda si cambió. */
+  refreshProcessName(id: string): string {
+    const rec = this.db.getSession(id)
+    if (!rec) return ""
+    const processName = this.processNameFor(rec)
+    if (processName !== rec.processName) this.update(id, { processName })
+    return processName
   }
 
   // ------------------------------------------------------------------ ciclo
@@ -518,7 +535,7 @@ export class SessionManager extends EventEmitter<{
       try {
         const dir = transcriptDir(rec.cwd, this.launchFor(rec).env.CLAUDE_CONFIG_DIR)
         if (fs.existsSync(path.join(dir, `${rec.claudeSessionId}.jsonl`))) continue
-        const found = findLostConversation({ dir, name: rec.name, resets: this.db.noticeTimes(rec.id, RESET_NOTICE), taken })
+        const found = findLostConversation({ dir, names: [rec.processName, rec.name], resets: this.db.noticeTimes(rec.id, RESET_NOTICE), taken })
         if (!found) continue
         taken.add(found)
         this.db.updateSession(rec.id, { claudeSessionId: found })
@@ -562,8 +579,9 @@ export class SessionManager extends EventEmitter<{
 
   private launch(old: SessionRecord, retried: boolean, lostConversation: string | null = null): Promise<void> {
     // Un token nuevo en cada lanzamiento: el del proceso anterior (y lo que haya quedado de él) deja de valer.
-    const rec = { ...old, mcpToken: token() }
-    this.db.updateSession(rec.id, { mcpToken: rec.mcpToken })
+    // El --name se recalcula en cada lanzamiento: si otro proyecto creó un nombre igual mientras esta estaba parada, o dejó de usarlo, se ajusta acá.
+    const rec = { ...old, mcpToken: token(), processName: this.processNameFor(old) }
+    this.db.updateSession(rec.id, { mcpToken: rec.mcpToken, processName: rec.processName })
     const built = this.launchFor(rec)
     const { args, env } = buildLaunch(rec, {
       mcpUrl: this.mcpUrlFor(rec.mcpToken),
@@ -722,6 +740,8 @@ export class SessionManager extends EventEmitter<{
             }
           }
           // Lo que llevan secretos (credenciales de prueba) no se guarda tal cual en el chat.
+          // Quién escribió, con el nombre corto: Claude Code manda el del proceso (calificado si otro proyecto repite el nombre).
+          if (event.kind === "peer") event.from = displayName(this.db.listSessions(), event.from)
           if (event.kind === "tool_use") {
             event.input = redactInput(event.name, event.input)
             if (hidesResult(event.name)) this.hiddenResults.add(event.id)
@@ -1383,10 +1403,14 @@ export class SessionManager extends EventEmitter<{
   }
 
   async rename(id: string, name: string) {
-    this.update(id, { name })
+    const rec = this.db.getSession(id)
+    if (!rec) return
+    // El nombre que se ve es el elegido; el del proceso, el que le toca ahora (calificado si otro proyecto ya lo usa).
+    const processName = this.processNameFor({ ...rec, name })
+    this.update(id, { name, processName })
     const rt = this.runtimes.get(id)
     if (rt && !rt.proc.exited) {
-      await rt.proc.request("rename_session", { title: name, source: "host" }, 10_000).catch(() => {})
+      await rt.proc.request("rename_session", { title: processName, source: "host" }, 10_000).catch(() => {})
     }
   }
 
