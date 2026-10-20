@@ -21,7 +21,7 @@ import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
 import { deleteProject } from "./project-delete.ts"
-import { nameTaken } from "./names.ts"
+import { assertNotReserved, nameTaken } from "./names.ts"
 import { archiveProject, restoreProject } from "./project-archive.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
@@ -352,6 +352,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         db.insertProject(project)
         const taken = new Set(db.listSessions().map((s) => s.name.toLowerCase()))
         let orchName = sanitizeSessionName(req.body.orchestratorName ?? "").toUpperCase() || `ORQ-${slug(name)}`
+        assertNotReserved(orchName)
         for (let i = 2; taken.has(orchName.toLowerCase()); i++) orchName = `ORQ-${slug(name)}-${i}`
         const orch = sessions.create({
           projectId: project.id,
@@ -984,6 +985,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         if (req.body.name !== undefined) {
           const name = sanitizeSessionName(req.body.name).toUpperCase()
           if (!name) throw new Error("El nombre no es válido")
+          if (name.toLowerCase() !== s.name.toLowerCase()) assertNotReserved(name)
           if (nameTaken(db.listSessions(), s.projectId, name, s.id)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
           await sessions.rename(s.id, name)
         }

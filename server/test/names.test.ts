@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { SessionRecord } from "../src/db.ts"
-import { displayName, nameTaken, pickProcessName, projectQualifier, shortName } from "../src/names.ts"
+import { assertNotReserved, displayName, isReservedName, nameTaken, pickProcessName, projectQualifier, shortName } from "../src/names.ts"
 
 let n = 0
 function rec(projectId: string, name: string, extra: Partial<SessionRecord> = {}): SessionRecord {
@@ -56,5 +56,17 @@ describe("nombres de sesión", () => {
     assert.equal(shortName("INFRA·a·2"), "INFRA")
     assert.equal(shortName("INFRA"), "INFRA")
     assert.equal(projectQualifier("Inmos"), "inmos")
+  })
+
+  it("nombres reservados de Claude Code: main, team-lead, user y system, sin distinguir mayúsculas", () => {
+    for (const n of ["main", "MAIN", " Main ", "team-lead", "TEAM-LEAD", "user", "System"]) {
+      assert.ok(isReservedName(n), n)
+      assert.throws(() => assertNotReserved(n), /es un nombre reservado de Claude Code: elegí otro\./)
+    }
+    assert.throws(() => assertNotReserved("main"), /^Error: MAIN es un nombre reservado/)
+    for (const n of ["MAIN-2", "mainframe", "users", "ORQ-main", "SERVER"]) {
+      assert.ok(!isReservedName(n), n)
+      assertNotReserved(n)
+    }
   })
 })

@@ -345,6 +345,19 @@ describe("modo AFK", () => {
   const release = async () => {
     sessions.endTurn(orq)
     await sleep(150)
+    // Lo que sale solo termina cuando termina (crear la sesión, mirar las vivas, enviar), no a los 150 ms:
+    // con la máquina cargada tarda más. Se espera a que no quede nada sin enviar (salvo las que tienen hold)
+    // y a que lo enviado deje de cambiar (hasta 2 s: alguna propuesta puede quedar lista a propósito porque no se pudo enviar).
+    const signature = () => JSON.stringify([db.listDrafts({}).map((d) => [d.id, d.state, d.planState]), sessions.sent.length, db.listSessions().length])
+    let last = ""
+    let stable = 0
+    for (let i = 0; i < 400 && stable < 4; i++) {
+      const pending = i < 80 && Boolean(db.getProject(projectId)?.afk) && db.listDrafts({ projectId, states: ["ready"] }).some((d) => !d.hold)
+      const sig = signature()
+      stable = !pending && sig === last ? stable + 1 : 0
+      last = sig
+      await sleep(25)
+    }
   }
 
   describe("qué sale solo", () => {
