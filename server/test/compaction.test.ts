@@ -132,6 +132,7 @@ describe("modo esperarme", () => {
       projectId: "p1",
       kind: "worker",
       name: "ALFA",
+      processName: "ALFA",
       role: "",
       claudeSessionId: "c1",
       startedOnce: true,

@@ -3,6 +3,7 @@ import { AFK_HEADER, afkEnterNotice } from "./afk.ts"
 import { lastCostState, listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
 import type { Db, ProjectMessageRow, ProjectRecord, ReportRow, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
+import { nameTaken } from "./names.ts"
 import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
@@ -706,7 +707,7 @@ export class Orchestration {
   ): string {
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
-    if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}. Elegí otro nombre o usá propose_prompt.`)
+    if (this.nameTaken(orch.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto. Elegí otro nombre o usá propose_prompt.`)
     this.requireChoice(input.model, input.effort, { tool: "propose_session", target: null, projectId: orch.projectId })
     const choice = this.checkChoice(input.model, input.effort, this.newWorkerModel(orch.projectId))
     const d: Draft = {
@@ -936,9 +937,9 @@ export class Orchestration {
 
   // ------------------------------------------------------- acciones del usuario
 
-  nameTaken(name: string): boolean {
-    const n = name.toLowerCase()
-    return this.db.listSessions().some((s) => s.name.toLowerCase() === n)
+  /** ¿Ya hay una sesión con ese nombre en el proyecto? Los nombres son únicos por proyecto, no en toda la máquina (ver names.ts). */
+  nameTaken(projectId: string, name: string, exceptId?: string): boolean {
+    return nameTaken(this.db.listSessions(), projectId, name, exceptId)
   }
 
   /** Aprueba y envía una propuesta (con tus ediciones, si las hay). */
@@ -1003,7 +1004,7 @@ export class Orchestration {
         const name = sanitizeSessionName(edits.name || d.newSession?.name || "").toUpperCase()
         const role = (edits.role ?? d.newSession?.role ?? "").trim()
         if (!name) throw new Error("Falta el nombre de la sesión")
-        if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}`)
+        if (this.nameTaken(d.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
         const worker = await this.createWorker(d.projectId, { name, role, model, effort })
         this.sessions.update(worker.id, { taskTitle: title, taskState: "assigned" })
         await this.sessions.send(worker.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
@@ -1099,10 +1100,11 @@ export class Orchestration {
   }
 
   /** Evita chocar con una sesión viva fuera del dashboard: los mensajes irían a la equivocada. */
-  private async assertNameFree(name: string, exceptClaudeId?: string, projectId?: string) {
-    if (this.nameTaken(name)) throw new Error(`Ya existe una sesión llamada ${name}`)
+  private async assertNameFree(name: string, exceptClaudeId: string | undefined, projectId: string) {
+    if (!projectId) throw new Error("Falta el proyecto para comprobar el nombre")
+    if (this.nameTaken(projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
     const ours = new Set(this.db.listSessions().map((s) => s.claudeSessionId))
-    const clash = (await listLiveSessions(projectId ? this.targetFor(projectId) : undefined)).find(
+    const clash = (await listLiveSessions(this.targetFor(projectId))).find(
       (l) => l.name?.toLowerCase() === name.toLowerCase() && l.sessionId !== exceptClaudeId && !ours.has(l.sessionId ?? "")
     )
     if (clash)

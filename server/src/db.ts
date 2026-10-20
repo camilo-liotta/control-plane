@@ -91,6 +91,8 @@ export interface SessionRecord {
   projectId: string
   kind: SessionKind
   name: string
+  /** El --name del proceso de Claude Code: único entre las sesiones vivas del dashboard (ver names.ts). Casi siempre igual a `name`. */
+  processName: string
   role: string
   claudeSessionId: string
   startedOnce: boolean
@@ -345,6 +347,11 @@ const MIGRATIONS: string[] = [
     data TEXT NOT NULL
   );
   `,
+  `
+  -- El nombre con que corre el proceso de Claude Code (--name): el de la sesión, o calificado con el proyecto si otro proyecto ya lo usa.
+  ALTER TABLE sessions ADD COLUMN process_name TEXT;
+  UPDATE sessions SET process_name = name;
+  `,
 ]
 
 const bool = (v: unknown) => v === 1 || v === true
@@ -411,6 +418,7 @@ function toSession(r: Row): SessionRecord {
     projectId: String(r.project_id),
     kind: r.kind as SessionKind,
     name: String(r.name),
+    processName: String(r.process_name ?? r.name),
     role: String(r.role ?? ""),
     claudeSessionId: String(r.claude_session_id),
     startedOnce: bool(r.started_once),
@@ -649,6 +657,7 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   projectId: "project_id",
   kind: "kind",
   name: "name",
+  processName: "process_name",
   role: "role",
   claudeSessionId: "claude_session_id",
   startedOnce: "started_once",
@@ -968,7 +977,7 @@ export class Db {
   insertSession(s: SessionRecord) {
     const cols = Object.values(SESSION_COLUMNS)
     const values = (Object.keys(SESSION_COLUMNS) as (keyof SessionRecord)[]).map((k) =>
-      sqlValue(s[k])
+      sqlValue(k === "processName" ? (s.processName || s.name) : s[k])
     )
     this.db
       .prepare(`INSERT INTO sessions (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)

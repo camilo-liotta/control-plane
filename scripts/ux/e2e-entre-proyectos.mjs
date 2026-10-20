@@ -187,6 +187,31 @@ try {
   const r5 = await out(wA.id, "MI-TERMINAL")
   check("8e", "SendMessage a algo que no es del dashboard: rechazado", r5.includes("no es una sesión de este dashboard"))
 
+  // 9: el mismo nombre en dos proyectos. Cada INFRA corre con su --name (la de Beta, calificada) y el cerrojo lleva
+  // cada SendMessage a la INFRA del proyecto de quien manda.
+  const iA = await api("POST", `/api/projects/${alfa.id}/sessions`, { name: "INFRA", role: "infra de alfa" })
+  const iB = await api("POST", `/api/projects/${beta.id}/sessions`, { name: "infra", role: "infra de beta" })
+  check(9, "el mismo nombre en otro proyecto se acepta, sin distinguir mayúsculas", iA.name === "INFRA" && iB.name === "INFRA")
+  const dup = await api("POST", `/api/projects/${beta.id}/sessions`, { name: "Infra", role: "otra" }).then(() => null, (e) => String(e.message))
+  check("9b", "…y dentro del mismo proyecto se rechaza", /Ya existe una sesión llamada INFRA en este proyecto/.test(dup ?? ""), dup ?? "no falló")
+  const ren = await api("PATCH", `/api/sessions/${wB.id}`, { name: "infra" }).then(() => null, (e) => String(e.message))
+  check("9c", "renombrar a un nombre del mismo proyecto se rechaza", /Ya existe una sesión llamada INFRA en este proyecto/.test(ren ?? ""), ren ?? "no falló")
+  for (const s of [iA, iB]) { await api("POST", `/api/sessions/${s.id}/start`).catch(() => {}); await idle(s.id) }
+  const procs = fs.readdirSync(path.join(ROOT, "home/.claude/fake-procs")).map(decodeURIComponent)
+  check("9d", "la de Alfa corre como INFRA y la de Beta, como INFRA·beta", procs.includes("INFRA") && procs.includes("INFRA·beta"), procs.filter((p) => p.startsWith("INFRA")).join(", "))
+  const s1 = await out(iA.id, "INFRA")
+  check("9e", "INFRA de Alfa → INFRA: llega a la suya", s1.includes("ENVIADO a INFRA") && !s1.includes("INFRA·beta"), "tal cual, sin traducir")
+  const s2 = await out(iB.id, "INFRA")
+  check("9f", "INFRA de Beta → INFRA: el destino pasa a INFRA·beta y llega a la suya", s2.includes("ENVIADO a INFRA·beta"), "traducido por el cerrojo")
+  const s3 = await out(wB.id, "infra")
+  check("9g", "otro worker de Beta → infra (otras mayúsculas): también a la de Beta", s3.includes("ENVIADO a INFRA·beta"))
+  const s4 = await out(iA.id, "INFRA·beta")
+  check("9h", "Alfa → el nombre calificado de la de Beta: rechazado", s4.includes("Solo podés hablar con sesiones de tu proyecto") && !s4.includes("ENVIADO"))
+  const s5 = await out(iB.id, "W-ALFA")
+  check("9i", "Beta → un worker de Alfa: sigue rechazado", s5.includes("Solo podés hablar con sesiones de tu proyecto") && !s5.includes("ENVIADO"))
+  const s6 = await out(orqB.id, "INFRA·beta")
+  check("9j", "la orquestadora de Beta escribe con el nombre calificado de la suya: pasa", s6.includes("ENVIADO a INFRA·beta"))
+
   console.log("\n| # | Qué | Resultado |\n|---|---|---|")
   for (const r of rows) console.log(`| ${r.n} | ${r.what} | ${r.ok ? "✅" : "❌"} |`)
 } catch (err) {

@@ -8,7 +8,7 @@ import { now } from "./util.ts"
 export interface ArchiveProjectDeps {
   db: Db
   hub: Pick<Hub, "broadcast">
-  sessions: Pick<SessionManager, "archive" | "update">
+  sessions: Pick<SessionManager, "archive" | "update" | "refreshProcessName">
   orchestration: Pick<Orchestration, "projectView">
 }
 
@@ -33,8 +33,9 @@ export async function archiveProject(deps: ArchiveProjectDeps, p: ProjectRecord)
 
 /**
  * Restaura un proyecto archivado y las sesiones que se archivaron con él (detenidas). La orquestadora
- * vuelve siempre. Si una sesión choca de nombre con otra que está activa, queda en Archivadas para
- * restaurarla después de renombrar.
+ * vuelve siempre. Si una sesión choca de nombre con otra activa del mismo proyecto, queda en Archivadas para
+ * restaurarla después de renombrar. Con las de otros proyectos no hay choque: los nombres son únicos por proyecto
+ * (el nombre del proceso se califica solo, ver names.ts).
  */
 export function restoreProject(deps: ArchiveProjectDeps, id: string): { project: Project; restored: number; skipped: string[] } {
   const { db } = deps
@@ -42,7 +43,7 @@ export function restoreProject(deps: ArchiveProjectDeps, id: string): { project:
   if (!p) throw new Error("El proyecto no existe")
   if (!p.archivedAt) throw new Error("El proyecto no está archivado")
   const since = p.archivedAt - RESTORE_WINDOW_MS
-  const taken = new Set(db.listSessions().filter((s) => !s.archivedAt).map((s) => s.name.toLowerCase()))
+  const taken = new Set(db.listSessions().filter((s) => !s.archivedAt && s.projectId === id).map((s) => s.name.toLowerCase()))
   const skipped: string[] = []
   let restored = 0
   for (const s of db.listProjectSessions(id)) {
@@ -59,6 +60,7 @@ export function restoreProject(deps: ArchiveProjectDeps, id: string): { project:
       }
     }
     deps.sessions.update(s.id, { archivedAt: null, status: "stopped" })
+    deps.sessions.refreshProcessName(s.id)
     taken.add((db.getSession(s.id)?.name ?? s.name).toLowerCase())
     restored++
   }

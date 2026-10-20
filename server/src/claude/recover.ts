@@ -15,8 +15,8 @@ const AFTER_MS = 120_000
 export interface LostConversationQuery {
   /** Carpeta de transcripts del cwd de la sesión, en su cuenta. */
   dir: string
-  /** Nombre de la sesión: Claude Code lo guarda como custom-title / agent-name. */
-  name: string
+  /** Con qué nombres pudo correr la sesión (el --name, calificado o no): Claude Code lo guarda como custom-title / agent-name. */
+  names: string[]
   /** Cuándo vio el server cada /clear de la sesión (los avisos de su chat). */
   resets: number[]
   /** Ids que ya usa otra sesión: no se adoptan. */
@@ -24,7 +24,7 @@ export interface LostConversationQuery {
 }
 
 /** El transcript de la conversación perdida, si hay uno que encaje (el del /clear más reciente). */
-export function findLostConversation({ dir, name, resets, taken }: LostConversationQuery): string | null {
+export function findLostConversation({ dir, names, resets, taken }: LostConversationQuery): string | null {
   if (!resets.length || !fs.existsSync(dir)) return null
   let best: { id: string; reset: number; mtime: number } | null = null
   for (const f of fs.readdirSync(dir)) {
@@ -33,7 +33,7 @@ export function findLostConversation({ dir, name, resets, taken }: LostConversat
     if (taken.has(id)) continue
     const file = path.join(dir, f)
     const head = readHead(file)
-    if (head.start === null || (head.title !== null && head.title !== name)) continue
+    if (head.start === null || (head.title !== null && !names.includes(head.title))) continue
     const reset = Math.max(...resets.filter((t) => head.start! >= t - BEFORE_MS && head.start! <= t + AFTER_MS), -Infinity)
     if (reset === -Infinity) continue
     const mtime = fs.statSync(file).mtimeMs

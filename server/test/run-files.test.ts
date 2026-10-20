@@ -18,7 +18,7 @@ const mode = (p: string) => fs.statSync(p).mode & 0o777
 const TOKEN = "tok-secreto-1234"
 
 const rec = (): SessionRecord => ({
-  id: "s_1", projectId: "p1", kind: "worker", name: "W", role: "", claudeSessionId: "c-1", startedOnce: false, mcpToken: TOKEN, model: null,
+  id: "s_1", projectId: "p1", kind: "worker", name: "W", processName: "W", role: "", claudeSessionId: "c-1", startedOnce: false, mcpToken: TOKEN, model: null,
   effort: null, worktree: false, cwd: "/tmp", status: "idle", taskTitle: null, taskState: "none", lastActivity: null, lastActivityAt: null,
   costUsd: 0, costByModel: {}, tokens: null, context: null, createdAt: 1, archivedAt: null,
 })

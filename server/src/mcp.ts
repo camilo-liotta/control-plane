@@ -198,7 +198,7 @@ function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string,
     {
       title: "Sesiones del proyecto",
       description:
-        "Lista las sesiones del proyecto con su rol, estado actual, tarea asignada y último resultado reportado. Sirve para saber quién está haciendo qué antes de coordinar.",
+        "Lista las sesiones del proyecto con su rol, estado actual, tarea asignada y último resultado reportado. Sirve para saber quién está haciendo qué antes de coordinar. Los nombres son únicos dentro del proyecto; con SendMessage usá el nombre que muestra acá.",
       annotations: { readOnlyHint: true },
     },
     wrap(() => {
@@ -459,7 +459,7 @@ function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string,
         description:
           "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba (o se crea sola si está AFK, salvo que la marques con hold). model y effort son OBLIGATORIOS (la sesión arranca con ellos): sonnet para implementar, haiku para lo mecánico, opus solo si hace falta.",
         inputSchema: {
-          name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E)."),
+          name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E). Único dentro del proyecto."),
           role: z.string().describe("Rol o responsabilidad de la sesión."),
           title: z.string().describe("Título corto de la primera tarea."),
           prompt: z.string().min(1).describe("Primer prompt, completo y autocontenido."),
