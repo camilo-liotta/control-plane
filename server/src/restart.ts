@@ -240,7 +240,15 @@ export class Restart {
     const lost = this.sessions.lostConversation(id)
     if (lost) return { ok: false, final: true, error: lostMessage(lost) }
     try {
-      if (status === "working") {
+      if (status === "working" && this.sessions.limits?.cutByLimit(id)) {
+        // La cuenta está sin uso: seguirla ahora gastaría un intento. Queda marcada y la retoma limit.ts cuando se renueve.
+        this.sessions.limits.adopt(id)
+        this.sessions.addEvent(id, {
+          kind: "notice",
+          level: "info",
+          text: "control-plane se reinició para actualizarse. Esta sesión espera que se renueve el uso y sigue sola cuando eso pase.",
+        })
+      } else if (status === "working") {
         await this.sessions.send(id, CONTINUE_PROMPT, {
           origin: "control",
           event: {

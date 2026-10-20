@@ -6,7 +6,9 @@ import { toRef, VISION_TYPES, type AttachmentStore } from "./attachments.ts"
 import { buildLaunch } from "./claude/args.ts"
 import { removeSessionRunDir, sessionRunDir } from "./claude/run-files.ts"
 import { lastCostState, transcriptDir, type RestoredSpend } from "./claude/local.ts"
-import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage } from "./claude/normalize.ts"
+import { isContextFull, parseCommands, RESET_NOTICE, StreamNormalizer, type RawImage, type RejectedWindow } from "./claude/normalize.ts"
+import type { LimitHit } from "./claude/limit-text.ts"
+import { LimitedError, type UsageLimits } from "./limit.ts"
 import { findLostConversation } from "./claude/recover.ts"
 import { displayName, pickProcessName } from "./names.ts"
 import { HIDDEN_RESULT, hidesResult, redactInput } from "./secrets.ts"
@@ -20,6 +22,7 @@ import type {
   ModelOption,
   PendingRequest,
   Question,
+  LimitKind,
   Session,
   SessionKind,
   SessionStatus,
@@ -108,6 +111,8 @@ interface Runtime {
   fingerprint: Fingerprint
   /** Ya se le avisó (o no hacía falta) de lo que cambió desde la última vez. */
   noticed: boolean
+  /** Lo que el CLI marcó como rechazado (sin uso) en el turno en curso: da el reloj del límite y es señal aunque el texto no se reconozca. */
+  rejected: RejectedWindow | null
 }
 
 interface TurnInput {
@@ -140,6 +145,8 @@ export interface TurnEndInfo {
   contextFull: boolean
   /** Era un reenvío de algo que ya no había entrado. */
   retried: boolean
+  /** No salió porque se acabó el uso: de qué límite (control-plane la retoma cuando se renueve, ver limit.ts). */
+  limit: LimitKind | null
 }
 
 export interface CreateSessionInput {
@@ -169,6 +176,8 @@ export interface SendOptions {
   clientId?: string
   /** Si es un paso de un plan. */
   plan?: { draftId: string; step: number; total: number; title: string }
+  /** Mandarlo aunque la cuenta esté sin uso («Reintentar ahora»; ver limit.ts). */
+  bypassLimit?: boolean
 }
 
 /** Cuántos envíos recientes se recuerdan para no duplicar un reintento. */
@@ -228,6 +237,11 @@ export class SessionManager extends EventEmitter<{
   private accountCommands = new Map<string, SlashCommand[]>()
   /** Uso del plan por cuenta (cada cuenta tiene sus propios límites). */
   private usage = new Map<string, UsageInfo>()
+  private usageSaves = new Map<string, NodeJS.Timeout>()
+  /** El límite de uso de las cuentas (ver limit.ts); sin esto no se frena nada. */
+  limits: UsageLimits | null = null
+  /** El server se está apagando: las sesiones que se cierran no son "detenidas a mano". */
+  private closing = false
   meta: Meta
   private db: Db
   private hub: Hub
@@ -265,6 +279,8 @@ export class SessionManager extends EventEmitter<{
     for (const s of db.listSessions()) {
       if (s.status !== "stopped") db.updateSession(s.id, { status: "stopped" })
     }
+    // Lo último que informó cada cuenta: sirve apenas arranca el server (por ejemplo, para saber cuándo se renueva el uso).
+    for (const { accountId, usage } of db.listAccountUsage()) this.usage.set(accountId, usage)
   }
 
   // ------------------------------------------------------------------ vistas
@@ -281,7 +297,7 @@ export class SessionManager extends EventEmitter<{
         break
       }
     }
-    const { mcpToken: _t, startedOnce: _s, ...rest } = rec
+    const { mcpToken: _t, startedOnce: _s, limited: _l, ...rest } = rec
     if (!this.lastTexts.has(rec.id)) this.lastTexts.set(rec.id, this.db.lastText(rec.id))
     const lastText = this.lastTexts.get(rec.id) ?? null
     return {
@@ -302,7 +318,19 @@ export class SessionManager extends EventEmitter<{
         running: Boolean(rt && !rt.proc.exited),
         runtimeStartedAt: rt && !rt.proc.exited ? rt.startedAt : null,
       }),
+      limited: this.limits?.sessionView(rec) ?? null,
+      held: this.limits?.heldFor(rec.id) ?? [],
     }
+  }
+
+  /** Con qué cuenta de Claude Code corre la sesión (la de su proyecto). */
+  accountOf(rec: SessionRecord): string {
+    return this.accountIdFor(rec)
+  }
+
+  /** Vuelve a mandar la sesión a la web (cambió algo que se ve en ella). */
+  touch(id: string) {
+    this.broadcastSession(id)
   }
 
   /** Actualiza qué sesiones tienen su conversación abierta fuera del dashboard. */
@@ -344,6 +372,11 @@ export class SessionManager extends EventEmitter<{
 
   usageFor(accountId: string): UsageInfo | null {
     return this.usage.get(accountId) ?? null
+  }
+
+  /** Si la cuenta está sin uso: hasta cuándo y de qué (ver limit.ts). */
+  limitFor(accountId: string) {
+    return this.limits?.accountLimit(accountId) ?? null
   }
 
   commandsFor(id: string): SlashCommand[] {
@@ -640,6 +673,7 @@ export class SessionManager extends EventEmitter<{
       lostConversation,
       fingerprint,
       noticed: false,
+      rejected: null,
     }
     this.runtimes.set(rec.id, rt)
     this.stoppedDetail.delete(rec.id)
@@ -898,10 +932,18 @@ export class SessionManager extends EventEmitter<{
             ...(action.tokens ? { tokens: addTokens(rt.spentBefore.tokens, tokensSince(action.tokens, rt.restored)) } : {}),
           })
           break
-        case "usage":
-          this.usage.set(rt.accountId, action.usage)
-          this.hub.broadcast({ type: "usage", accountId: rt.accountId, usage: action.usage })
+        case "usage": {
+          // Un evento sin una de las ventanas no borra lo que se sabía de ella.
+          const prev = this.usage.get(rt.accountId)
+          const usage: UsageInfo = { ...action.usage, fiveHour: action.usage.fiveHour ?? prev?.fiveHour ?? null, sevenDay: action.usage.sevenDay ?? prev?.sevenDay ?? null }
+          this.usage.set(rt.accountId, usage)
+          this.saveUsageLater(rt.accountId)
+          // Un "allowed" posterior en el mismo turno (cambió de modelo, otra ventana) desmiente al rechazo anterior.
+          if (action.rejected) rt.rejected = action.rejected
+          else if (action.usage.status === "allowed" || action.usage.status === "allowed_warning") rt.rejected = null
+          this.hub.broadcast({ type: "usage", accountId: rt.accountId, usage })
           break
+        }
         case "init": {
           if (action.model && action.model !== rt.currentModel) {
             rt.currentModel = action.model
@@ -938,10 +980,27 @@ export class SessionManager extends EventEmitter<{
           if (action.contextFull && inputs.length) rt.failedInputs = inputs
           else if (action.ok && !local) rt.failedInputs = null
           this.endTurn(id, rt)
+          // Sin uso: el error lo dice (o el CLI lo marcó como rechazado en este turno aunque el texto sea otro).
+          const rejected = rt.rejected
+          rt.rejected = null
+          const limit: LimitHit | null =
+            action.limit ??
+            (!action.ok && !action.aborted && !action.contextFull && rejected && rejected.kind !== "other" && action.terminalReason === "api_error"
+              ? { kind: rejected.kind, message: oneLine(action.result || "Sin uso", 400), resetText: null }
+              : null)
           const rec = this.db.getSession(id)
+          if (rec && limit) this.limits?.hit(rec, rt.accountId, limit, rejected)
           if (rec) {
             this.broadcastSession(id)
-            this.emit("turnEnd", rec, { ok: action.ok, aborted: action.aborted, result: action.result, local, contextFull: action.contextFull, retried })
+            this.emit("turnEnd", this.db.getSession(id) ?? rec, {
+              ok: action.ok,
+              aborted: action.aborted,
+              result: action.result,
+              local,
+              contextFull: action.contextFull,
+              retried,
+              limit: limit?.kind ?? null,
+            })
           }
           void this.refreshContext(id, rt)
           break
@@ -1109,6 +1168,9 @@ export class SessionManager extends EventEmitter<{
     const clientKey = opts.clientId ? `${id}:${opts.clientId}` : null
     const already = clientKey ? this.byClientId.get(clientKey) : undefined
     if (already) return already
+    // Sin uso, no se manda nada: cada intento sería un turno que falla (ver limit.ts).
+    const blocked = this.blockedFor(id, text, opts)
+    if (blocked) throw new LimitedError(blocked)
     await this.start(id)
     const again = clientKey ? this.byClientId.get(clientKey) : undefined
     if (again) return again
@@ -1155,6 +1217,18 @@ export class SessionManager extends EventEmitter<{
     if (rt.status === "idle") this.setStatus(id, rt, "working")
     this.broadcastSession(id)
     return stored
+  }
+
+  /** El evento de un envío anterior con ese id de cliente (un reintento de algo que ya salió), si se recuerda. */
+  sentByClientId(id: string, clientId: string): StoredEvent | null {
+    return this.byClientId.get(`${id}:${clientId}`) ?? null
+  }
+
+  /** Lo que frena el envío (la cuenta sin uso), o null. /clear no llama a la API: pasa. */
+  blockedFor(id: string, text: string, opts: SendOptions) {
+    if (opts.bypassLimit || text === "/clear" || !this.limits) return null
+    const rec = this.db.getSession(id)
+    return rec ? this.limits.blocking(rec) : null
   }
 
   /**
@@ -1358,7 +1432,9 @@ export class SessionManager extends EventEmitter<{
     return out
   }
 
-  async stop(id: string) {
+  /** `manual`: lo pidió el usuario (no se lo vuelve a lanzar solo al renovarse el uso). */
+  async stop(id: string, opts: { manual?: boolean } = {}) {
+    if (opts.manual) this.limits?.onStoppedByUser(id)
     const rt = this.runtimes.get(id)
     if (!rt) return
     await rt.proc.close()
@@ -1422,6 +1498,7 @@ export class SessionManager extends EventEmitter<{
     this.emit("archiving", id)
     await this.stop(id)
     this.dropRunFiles(id)
+    this.limits?.onArchived(id)
     this.update(id, { archivedAt: now(), status: "stopped" })
   }
 
@@ -1461,7 +1538,32 @@ export class SessionManager extends EventEmitter<{
   }
 
   async shutdown() {
+    this.closing = true
+    for (const t of this.usageSaves.values()) clearTimeout(t)
+    for (const accountId of this.usageSaves.keys()) this.saveUsage(accountId)
+    this.usageSaves.clear()
     await Promise.all([...this.runtimes.values()].map((rt) => rt.proc.close(2000)))
+  }
+
+  /** El uso informado se guarda a lo sumo cada pocos segundos: llega con cada respuesta. */
+  private saveUsageLater(accountId: string) {
+    if (this.usageSaves.has(accountId) || this.closing) return
+    const t = setTimeout(() => {
+      this.usageSaves.delete(accountId)
+      this.saveUsage(accountId)
+    }, 5000)
+    t.unref()
+    this.usageSaves.set(accountId, t)
+  }
+
+  private saveUsage(accountId: string) {
+    const usage = this.usage.get(accountId)
+    if (!usage) return
+    try {
+      this.db.setAccountUsage(accountId, usage)
+    } catch {
+      // la base ya se cerró: no es grave, el próximo evento lo vuelve a guardar
+    }
   }
 }
 

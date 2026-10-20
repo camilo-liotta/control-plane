@@ -7,7 +7,7 @@ import { promisify } from "node:util"
 import { childEnv } from "./claude/env.ts"
 import { config } from "./config.ts"
 import type { AccountRecord, Db } from "./db.ts"
-import type { Account, AccountAuth, UsageInfo } from "./shared/types.ts"
+import type { Account, AccountAuth, AccountLimit, UsageInfo } from "./shared/types.ts"
 import { errorMessage, now, shortId } from "./util.ts"
 
 const run = promisify(execFile)
@@ -189,7 +189,7 @@ export class Accounts {
       })
   }
 
-  view(a: AccountRecord, usage: UsageInfo | null): Account {
+  view(a: AccountRecord, usage: UsageInfo | null, limit: AccountLimit | null = null): Account {
     return {
       id: a.id,
       name: a.name,
@@ -198,6 +198,7 @@ export class Accounts {
       bin: a.bin,
       auth: this.cachedAuth(a.id),
       usage,
+      limit,
       projects: this.db.countProjectsByAccount(a.id),
     }
   }

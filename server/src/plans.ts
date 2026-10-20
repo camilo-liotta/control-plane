@@ -2,6 +2,7 @@ import { AFK_HEADER } from "./afk.ts"
 import type { Db, SessionRecord } from "./db.ts"
 import { normalizeSubagents, type Orchestration } from "./orchestration.ts"
 import { withSubagents } from "./prompts.ts"
+import { LimitedError } from "./limit.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
 import type { Draft, PlanStep, PlanStepState, ReportStatus, SessionStatus } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
@@ -426,14 +427,25 @@ export class Plans {
       this.sessions.update(target.id, { taskTitle: `${d.title} · paso ${i + 1} de ${total}`, taskState: "assigned" })
       // En AFK el worker no tiene a quién preguntarle (también en los pasos de un plan que sigue solo).
       const afkLine = this.db.getProject(d.projectId)?.afk ? `${AFK_HEADER}\n\n` : ""
-      await this.sessions.send(target.id, afkLine + withSubagents(display, step.subagents), {
-        origin: "draft",
-        draftId: d.id,
-        draftTitle: d.title,
-        display,
-        subagents: step.subagents,
-        plan: { draftId: d.id, step: i, total, title: step.title },
-      })
+      try {
+        await this.sessions.send(target.id, afkLine + withSubagents(display, step.subagents), {
+          origin: "draft",
+          draftId: d.id,
+          draftTitle: d.title,
+          display,
+          subagents: step.subagents,
+          plan: { draftId: d.id, step: i, total, title: step.title },
+        })
+      } catch (err) {
+        // Se acabó el uso en el medio: el paso vuelve a esperar (no es una falla del plan).
+        if (!(err instanceof LimitedError)) throw err
+        const again = this.db.getDraft(d.id)
+        if (again?.planState === "running") {
+          this.db.updateDraft(d.id, { steps: again.steps.map((s, j) => (j === i && s.state === "running" ? reset(s) : s)) })
+          this.o.broadcastDraft(d.id)
+          this.waiting.set(planId, i)
+        }
+      }
     } finally {
       this.sending.delete(planId)
     }
@@ -451,6 +463,25 @@ export class Plans {
     this.flush(planId)
   }
 
+  /** Si la cuenta de la sesión está sin uso: el paso espera y sale solo cuando se renueve (ver limit.ts). */
+  private limited(sessionId: string): boolean {
+    const rec = this.db.getSession(sessionId)
+    return Boolean(rec && this.sessions.limits?.blocking(rec))
+  }
+
+  /** Se acabó el uso y la sesión del paso no va a seguir sola: el plan se pausa (sin avisarle a la orquestadora) para que lo reanudes vos. */
+  onResumeSkipped(sessionId: string, why: string) {
+    const d = this.activeFor(sessionId)
+    if (!d || d.planState !== "running" || d.currentStep === null) return
+    if (d.steps[d.currentStep]?.state !== "running") return
+    this.pause(d.id, `${why}: reanudalo cuando quieras.`, null)
+  }
+
+  /** Se renovó el uso: salen los pasos que esperaban. */
+  onLimitCleared() {
+    for (const planId of [...this.waiting.keys()]) this.flush(planId)
+  }
+
   /** Si la sesión está ocupada (trabajando o esperando una respuesta). */
   private busy(sessionId: string): boolean {
     const status = this.sessions.statusOf(sessionId)
@@ -461,7 +492,7 @@ export class Plans {
   private async kick(planId: string, i: number) {
     const d = this.db.getDraft(planId)
     if (!d?.targetSessionId) return
-    if (this.busy(d.targetSessionId)) {
+    if (this.busy(d.targetSessionId) || this.limited(d.targetSessionId)) {
       this.waiting.set(planId, i)
       return
     }
@@ -574,6 +605,8 @@ export class Plans {
     const step = d.steps[d.currentStep]
     if (!step) return
     if (this.reported.delete(d.id)) return this.decide(d.id)
+    // Se acabó el uso en medio del paso: sigue en curso y el plan no se pausa; la sesión retoma sola al renovarse (ver limit.ts).
+    if (info.limit) return
     if (step.state !== "running") return
     // Interrumpido: el paso sigue siendo el que estaba (si le pedís que siga y reporta, cuenta); el plan espera.
     if (info.aborted) this.pause(d.id, `Interrumpiste el paso ${d.currentStep + 1}.`, null)
@@ -631,7 +664,7 @@ export class Plans {
     const i = this.waiting.get(planId)
     const d = this.db.getDraft(planId)
     if (i === undefined || d?.planState !== "running" || !d.targetSessionId) return
-    if (this.busy(d.targetSessionId)) return
+    if (this.busy(d.targetSessionId) || this.limited(d.targetSessionId)) return
     this.waiting.delete(planId)
     void this.kickOrPause(planId, i)
   }
@@ -757,7 +790,13 @@ export class Plans {
       // Estaba esperando que la sesión quedara libre.
       else if (state === "pending") void this.kickOrPause(d.id, i)
       // En curso, pero la sesión no se retomó (o el prompt no llegó a salir): queda pausado para que lo reanudes.
-      else if (state === "running" && !this.busy(d.targetSessionId)) this.pause(d.id, `El server se reinició en medio del paso ${i + 1}: reanudalo para repetirlo.`, null)
+      // Salvo que se haya cortado por el límite de uso (o la cuenta esté sin uso): esa la retoma limit.ts al renovarse
+      // (se la marca para que siga) y el plan sigue en curso.
+      else if (state === "running" && !this.busy(d.targetSessionId)) {
+        const limits = this.sessions.limits
+        if (limits?.cutByLimit(d.targetSessionId)) limits.adopt(d.targetSessionId)
+        else this.pause(d.id, `El server se reinició en medio del paso ${i + 1}: reanudalo para repetirlo.`, null)
+      }
     }
   }
 
