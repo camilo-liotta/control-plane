@@ -92,6 +92,18 @@ describe("reparar las sesiones que un /clear viejo dejó sin conversación", () 
     assert.equal(sessions.repairConversations()[0]?.to, "corto")
   })
 
+  it("no adopta el de la sesión de otro proyecto que hoy corre con el nombre corto (misma carpeta y cuenta)", () => {
+    db.insertProject({ id: "p2", name: "Q", repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 2, archivedAt: null })
+    const s = session("INFRA", "no-existe", [T0])
+    db.updateSession(s.id, { processName: "INFRA·p" })
+    const other = sessions.create({ projectId: "p2", kind: "worker", name: "INFRA", role: "", cwd: dir })
+    db.updateSession(other.id, { processName: "INFRA" })
+    transcript("de-la-otra", T0 + 500, "INFRA")
+    assert.deepEqual(sessions.repairConversations(), [])
+    transcript("propio", T0 + 800, "INFRA·p")
+    assert.equal(sessions.repairConversations()[0]?.to, "propio")
+  })
+
   it("sin candidatos no toca nada", () => {
     const sinClear = session("A", "no-existe-a")
     transcript("suelto", T0, "A")

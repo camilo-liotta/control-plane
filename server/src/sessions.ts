@@ -535,7 +535,11 @@ export class SessionManager extends EventEmitter<{
       try {
         const dir = transcriptDir(rec.cwd, this.launchFor(rec).env.CLAUDE_CONFIG_DIR)
         if (fs.existsSync(path.join(dir, `${rec.claudeSessionId}.jsonl`))) continue
-        const found = findLostConversation({ dir, names: [rec.processName, rec.name], resets: this.db.noticeTimes(rec.id, RESET_NOTICE), taken })
+        // También el nombre corto (pudo correr con él antes de que se calificara), salvo que hoy sea el proceso de otra
+        // sesión: dos proyectos en la misma carpeta y la misma cuenta comparten transcripts, y sería adoptar el suyo.
+        const short = rec.name.toLowerCase()
+        const names = all.some((o) => o.id !== rec.id && o.processName.toLowerCase() === short) ? [rec.processName] : [rec.processName, rec.name]
+        const found = findLostConversation({ dir, names, resets: this.db.noticeTimes(rec.id, RESET_NOTICE), taken })
         if (!found) continue
         taken.add(found)
         this.db.updateSession(rec.id, { claudeSessionId: found })
