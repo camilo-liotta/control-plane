@@ -15,6 +15,18 @@ import { sanitizeSessionName } from "./util.ts"
  */
 export const QUALIFIER = "·"
 
+/** Nombres que Claude Code reserva para sus propios agentes: no puede llamarse así ninguna sesión (sin distinguir mayúsculas). */
+export const RESERVED_NAMES = ["main", "team-lead", "user", "system"]
+
+export function isReservedName(name: string): boolean {
+  return RESERVED_NAMES.includes(name.trim().toLowerCase())
+}
+
+/** Corta si el nombre es uno de los reservados. Solo para sesiones nuevas o renombradas: las que ya existen siguen como están. */
+export function assertNotReserved(name: string): void {
+  if (isReservedName(name)) throw new Error(`${name.trim().toUpperCase()} es un nombre reservado de Claude Code: elegí otro.`)
+}
+
 const lower = (s: string) => s.trim().toLowerCase()
 
 /** ¿Ya hay en el proyecto otra sesión no archivada con ese nombre? (`sessions` son las no archivadas). */

@@ -289,6 +289,34 @@ describe("cola de resultados", () => {
     assert.equal(sessions.sent.at(-1)!.id, a.id)
   })
 
+  it("ninguna sesión puede llamarse como los nombres reservados de Claude Code, sin distinguir mayúsculas, en ningún camino", async () => {
+    const reserved = /MAIN es un nombre reservado de Claude Code: elegí otro\./i
+    const draft = { role: "QA", title: "T", prompt: "p", model: "sonnet", effort: "medium" }
+    for (const name of ["main", "MAIN", "Main", "team-lead", "User", "SYSTEM"]) {
+      assert.throws(() => orch.proposeSession(orq, { name, ...draft }), /es un nombre reservado de Claude Code: elegí otro\./)
+      assert.throws(() => orch.plans.propose(orq, { newSession: { name, role: "QA" }, title: "P", steps: [{ title: "a", prompt: "a", model: "sonnet", effort: "low" }] }), /nombre reservado/)
+      await assert.rejects(orch.createWorker(projectId, { name, role: "QA" }), /nombre reservado/)
+      await assert.rejects(orch.assertNameFreeFor(name, "c-x", projectId), /nombre reservado/, "importar")
+    }
+    await assert.rejects(orch.createWorker(projectId, { name: "main", role: "QA" }), reserved)
+    // Al aprobar una propuesta de sesión nueva se puede editar el nombre: tampoco vale.
+    orch.proposeSession(orq, { name: "ok", ...draft })
+    sessions.endTurn(orq)
+    const [ready] = db.listDrafts({ projectId, states: ["ready"] })
+    await assert.rejects(orch.sendDraft(ready!.id, { name: "main" }), reserved)
+    assert.equal(db.getDraft(ready!.id)!.state, "ready", "la propuesta sigue lista para aprobarla con otro nombre")
+    assert.ok(!db.listSessions().some((s) => s.name === "MAIN"))
+  })
+
+  it("una sesión que ya se llama como un nombre reservado sigue funcionando; solo se bloquean las nuevas", async () => {
+    const old = db.listSessions().find((s) => s.name === "BACKEND")!
+    db.updateSession(old.id, { name: "MAIN", processName: "MAIN" })
+    assert.equal(orch.findSessionByName(projectId, "main")?.id, old.id)
+    orch.proposePrompt(orq, { session: "MAIN", title: "T", prompt: "Hacé algo", model: "sonnet", effort: "medium" })
+    assert.equal(db.listDrafts({ projectId, states: ["staged"] }).length, 1)
+    await assert.rejects(orch.createWorker(projectId, { name: "main", role: "QA" }), /nombre reservado/)
+  })
+
   it("las propuestas de sesión nueva crean la sesión al aprobarlas", async () => {
     orch.proposeSession(orq, { name: "tests e2e", role: "QA", title: "Armar suite", prompt: "Armá la suite", model: "sonnet", effort: "medium" })
     sessions.endTurn(orq)

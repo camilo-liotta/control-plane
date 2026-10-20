@@ -6,6 +6,7 @@ import { LimitedError } from "./limit.ts"
 import type { SessionManager, TurnEndInfo } from "./sessions.ts"
 import type { Draft, PlanStep, PlanStepState, ReportStatus, SessionStatus } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
+import { assertNotReserved } from "./names.ts"
 
 /**
  * Planes por pasos: una lista de prompts para una sola sesión, cada uno con su modelo, esfuerzo y
@@ -159,6 +160,7 @@ export class Plans {
     if (input.newSession) {
       const name = sanitizeSessionName(input.newSession.name).toUpperCase()
       if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
+      assertNotReserved(name)
       if (this.o.nameTaken(orch.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto. Usá session para un plan en una sesión existente.`)
       newSession = { name, role: input.newSession.role.trim() }
     } else {
@@ -313,6 +315,7 @@ export class Plans {
       const name = sanitizeSessionName(edits.name || d.newSession?.name || "").toUpperCase()
       const role = (edits.role ?? d.newSession?.role ?? "").trim()
       if (!name) throw new Error("Falta el nombre de la sesión")
+      assertNotReserved(name)
       if (this.o.nameTaken(d.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
       // Se marca antes de crear la sesión: un doble click (o el auto-envío a la vez) no crea dos.
       this.db.updateDraft(d.id, { state: "sent", decidedAt: now(), updatedAt: now() })

@@ -3,7 +3,7 @@ import { AFK_HEADER, afkEnterNotice } from "./afk.ts"
 import { lastCostState, listLiveSessions, readTranscript, type ClaudeTarget } from "./claude/local.ts"
 import type { Db, ProjectMessageRow, ProjectRecord, ReportRow, SessionRecord } from "./db.ts"
 import type { Hub } from "./hub.ts"
-import { nameTaken } from "./names.ts"
+import { assertNotReserved, nameTaken } from "./names.ts"
 import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
 import { LimitedError } from "./limit.ts"
@@ -772,6 +772,7 @@ export class Orchestration {
   ): string {
     const name = sanitizeSessionName(input.name).toUpperCase()
     if (!name) throw new Error("El nombre de la sesión no es válido (usá letras, números y guiones).")
+    assertNotReserved(name)
     if (this.nameTaken(orch.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto. Elegí otro nombre o usá propose_prompt.`)
     this.requireChoice(input.model, input.effort, { tool: "propose_session", target: null, projectId: orch.projectId })
     const choice = this.checkChoice(input.model, input.effort, this.newWorkerModel(orch.projectId))
@@ -1070,6 +1071,7 @@ export class Orchestration {
         const name = sanitizeSessionName(edits.name || d.newSession?.name || "").toUpperCase()
         const role = (edits.role ?? d.newSession?.role ?? "").trim()
         if (!name) throw new Error("Falta el nombre de la sesión")
+        assertNotReserved(name)
         if (this.nameTaken(d.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
         const worker = await this.createWorker(d.projectId, { name, role, model, effort })
         this.sessions.update(worker.id, { taskTitle: title, taskState: "assigned" })
@@ -1170,6 +1172,7 @@ export class Orchestration {
   /** Evita chocar con una sesión viva fuera del dashboard: los mensajes irían a la equivocada. */
   private async assertNameFree(name: string, exceptClaudeId: string | undefined, projectId: string) {
     if (!projectId) throw new Error("Falta el proyecto para comprobar el nombre")
+    assertNotReserved(name)
     if (this.nameTaken(projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
     const ours = new Set(this.db.listSessions().map((s) => s.claudeSessionId))
     const clash = (await listLiveSessions(this.targetFor(projectId))).find(
