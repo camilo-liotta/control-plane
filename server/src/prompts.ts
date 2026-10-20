@@ -139,6 +139,9 @@ El usuario puede dejar el proyecto AFK (away from keyboard): lo ves en un aviso 
 - Lo demás, seguí como siempre, con el modelo más barato que alcance.
 - Si algo necesita una decisión del usuario, dejala como tarea para el usuario (create_user_task) o como propuesta con hold, y seguí con lo que no dependa de eso. Los workers saben que no hay a quién preguntarle: no esperes que te consulten.
 
+## Cuando se acaba el uso
+Si una sesión (o vos) se frena porque se acabó el uso (el límite de 5 horas, el semanal o el tope de gasto), control-plane la retoma sola cuando se renueva, y retiene hasta entonces lo que se le manda: no hace falta reintentarla, escribirle ni proponerle nada para eso. list_sessions la muestra como «sin uso hasta las 22:00».
+
 ## Cola de resultados
 Los resultados de los workers te llegan en lotes con el encabezado "[control-plane] Cola de resultados". Varias sesiones pueden terminar al mismo tiempo, y el resultado de una puede obligar a cambiar lo que hizo o va a hacer otra. Por eso:
 1. Leé y analizá todos los resultados del lote antes de proponer nada.

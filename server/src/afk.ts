@@ -142,6 +142,12 @@ export class Afk {
       .listReports({ projectId })
       .filter((r) => r.createdAt >= from && r.createdAt <= to)
       .sort((a, b) => a.createdAt - b.createdAt)
+    // Lo que la cuenta del proyecto esperó el uso en el período ("esperó el límite de 5 h de 18:10 a 22:00").
+    const limitWaits = (this.sessions.limits?.waitsFor(projectId, from, to) ?? []).map((w) => ({
+      kind: w.kind,
+      since: Math.max(w.since, from),
+      endedAt: w.endedAt === null ? (period.endedAt === null ? null : to) : Math.min(w.endedAt, to),
+    }))
     return {
       projectId,
       since: period.since,
@@ -161,6 +167,7 @@ export class Afk {
         summary: r.summary,
         createdAt: r.createdAt,
       })),
+      limitWaits,
     }
   }
 

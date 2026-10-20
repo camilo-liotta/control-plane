@@ -1,6 +1,7 @@
 import path from "node:path"
 
-import type { SlashCommand, SubagentUsage, TimelineEvent, TokenUsage, UsageInfo } from "../shared/types.ts"
+import type { LimitKind, SlashCommand, SubagentUsage, TimelineEvent, TokenUsage, UsageInfo } from "../shared/types.ts"
+import { parseLimitError, type LimitHit } from "./limit-text.ts"
 import { clampJson, oneLine, truncate } from "../util.ts"
 import type { CliMessage } from "./process.ts"
 
@@ -25,7 +26,7 @@ export type Action =
   | { type: "activity"; text: string }
   /** Totales de la conversación (acumulados: siguen desde lo que se restauró al reanudar). byModel: US$ por modelo. */
   | { type: "cost"; totalUsd: number; tokens: TokenUsage | null; byModel: Record<string, number> }
-  | { type: "usage"; usage: UsageInfo }
+  | { type: "usage"; usage: UsageInfo; rejected: RejectedWindow | null }
   | {
       type: "init"
       cwd: string
@@ -33,7 +34,7 @@ export type Action =
       mcpServers: { name: string; status: string }[]
     }
   /** contextFull: Claude Code no mandó el mensaje porque el contexto no da más ("Prompt is too long"). */
-  | { type: "turn_end"; ok: boolean; aborted: boolean; result: string; contextFull: boolean }
+  | { type: "turn_end"; ok: boolean; aborted: boolean; result: string; contextFull: boolean; terminalReason: string | null; limit: LimitHit | null }
   | { type: "command"; uuid: string; state: string }
   | { type: "reset"; newSessionId: string }
   | { type: "commands"; commands: SlashCommand[] }
@@ -242,6 +243,28 @@ export function toolActivity(name: string, input: Record<string, unknown>): stri
   }
 }
 
+/** Una ventana de uso que el CLI marcó como rechazada (status "rejected" en rate_limit_event): de qué es y cuándo se renueva. */
+export interface RejectedWindow {
+  kind: LimitKind
+  /** ms desde epoch, si el evento lo trae. */
+  resetsAt: number | null
+}
+
+/**
+ * rate_limit_info.status es "allowed", "allowed_warning" o "rejected" (rateLimitType: five_hour, seven_day,
+ * seven_day_opus, seven_day_sonnet, seven_day_overage_included u overage; resetsAt en segundos). Con "rejected" la
+ * próxima llamada falla, salvo que el uso extra pago cubra el desborde (isUsingOverage u overageStatus allowed).
+ */
+export function rejectedFrom(info: Record<string, unknown> | undefined): RejectedWindow | null {
+  if (!info || info.status !== "rejected") return null
+  if (info.isUsingOverage === true || info.overageStatus === "allowed" || info.overageStatus === "allowed_warning") return null
+  const type = typeof info.rateLimitType === "string" ? info.rateLimitType : ""
+  const kind: LimitKind = type === "five_hour" ? "five_hour" : type === "seven_day" ? "seven_day" : type === "overage" ? "spend" : "other"
+  const windows = (info.unifiedWindows ?? {}) as Record<string, { resetsAt?: number } | undefined>
+  const secs = typeof info.resetsAt === "number" ? info.resetsAt : windows[type]?.resetsAt
+  return { kind, resetsAt: typeof secs === "number" && secs > 0 ? secs * 1000 : null }
+}
+
 function usageFrom(info: Record<string, unknown> | undefined): UsageInfo | null {
   if (!info) return null
   const windows = (info.unifiedWindows ?? {}) as Record<
@@ -289,8 +312,10 @@ export class StreamNormalizer {
       case "stream_event":
         return this.streamEvent(msg)
       case "rate_limit_event": {
-        const usage = usageFrom(msg.rate_limit_info as Record<string, unknown> | undefined)
-        return usage ? [{ type: "usage", usage }] : []
+        const info = msg.rate_limit_info as Record<string, unknown> | undefined
+        const usage = usageFrom(info)
+        const rejected = rejectedFrom(info)
+        return usage ? [{ type: "usage", usage, rejected }] : []
       }
       case "command_lifecycle":
         return typeof msg.command_uuid === "string"
@@ -447,6 +472,8 @@ export class StreamNormalizer {
     const errorText = isError && !aborted
       ? oneLine(errors.filter((e) => !e.startsWith("[ede_diagnostic]")).join(" · ") || String(msg.result ?? "Error"), 400)
       : undefined
+    // Se acabó el uso (5 h, semanal o tope de gasto): el error lo dice y trae cuándo se renueva.
+    const limit = isError && !aborted ? parseLimitError(errorText) ?? parseLimitError(String(msg.result ?? "")) : null
     const cost = Number(msg.total_cost_usd ?? 0)
     const tokens = turnTokens(msg.usage)
     const total = sessionTokens(msg.modelUsage)
@@ -466,9 +493,10 @@ export class StreamNormalizer {
           ...(tokens ? { tokens } : {}),
           ...(terminal ? { terminalReason: terminal } : {}),
           ...(errorText ? { error: errorText } : {}),
+          ...(limit ? { limit: limit.kind } : {}),
         },
       },
-      { type: "turn_end", ok: !isError, aborted, result: String(msg.result ?? ""), contextFull: isError && isContextFull(terminal, errorText) },
+      { type: "turn_end", ok: !isError, aborted, result: String(msg.result ?? ""), contextFull: isError && isContextFull(terminal, errorText), terminalReason: terminal ?? null, limit },
     )
     return actions
   }

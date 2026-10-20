@@ -6,7 +6,8 @@ import type { Hub } from "./hub.ts"
 import { nameTaken } from "./names.ts"
 import { Plans, type StepInput } from "./plans.ts"
 import { formatDraftLine, withSubagents } from "./prompts.ts"
-import type { SessionManager, TurnEndInfo } from "./sessions.ts"
+import { LimitedError } from "./limit.ts"
+import type { SendOptions, SessionManager, TurnEndInfo } from "./sessions.ts"
 import { checkModelChoice, choiceLabel, findModel, sessionChoice } from "./shared/models.ts"
 import type { BatchProjectMessage, Draft, Project, ProjectMessage, Report, ReportStatus, ReviewState, SessionStatus, SubagentSpec } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId } from "./util.ts"
@@ -341,6 +342,12 @@ export class Orchestration {
     if (this.followUps.has(projectId)) return
     const orch = this.orchestratorOf(projectId)
     const status = orch ? this.sessions.statusOf(orch.id) : "stopped"
+    // Sin uso no se le entrega nada: la cola sigue ahí y sale sola cuando se renueve (ver onLimitCleared).
+    if (orch && this.blockedBy(orch)) {
+      this.clearTimer(projectId)
+      this.broadcastProject(projectId)
+      return
+    }
     // Si está en medio de un turno, el lote se entrega apenas termine (ver onTurnEnd).
     // Si la interrumpiste, esperamos a que retomes o toques "Revisar ahora".
     if (status === "working" || status === "needs_input" || status === "starting" || this.paused.has(projectId)) {
@@ -406,6 +413,10 @@ export class Orchestration {
     const queued = this.db.listReports({ projectId, states: ["queued"] })
     const messages = this.db.listQueuedProjectMessages(projectId)
     if (!orch || (!queued.length && !messages.length)) {
+      this.broadcastProject(projectId)
+      return false
+    }
+    if (this.blockedBy(orch)) {
       this.broadcastProject(projectId)
       return false
     }
@@ -540,6 +551,14 @@ export class Orchestration {
   private onTurnEnd(rec: SessionRecord, info: TurnEndInfo) {
     if (rec.kind !== "orchestrator") return
     const projectId = rec.projectId
+    // Se acabó el uso en medio de la revisión: no es una interrupción tuya. La revisión sigue abierta, la cola
+    // retenida, y control-plane le pide que siga cuando se renueve (ver limit.ts).
+    if (info.limit) {
+      this.clearTimer(projectId)
+      this.clearFollowUp(projectId)
+      this.broadcastProject(projectId)
+      return
+    }
     if (!info.ok) {
       // Turno interrumpido o con error: la revisión queda en pausa, sin liberar nada a medias.
       this.paused.add(projectId)
@@ -563,6 +582,52 @@ export class Orchestration {
       return
     }
     this.closeReview(projectId)
+  }
+
+  /** Lo mismo que sessions.send, pero sin uso deja el mensaje en espera en vez de fallar (ver limit.ts). */
+  private async sendOrHold(id: string, text: string, opts: SendOptions) {
+    const limits = this.sessions.limits
+    if (limits) await limits.sendOrHold(id, text, opts)
+    else await this.sessions.send(id, text, opts)
+  }
+
+  /** Lo que frena un envío a esa sesión (la cuenta sin uso), o null. */
+  private blockedBy(rec: SessionRecord) {
+    return this.sessions.limits?.blocking(rec) ?? null
+  }
+
+  /** Se renovó el uso de una cuenta (o se pidió reintentar): salen los pasos de planes y los lotes que esperaban. */
+  onLimitCleared(accountId: string) {
+    this.plans.onLimitCleared()
+    for (const s of this.db.listSessions()) {
+      if (s.kind === "orchestrator" && !s.archivedAt && this.sessions.accountOf(s) === accountId) this.schedule(s.projectId)
+    }
+  }
+
+  /** Una sesión dejó de estar sin uso (un límite de un modelo que venció, o la continuación ya salió): sale lo que esperaba por ella. */
+  onSessionLimitCleared(sessionId: string) {
+    this.plans.onLimitCleared()
+    const rec = this.db.getSession(sessionId)
+    if (rec?.kind === "orchestrator") this.schedule(rec.projectId)
+  }
+
+  /**
+   * Se acabó el uso y esta sesión no va a seguir sola (pediste "No retomar", la detuviste, o no se pudo): lo que esperaba
+   * de ella no queda colgado. El paso de un plan se pausa; la revisión de la orquestadora queda en pausa hasta que la retomes.
+   */
+  onResumeSkipped(sessionId: string, why: string) {
+    const rec = this.db.getSession(sessionId)
+    if (!rec) return
+    if (rec.kind === "orchestrator") {
+      const open = this.db.listReports({ projectId: rec.projectId, states: ["in_review"] }).length > 0
+      if (!open || this.paused.has(rec.projectId)) return
+      this.paused.add(rec.projectId)
+      this.clearTimer(rec.projectId)
+      this.clearFollowUp(rec.projectId)
+      this.broadcastProject(rec.projectId)
+      return
+    }
+    this.plans.onResumeSkipped(sessionId, why)
   }
 
   /** Cierra la revisión: los resultados quedan revisados y las propuestas se liberan. */
@@ -995,7 +1060,8 @@ export class Orchestration {
         if (fresh) await this.sessions.clearConversation(target.id)
         await this.applyChoice(target, model, effort, title)
         this.sessions.update(target.id, { taskTitle: title, taskState: "assigned" })
-        await this.sessions.send(target.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
+        // Sin uso, el prompt queda en espera y sale solo cuando se renueve.
+        await this.sendOrHold(target.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
         this.noteDecision(
           d.projectId,
           `${auto ? "Se envió automáticamente" : edited ? "Aprobó con cambios" : "Aprobó"} ${d.id} → ${target.name}${fresh ? " (empezando de cero)" : ""}${withChoice ? `, con ${withChoice}` : ""}: "${title}"${edited ? `. Versión enviada:\n${prompt}` : ""}`
@@ -1007,7 +1073,7 @@ export class Orchestration {
         if (this.nameTaken(d.projectId, name)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
         const worker = await this.createWorker(d.projectId, { name, role, model, effort })
         this.sessions.update(worker.id, { taskTitle: title, taskState: "assigned" })
-        await this.sessions.send(worker.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
+        await this.sendOrHold(worker.id, message, { origin: "draft", draftId: d.id, draftTitle: title, display: prompt, subagents })
         this.noteDecision(
           d.projectId,
           `Creó la sesión ${name} (${d.id})${withChoice ? `, con ${withChoice},` : ""} con el prompt "${title}"${edited ? " (con cambios)" : ""}`
@@ -1080,6 +1146,8 @@ export class Orchestration {
     if (status === "working" || status === "needs_input") {
       throw new Error("La orquestadora está en medio de un turno: la cola se le entrega apenas termine.")
     }
+    const blocked = this.blockedBy(orch)
+    if (blocked) throw new LimitedError(blocked)
     this.paused.delete(projectId)
     await this.deliver(projectId, false)
   }
@@ -1136,7 +1204,7 @@ export class Orchestration {
     this.broadcastProject(projectId)
     if (input.prompt?.trim()) {
       this.sessions.update(rec.id, { taskTitle: firstLine(input.prompt), taskState: "assigned" })
-      await this.sessions.send(rec.id, input.prompt.trim(), { origin: "user" })
+      await this.sendOrHold(rec.id, input.prompt.trim(), { origin: "user" })
     } else {
       await this.sessions.start(rec.id)
     }

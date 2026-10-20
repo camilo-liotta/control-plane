@@ -12,7 +12,8 @@ import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { StepInput } from "./plans.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { AppInput, AppStatus, AppView, ContextUsage, SessionStatus } from "./shared/types.ts"
+import type { AppInput, AppStatus, AppView, ContextUsage, SessionLimit, SessionStatus } from "./shared/types.ts"
+import { untilText } from "./limit.ts"
 import { hash } from "./fingerprint.ts"
 import { errorMessage } from "./util.ts"
 
@@ -110,6 +111,14 @@ const tagsSchema = z
   .max(4)
   .optional()
   .describe("Etiquetas cortas, en minúsculas y con guiones (ej. postmark-dominios). Solo para relacionar dos o más tareas que van juntas; no etiquetes una tarea sola ni para clasificar.")
+
+/** "sin uso hasta las 22:00 (límite de 5 h): sigue sola" para list_sessions. */
+export function limitLine(l: SessionLimit | null): string | null {
+  if (!l) return null
+  const kind = l.kind === "five_hour" ? "límite de 5 h" : l.kind === "seven_day" ? "límite semanal" : l.kind === "spend" ? "tope de gasto" : "límite de uso"
+  const when = l.source === "fallback" ? `reintenta a las ${new Date(l.resetsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })}` : untilText(l.resetsAt)
+  return `sin uso, ${when} (${kind})${l.willResume ? ": sigue sola" : l.interrupted ? "" : ": se le puede escribir cuando se renueve"}`
+}
 
 /** Cuánto contexto usa una sesión, para que la orquestadora sepa si conviene empezar de cero. */
 function contextLine(ctx: ContextUsage | null): string | null {
@@ -213,6 +222,7 @@ function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string,
             s.taskTitle ? `tarea: ${s.taskTitle}` : null,
             choiceLine(orchestration, s),
             orchestration.plans.sessionLine(s.id),
+            limitLine(sessions.view(s).limited),
             contextLine(sessions.contextOf(s.id)),
             s.worktree ? "worktree propio" : null,
             last ? `último resultado: ${last.status} — ${last.summary.split("\n")[0]}` : null,
