@@ -37,6 +37,7 @@ import { failed } from "@/lib/errors"
 import { timeAgo } from "@/lib/format"
 import { modelName } from "@/lib/models"
 import { reveal } from "@/lib/reveal"
+import { limitText, limitTitle } from "@/lib/limit"
 import { draftStateView, planStateView, planStepView, toneBg, toneSoft, type Tone } from "@/lib/status"
 import { undoable } from "@/lib/undo"
 import { useModels, useStore } from "@/lib/store"
@@ -70,8 +71,10 @@ export const planCut = (d: Draft, target: Pick<Session, "status"> | undefined) =
   d.planState === "paused" && currentOf(d)?.state === "running" && !!target && !BUSY.has(target.status)
 
 /** El estado del plan para la pastilla: ámbar solo si frena. */
-function planView(d: Draft, target?: Pick<Session, "status">): { label: string; tone: Tone } {
+function planView(d: Draft, target?: Pick<Session, "status" | "limited">): { label: string; tone: Tone } {
   if (!d.planState) return draftStateView[d.state]
+  // Sin uso el plan espera (no es una falla ni una alarma): pending.
+  if (d.planState === "running" && target?.limited) return { label: "Esperando el uso", tone: "pending" }
   if (planStuck(d) || planCut(d, target)) return { label: "Espera una decisión", tone: "attention" }
   return planStateView[d.planState]
 }
@@ -151,6 +154,8 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
   const ready = draft.state === "ready"
   const approved = draft.state === "sent" && draft.planState !== null
   const paused = draft.planState === "paused"
+  // Sin uso la sesión del plan no recibe nada: el paso en curso (o el que sigue) espera a que se renueve.
+  const waitingUse = draft.planState === "running" && !!target?.limited
   const open = ready || draft.state === "staged" || draft.planState === "running" || paused
   const edited = useMemo(() => JSON.stringify(steps) !== serverSteps, [steps, serverSteps])
   const stuck = planStuck(draft)
@@ -269,6 +274,11 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
           </>
         )}
 
+        {waitingUse && target?.limited && (
+          <p className={cn("mt-3 rounded-lg px-3 py-2 text-xs", toneSoft.pending)} title={limitTitle(target.limited)}>
+            Esperando que se renueve el uso · {limitText(target.limited)}. El paso sigue solo.
+          </p>
+        )}
         {paused && (
           <p className={cn("mt-3 rounded-lg px-3 py-2 text-xs", toneSoft[stuck || cut ? "attention" : "idle"])}>
             {cut
@@ -303,6 +313,7 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
               approved={approved}
               current={approved && draft.currentStep === i}
               cut={cut && draft.currentStep === i}
+              waiting={waitingUse && draft.currentStep === i}
               defaultOpen={!compact && !approved && steps.length <= 2}
               fallback={stepFallback(steps, i, models, fallback)}
               newSession={isNew && i === 0}
@@ -410,6 +421,7 @@ function StepRow({
   approved,
   current,
   cut,
+  waiting = false,
   defaultOpen,
   fallback,
   newSession,
@@ -424,6 +436,8 @@ function StepRow({
   live: PlanStep | undefined
   approved: boolean
   current: boolean
+  /** El paso en curso espera que se renueve el uso (la sesión está sin uso). */
+  waiting?: boolean
   /** El paso en curso quedó cortado (la sesión no lo está haciendo). */
   cut: boolean
   defaultOpen: boolean
@@ -439,8 +453,9 @@ function StepRow({
   const [open, setOpen] = useState(defaultOpen)
   const [editing, setEditing] = useState(false)
   const state = live?.state ?? "pending"
-  const view = cut ? { label: "Cortado", tone: "attention" as const } : planStepView[state]
-  const showState = approved && state !== "pending"
+  // Sin uso: el paso espera (o el siguiente todavía no salió). No es una falla: va en pending.
+  const view = cut ? { label: "Cortado", tone: "attention" as const } : waiting ? { label: "Esperando que se renueve el uso", tone: "pending" as const } : planStepView[state]
+  const showState = approved && (state !== "pending" || waiting)
   const result = live?.summary
   useEffect(() => {
     if (!editable) setEditing(false)
@@ -475,7 +490,7 @@ function StepRow({
             </button>
             {showState && (
               <TonePill tone={view.tone}>
-                {state === "running" && !cut && <Lamp tone="working" pulse className="size-1.5" />}
+                {state === "running" && !cut && !waiting && <Lamp tone="working" pulse className="size-1.5" />}
                 {view.label}
               </TonePill>
             )}

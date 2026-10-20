@@ -962,6 +962,10 @@ export interface DesktopSummary {
   running: number
   /** Proyectos sin archivar, con sus conteos. */
   projects: { id: string; name: string; needs: number; working: number }[]
+  /** Sesiones sin uso (esperan que se renueve el límite): no cuentan en `needs`. */
+  limited: number
+  /** Hasta cuándo, ya formateado ("22:00", "lun 9:00"); el más lejano si hay varios. null si no hay. */
+  limitedUntil: string | null
 }
 
 /** Lo que responde GET /api/health: la app de escritorio lo usa para reconocer al server. */

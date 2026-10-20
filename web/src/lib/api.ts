@@ -1,6 +1,8 @@
 import type {
   AfkLog,
   Account,
+  AppSettings,
+  HeldMessage,
   AppInput,
   AppSuggestion,
   AppView,
@@ -216,7 +218,13 @@ export const api = {
   cancelScheduled: (id: string, itemId: string, clientId: string) =>
     request<{ sent: boolean }>("POST", `/api/sessions/${id}/scheduled/${encodeURIComponent(itemId)}/cancel`, { clientId }),
   send: (id: string, text: string, attachmentIds: string[] = [], clientId?: string) =>
-    request<StoredEvent>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds, clientId }),
+    request<StoredEvent | { held: HeldMessage; note: string }>("POST", `/api/sessions/${id}/messages`, { text, attachmentIds, clientId }),
+  settings: () => request<AppSettings>("GET", "/api/settings"),
+  saveSettings: (patch: Partial<AppSettings>) => request<AppSettings>("PATCH", "/api/settings", patch),
+  retryAccountLimit: (id: string) => request<Account>("POST", `/api/accounts/${id}/limit/retry`),
+  retrySessionLimit: (id: string) => request<Session>("POST", `/api/sessions/${id}/limit/retry`),
+  setSessionResume: (id: string, resume: boolean) => request<Session>("PATCH", `/api/sessions/${id}/limit`, { resume }),
+  cancelHeld: (id: string, heldId: string) => request<Session>("DELETE", `/api/sessions/${id}/held/${heldId}`),
   upload: (id: string, file: { name: string; mime: string; data: string }) =>
     request<Attachment>("POST", `/api/sessions/${id}/attachments`, file),
   attachments: (id: string) => request<Attachment[]>("GET", `/api/sessions/${id}/attachments`),

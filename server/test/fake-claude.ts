@@ -18,7 +18,7 @@ import path from "node:path"
  * - como el de verdad, --resume de una conversación sin transcript sale con "No conversation found";
  * - con FAKE_LOG_INPUT=<archivo> anota cada mensaje de usuario que recibe;
  * - con FALLA1 en el --name, el primer arranque sale con error (los siguientes andan);
- * - "LIMITE <five_hour|seven_day|spend|other> <segundos>" deja la cuenta sin uso (el límite es de la cuenta: vive en
+ * - "LIMITE <five_hour|seven_day|spend|other> <segundos> [<desde en segundos>]" deja la cuenta sin uso (el límite es de la cuenta: vive en
  *   <CLAUDE_CONFIG_DIR>/fake-limit.json) y rechaza todo turno hasta que pasen esos segundos, con el rate_limit_event
  *   (status "rejected", resetsAt en segundos) y el texto real del error ("You've hit your session limit · resets 10pm
  *   (America/New_York)"). Con FAKE_LIMIT_EVENT=0 no manda el evento; con FAKE_LIMIT_TEXT=0 el error no dice de qué límite es;
@@ -128,16 +128,20 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     state("idle")
     continue
   }
-  // El límite de uso es de la cuenta: "LIMITE <tipo> <segundos>" lo arma y, mientras dura, todo turno se rechaza (menos /clear, que es local).
+  // El límite de uso es de la cuenta: "LIMITE <tipo> <segundos> [<desde en segundos>]" lo arma y, mientras dura, todo turno se rechaza
+  // (menos /clear, que es local). Un turno largo (LARGO) lo vuelve a mirar al terminar, como uno que llega al límite a la mitad.
   const limitFile = path.join(process.env.CLAUDE_CONFIG_DIR, "fake-limit.json")
   if (text.startsWith("LIMITE ")) {
-    const [kind, secs] = text.slice(7).trim().split(" ")
-    fs.writeFileSync(limitFile, JSON.stringify({ until: Date.now() + Number(secs) * 1000, kind }))
+    const [kind, secs, from] = text.slice(7).trim().split(" ")
+    fs.writeFileSync(limitFile, JSON.stringify({ until: Date.now() + Number(secs) * 1000, kind, from: Date.now() + Number(from ?? 0) * 1000 }))
   }
-  let limit = null
-  try { limit = JSON.parse(fs.readFileSync(limitFile, "utf8")) } catch {}
-  // El de un modelo ("other") solo corta a las sesiones con OPUS en el nombre.
-  if (limit && Date.now() < limit.until && (limit.kind !== "other" || name.includes("OPUS"))) {
+  const activeLimit = () => {
+    let l = null
+    try { l = JSON.parse(fs.readFileSync(limitFile, "utf8")) } catch {}
+    // El de un modelo ("other") solo corta a las sesiones con OPUS en el nombre.
+    return l && Date.now() >= (l.from ?? 0) && Date.now() < l.until && (l.kind !== "other" || name.includes("OPUS")) ? l : null
+  }
+  const rejectLimit = (limit) => {
     const clock = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", hour12: true }).format(limit.until + 59000).replace(":00", "").replace(" ", "").toLowerCase()
     const when = "resets " + clock + " (America/New_York)"
     const wording = { five_hour: "You've hit your session limit \u00b7 " + when, seven_day: "You've hit your weekly limit \u00b7 " + when, spend: "You've hit your individual spend limit \u00b7 run /usage-credits to raise it, or visit claude.ai/admin-settings/usage \u00b7 your weekly " + "limit " + when, other: "You've hit your Opus limit \u00b7 " + when }
@@ -149,6 +153,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       out({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt, rateLimitType: type, utilization: 1, unifiedWindows: limit.kind === "five_hour" ? { five_hour: window } : { seven_day: window } } })
     say(message)
     result({ is_error: true, result: message, terminal_reason: "api_error", errors: [] })
+  }
+  const limited = activeLimit()
+  if (limited) {
+    rejectLimit(limited)
     continue
   }
   if (text.startsWith("/compact") && process.env.FAKE_NO_COMPACT === "1") {
@@ -183,7 +191,14 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     continue
   }
   // "LARGO" (en cualquier parte del mensaje): un turno que tarda FAKE_LONG_MS (30 s si no está).
-  if (text.includes("LARGO")) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LONG_MS ?? 30000)))
+  if (text.includes("LARGO")) {
+    await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LONG_MS ?? 30000)))
+    const late = activeLimit()
+    if (late) {
+      rejectLimit(late)
+      continue
+    }
+  }
   // Programar para más tarde, con la forma que tienen en el stream de Claude Code:
   //   "CRON <cron>|<recurrente 1/0>|<durable 1/0>|<prompt>", "CRONDEL <id>", "WAKEUP <segundos>|<motivo>",
   //   "FIRE <prompt>" (un cron que se dispara: su prompt vuelve como mensaje de usuario).

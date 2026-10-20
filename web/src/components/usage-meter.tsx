@@ -1,9 +1,13 @@
 import type { UsageWindow } from "@shared/types"
 
+import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useNow } from "@/hooks/use-now"
 import { percent } from "@/lib/format"
-import { useCurrentAccount } from "@/lib/store"
+import { limitTitle, limitWhen } from "@/lib/limit"
+import { retryAccountLimit } from "@/lib/session-actions"
+import { useCurrentAccount, useStore } from "@/lib/store"
+import { toneSoft } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
 function resetIn(ts: number, now: number) {
@@ -36,16 +40,31 @@ function Row({ label, window, now }: { label: string; window: UsageWindow; now: 
   )
 }
 
-/** Cuánto del límite del plan llevás usado (lo informa el propio Claude Code). */
+/** Cuánto del límite del plan llevás usado (lo informa el propio Claude Code). Con el límite alcanzado, hasta cuándo y qué pasa. */
 export function UsageMeter() {
-  const usage = useCurrentAccount()?.usage ?? null
+  const account = useCurrentAccount()
+  const usage = account?.usage ?? null
+  const limit = account?.limit ?? null
+  const resume = useStore((s) => s.settings.resumeOnRenewal)
   const now = useNow(30_000)
-  if (!usage || (!usage.fiveHour && !usage.sevenDay)) return null
+  if (!limit && (!usage || (!usage.fiveHour && !usage.sevenDay))) return null
   return (
     <div className="space-y-1.5 px-2 py-1">
       <div className="eyebrow">Uso del plan de esta cuenta</div>
-      {usage.fiveHour && <Row label="5 h" window={usage.fiveHour} now={now} />}
-      {usage.sevenDay && <Row label="7 d" window={usage.sevenDay} now={now} />}
+      {limit && account && (
+        <div role="status" className={cn("space-y-1.5 rounded-lg px-2.5 py-2 text-xs leading-snug", toneSoft.pending)} title={limitTitle({ ...limit, willResume: resume })}>
+          <p>
+            {limit.source === "fallback" ? "Sin uso · se vuelve a probar" : `Sin uso hasta ${limitWhen(limit.resetsAt, now)}`} · {resume ? "las sesiones siguen solas" : "las sesiones esperan"}
+          </p>
+          {limit.kind === "spend" && (
+            <Button size="xs" variant="outline" onClick={() => void retryAccountLimit(account.id)} title="Si subiste el tope de gasto, probar ahora sin esperar">
+              Reintentar ahora
+            </Button>
+          )}
+        </div>
+      )}
+      {usage?.fiveHour && <Row label="5 h" window={usage.fiveHour} now={now} />}
+      {usage?.sevenDay && <Row label="7 d" window={usage.sevenDay} now={now} />}
     </div>
   )
 }

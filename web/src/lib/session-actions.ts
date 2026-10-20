@@ -32,6 +32,15 @@ export const stopSession = async (id: string) => {
 /** Corta el turno en curso; la sesión sigue viva y espera tu próximo mensaje. */
 export const interruptSession = (id: string) => api.interrupt(id).then(() => void toast("Turno interrumpido"), failed("interrumpir el turno"))
 
+/** Sin uso: manda ya lo que esperaba (o pide seguir) sin esperar a que se renueve, por ejemplo si subiste el tope de gasto. */
+export const retrySessionLimit = (id: string) => api.retrySessionLimit(id).then(() => void toast("Reintentando ahora"), failed("reintentar"))
+
+/** Sin uso: la sesión no sigue sola cuando se renueve. */
+export const skipResume = (id: string) => api.setSessionResume(id, false).then(() => void toast("La sesión no va a seguir sola"), failed("cambiar si sigue sola"))
+
+/** Sin uso en toda la cuenta: reintenta todas las sesiones. */
+export const retryAccountLimit = (accountId: string) => api.retryAccountLimit(accountId).then(() => void toast("Reintentando ahora"), failed("reintentar"))
+
 export const toggleTerminal = (id: string) => useTerminal.getState().toggle(id)
 export const openCompaction = (id: string) => useUi.getState().set({ compactFor: id })
 export const openSessionTools = (id: string) => useUi.getState().set({ toolsFor: id })
