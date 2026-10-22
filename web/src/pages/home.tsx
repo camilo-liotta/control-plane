@@ -22,6 +22,7 @@ import { lastRoute } from "@/lib/nav"
 import { openDrafts, projectSessions, useCurrentAccount, useProjects, useStore } from "@/lib/store"
 import { reportStatusView, sessionNeedsYou, sessionStatus, type Tone } from "@/lib/status"
 import { useAction } from "@/lib/use-action"
+import { useCan } from "@/lib/access"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 import { restorableRoute } from "@shared/navigation"
@@ -259,6 +260,7 @@ function FirstProject() {
   const claude = useStore((s) => s.meta?.claudeVersion)
   const account = useCurrentAccount()
   const setUi = useUi((s) => s.set)
+  const manage = useCan("manage")
   const auth = account?.auth ?? null
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-12 sm:py-20">
@@ -281,7 +283,7 @@ function FirstProject() {
           title={!auth ? `Verificando la cuenta ${account?.name ?? ""}…` : auth.loggedIn ? `Cuenta ${account?.name} logueada` : `La cuenta ${account?.name} no tiene login`}
           detail={!auth ? "Un momento." : auth.loggedIn ? authLine(auth) : "Las sesiones no arrancan hasta que la loguees."}
           action={
-            auth && !auth.loggedIn ? (
+            manage && auth && !auth.loggedIn ? (
               <Button size="sm" variant="outline" onClick={() => setUi({ accountsDialog: true })}>
                 <LogIn />
                 Loguearla
@@ -290,10 +292,12 @@ function FirstProject() {
           }
         />
       </ul>
-      <Button className="self-start" onClick={() => setUi({ newProject: true })}>
-        <Plus />
-        Nuevo proyecto
-      </Button>
+      {manage && (
+        <Button className="self-start" onClick={() => setUi({ newProject: true })}>
+          <Plus />
+          Nuevo proyecto
+        </Button>
+      )}
     </div>
   )
 }
@@ -397,6 +401,7 @@ export function Home() {
   const sessions = useStore((s) => s.sessions)
   const loaded = useStore((s) => s.loaded)
   const setUi = useUi((s) => s.set)
+  const manage = useCan("manage")
 
   const stats = useMemo(() => {
     const ids = new Set(projects.map((p) => p.id))
@@ -413,9 +418,11 @@ export function Home() {
         <PageHeader title="Inicio" />
         <div className="flex-1 overflow-y-auto">
           <FirstProject />
-          <div className="mx-auto max-w-6xl px-4 pb-8 sm:px-6">
-            <ArchivedProjects />
-          </div>
+          {manage && (
+            <div className="mx-auto max-w-6xl px-4 pb-8 sm:px-6">
+              <ArchivedProjects />
+            </div>
+          )}
         </div>
       </div>
     )
@@ -432,11 +439,13 @@ export function Home() {
           </>
         }
         actions={
-          <Button size="sm" onClick={() => setUi({ newProject: true })}>
-            <Plus />
-            <span className="hidden sm:inline">Nuevo proyecto</span>
-            <span className="sr-only sm:hidden">Nuevo proyecto</span>
-          </Button>
+          manage && (
+            <Button size="sm" onClick={() => setUi({ newProject: true })}>
+              <Plus />
+              <span className="hidden sm:inline">Nuevo proyecto</span>
+              <span className="sr-only sm:hidden">Nuevo proyecto</span>
+            </Button>
+          )
         }
       />
       <div className="flex-1 overflow-y-auto">
@@ -459,7 +468,7 @@ export function Home() {
             </section>
             <RecentActivity projects={projects} />
           </div>
-          <ArchivedProjects />
+          {manage && <ArchivedProjects />}
           <p className="hidden items-center gap-1.5 px-1 text-2xs text-muted-foreground sm:flex">
             <Shortcut keys="mod+k" /> para saltar a cualquier sesión o acción · <Shortcut keys="?" /> para ver los atajos
           </p>

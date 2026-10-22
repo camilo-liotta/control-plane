@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { api } from "@/lib/api"
 import { tokens } from "@/lib/format"
 import { useStore } from "@/lib/store"
+import { useCan } from "@/lib/access"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 import { failed } from "@/lib/errors"
@@ -51,6 +52,7 @@ export function ContextMeter({ session }: { session: Session }) {
   const mode = useStore((s) => s.projects[session.projectId]?.settings.compactMode ?? "notify")
   const waiting = useStore((s) => Boolean(s.compactions[session.id]?.waiting))
   const setUi = useUi((s) => s.set)
+  const manage = useCan("manage")
   if (!ctx) return null
   const pct = Math.round((ctx.tokens / ctx.max) * 100)
   const level = contextLevel(ctx)
@@ -114,17 +116,19 @@ export function ContextMeter({ session }: { session: Session }) {
               : "Compacta sola cuando se llena."}{" "}
           Al compactar: <span className="text-foreground">{COMPACT_MODES[mode].label}</span> (se cambia en la configuración del proyecto).
         </p>
-        <div className="flex flex-col gap-1.5">
-          <Button size="sm" onClick={() => setUi({ compactFor: session.id })}>
-            <Layers />
-            {waiting ? "Elegir qué conservar" : "Compactar eligiendo qué queda…"}
-          </Button>
-          {!waiting && (
-            <Button size="sm" variant="ghost" onClick={() => void direct()} disabled={!running && session.status !== "stopped"}>
-              Compactar sin revisar
+        {manage && (
+          <div className="flex flex-col gap-1.5">
+            <Button size="sm" onClick={() => setUi({ compactFor: session.id })}>
+              <Layers />
+              {waiting ? "Elegir qué conservar" : "Compactar eligiendo qué queda…"}
             </Button>
-          )}
-        </div>
+            {!waiting && (
+              <Button size="sm" variant="ghost" onClick={() => void direct()} disabled={!running && session.status !== "stopped"}>
+                Compactar sin revisar
+              </Button>
+            )}
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )

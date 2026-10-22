@@ -3,6 +3,7 @@ import { create } from "zustand"
 
 import type { EditorSettings } from "@shared/types"
 
+import { useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 
 export const EDITOR_NAMES: Record<EditorSettings["kind"], string> = {
@@ -35,8 +36,10 @@ export const useEditorStore = create<EditorState>((set) => ({
 export function useEditor(): EditorSettings | null {
   const settings = useEditorStore((s) => s.settings)
   const load = useEditorStore((s) => s.load)
+  // El editor es de esta máquina: desde otro dispositivo no se pide (el server lo niega).
+  const manage = useCan("manage")
   useEffect(() => {
-    if (!settings) void load()
-  }, [settings, load])
+    if (manage && !settings) void load()
+  }, [manage, settings, load])
   return settings
 }

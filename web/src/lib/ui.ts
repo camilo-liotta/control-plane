@@ -19,6 +19,8 @@ interface UiState {
   /** Cuenta de Claude Code elegida en el selector (se recuerda en este navegador). */
   account: string | null
   accountsDialog: boolean
+  /** El diálogo "Acceso remoto" (Tailscale). */
+  remoteDialog: boolean
   settingsForAccount: string | null
   /** Sesión cuyo panel de compactación está abierto. */
   compactFor: string | null
@@ -83,6 +85,7 @@ export const useUi = create<UiState>((set) => ({
   lightbox: null,
   account: storedAccount(),
   accountsDialog: false,
+  remoteDialog: false,
   settingsForAccount: null,
   compactFor: null,
   toolsFor: null,

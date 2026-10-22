@@ -40,6 +40,7 @@ import { scrollMemory, useNav } from "@/lib/nav"
 import { archiveSession, openCompaction, openSessionTools, renameSession, startSession, stopSession } from "@/lib/session-actions"
 import { useStore } from "@/lib/store"
 import { useTerminal } from "@/lib/terminal"
+import { useCan } from "@/lib/access"
 import { useUi } from "@/lib/ui"
 import { useAction } from "@/lib/use-action"
 import { sessionStatus } from "@/lib/status"
@@ -69,10 +70,15 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
   const pendingReveal = useUi((s) => s.reveal)
   const terminalOpen = useTerminal((s) => !!s.open[sessionId])
   const toggleTerminal = useTerminal((s) => s.toggle)
+  // Desde otro dispositivo: sin terminal ni gestión de la sesión; reanudar y detener piden "control"; escribir, "responder".
+  const manage = useCan("manage")
+  const control = useCan("control")
+  const respond = useCan("respond")
 
   // Ctrl+` abre y esconde la terminal (como en los editores). En la captura y sin seguir: si no, la
   // terminal lo recibe primero y le manda un NUL a la shell.
   useEffect(() => {
+    if (!manage) return
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === "`" || e.code === "Backquote")) {
         e.preventDefault()
@@ -82,7 +88,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
     }
     window.addEventListener("keydown", onKey, true)
     return () => window.removeEventListener("keydown", onKey, true)
-  }, [sessionId, toggleTerminal])
+  }, [sessionId, toggleTerminal, manage])
 
   // Si los mensajes no cargan, se dice en lugar del esqueleto (que si no, queda para siempre).
   const [eventsError, setEventsError] = useState<unknown>(null)
@@ -247,9 +253,9 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 </span>
               )}
               <ContextMeter session={session} />
-              <ModelPicker session={session} />
+              {manage && <ModelPicker session={session} />}
             </div>
-            {running ? (
+            {!control ? null : running ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -274,6 +280,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 <span className="hidden sm:inline">Reanudar</span>
               </Button>
             )}
+            {manage && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -291,9 +298,11 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 Terminal <Shortcut keys="ctrl+backtick" />
               </TooltipContent>
             </Tooltip>
+            )}
             <Button size="icon-sm" variant="ghost" className="lg:hidden" onClick={() => setPanelOpen(true)} aria-label="Ver el panel de la sesión" title="Panel de la sesión">
               <PanelRight />
             </Button>
+            {manage && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="icon-sm" variant="ghost" aria-label="Más acciones" title="Más acciones">
@@ -338,6 +347,7 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
           </>
         }
       />
@@ -391,8 +401,8 @@ export function SessionPage({ projectId, sessionId }: { projectId: string; sessi
               </button>
             )}
             </div>
-            <Composer session={session} dropTarget={column} />
-            <TerminalPanel session={session} />
+            {respond && <Composer session={session} dropTarget={column} />}
+            {manage && <TerminalPanel session={session} />}
           </div>
           <aside aria-label="Panel de la sesión" className="session-panel hidden w-[22rem] shrink-0 overflow-y-auto lg:block">
             {panel}

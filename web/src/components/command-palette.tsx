@@ -60,6 +60,7 @@ import {
   toggleTerminal,
 } from "@/lib/session-actions"
 import { projectSessions, useAccounts, useCurrentAccount, useProjects, useStore } from "@/lib/store"
+import { useCan } from "@/lib/access"
 import { useUi } from "@/lib/ui"
 import { keysFor, SHORTCUTS, type ShortcutId } from "@shared/shortcuts"
 
@@ -88,6 +89,10 @@ function Keys({ id }: { id: ShortcutId }) {
 export function CommandPalette() {
   const open = useUi((s) => s.palette)
   const setUi = useUi((s) => s.set)
+  // Desde otro dispositivo: sin gestión ni terminal; escribir pide "responder" y reanudar, detener y AFK, "control".
+  const manage = useCan("manage")
+  const respond = useCan("respond")
+  const control = useCan("control")
   const projects = useProjects()
   const sessions = useStore((s) => s.sessions)
   const drafts = useStore((s) => s.drafts)
@@ -175,7 +180,7 @@ export function CommandPalette() {
 
         {session && (
           <CommandGroup heading={`Esta sesión · ${sessionLabel(session)}`}>
-            {session.status === "working" && (
+            {session.status === "working" && respond && (
               <CommandItem value="interrumpir el turno" onSelect={run(() => interruptSession(session.id))}>
                 <Pause />
                 Interrumpir el turno
@@ -187,17 +192,18 @@ export function CommandPalette() {
                 </CommandShortcut>
               </CommandItem>
             )}
-            {running ? (
-              <CommandItem value="detener la sesión" onSelect={run(() => stopSession(session.id))}>
-                <Square />
-                Detener la sesión
-              </CommandItem>
-            ) : (
-              <CommandItem value="reanudar la sesión" onSelect={run(() => startSession(session.id))}>
-                <Play />
-                Reanudar la sesión
-              </CommandItem>
-            )}
+            {control &&
+              (running ? (
+                <CommandItem value="detener la sesión" onSelect={run(() => stopSession(session.id))}>
+                  <Square />
+                  Detener la sesión
+                </CommandItem>
+              ) : (
+                <CommandItem value="reanudar la sesión" onSelect={run(() => startSession(session.id))}>
+                  <Play />
+                  Reanudar la sesión
+                </CommandItem>
+              ))}
             <CommandItem value="ir a lo último del chat" onSelect={run(jumpToEnd)}>
               <ArrowDownToLine />
               Ir a lo último del chat
@@ -205,26 +211,30 @@ export function CommandPalette() {
                 <Keys id="jump-to-end" />
               </CommandShortcut>
             </CommandItem>
-            <CommandItem value="terminal de la sesión" onSelect={run(() => toggleTerminal(session.id))}>
-              <SquareTerminal />
-              Abrir o esconder la terminal
-              <CommandShortcut>
-                <Shortcut keys="ctrl+backtick" />
-              </CommandShortcut>
-            </CommandItem>
-            <CommandItem value="renombrar la sesión" onSelect={run(() => renameSession(session.id))}>
-              <Pencil />
-              Renombrar
-            </CommandItem>
-            <CommandItem value="compactar eligiendo qué queda" onSelect={run(() => openCompaction(session.id))}>
-              <Layers />
-              Compactar eligiendo qué queda…
-            </CommandItem>
-            <CommandItem value="herramientas de la sesión mcp skills plugins" onSelect={run(() => openSessionTools(session.id))}>
-              <Blocks />
-              Herramientas de la sesión
-            </CommandItem>
-            {session.kind === "worker" && (
+            {manage && (
+              <>
+                <CommandItem value="terminal de la sesión" onSelect={run(() => toggleTerminal(session.id))}>
+                  <SquareTerminal />
+                  Abrir o esconder la terminal
+                  <CommandShortcut>
+                    <Shortcut keys="ctrl+backtick" />
+                  </CommandShortcut>
+                </CommandItem>
+                <CommandItem value="renombrar la sesión" onSelect={run(() => renameSession(session.id))}>
+                  <Pencil />
+                  Renombrar
+                </CommandItem>
+                <CommandItem value="compactar eligiendo qué queda" onSelect={run(() => openCompaction(session.id))}>
+                  <Layers />
+                  Compactar eligiendo qué queda…
+                </CommandItem>
+                <CommandItem value="herramientas de la sesión mcp skills plugins" onSelect={run(() => openSessionTools(session.id))}>
+                  <Blocks />
+                  Herramientas de la sesión
+                </CommandItem>
+              </>
+            )}
+            {manage && session.kind === "worker" && (
               <CommandItem value="archivar la sesión" onSelect={run(() => archiveSession(session.id))}>
                 <Archive />
                 Archivar la sesión…
@@ -235,39 +245,50 @@ export function CommandPalette() {
 
         {project && (
           <CommandGroup heading={`Este proyecto · ${project.name}`}>
-            <CommandItem value={`nueva sesión en ${project.name}`} onSelect={run(() => setUi({ newSessionFor: project.id }))}>
-              <Plus />
-              Nueva sesión en {project.name}
-            </CommandItem>
+            {manage && (
+              <CommandItem value={`nueva sesión en ${project.name}`} onSelect={run(() => setUi({ newSessionFor: project.id }))}>
+                <Plus />
+                Nueva sesión en {project.name}
+              </CommandItem>
+            )}
             {location !== `/p/${project.id}` && (
               <CommandItem value={`tablero de ${project.name}`} onSelect={go(`/p/${project.id}`)}>
                 <FolderGit2 />
                 Tablero
               </CommandItem>
             )}
-            <CommandItem value={`ajustes del proyecto ${project.name}`} onSelect={run(() => setUi({ settingsFor: project.id }))}>
-              <Settings2 />
-              Ajustes del proyecto
-            </CommandItem>
-            {afkOf(project) ? (
-              <CommandItem value={`volver de afk ${project.name}`} onSelect={run(() => void comeBackFromAfk(project))}>
-                <Undo2 />
-                Volver de AFK
-              </CommandItem>
-            ) : (
-              <CommandItem value={`ponerse afk en ${project.name}`} onSelect={run(() => setUi({ afkFor: project.id }))}>
-                <UserRoundX />
-                Ponerse AFK en {project.name}…
+            {manage && (
+              <CommandItem value={`ajustes del proyecto ${project.name}`} onSelect={run(() => setUi({ settingsFor: project.id }))}>
+                <Settings2 />
+                Ajustes del proyecto
               </CommandItem>
             )}
-            <CommandItem value={`importar una sesión a ${project.name}`} onSelect={run(() => setUi({ importFor: project.id }))}>
-              <Import />
-              Importar una sesión…
-            </CommandItem>
-            <CommandItem value={`herramientas del proyecto ${project.name}`} onSelect={go(`/p/${project.id}/tools`)}>
-              <Blocks />
-              Herramientas del proyecto
-            </CommandItem>
+            {afkOf(project)
+              ? respond && (
+                  <CommandItem value={`volver de afk ${project.name}`} onSelect={run(() => void comeBackFromAfk(project))}>
+                    <Undo2 />
+                    Volver de AFK
+                  </CommandItem>
+                )
+              : control && (
+                  <CommandItem value={`ponerse afk en ${project.name}`} onSelect={run(() => setUi({ afkFor: project.id }))}>
+                    <UserRoundX />
+                    Ponerse AFK en {project.name}…
+                  </CommandItem>
+                )}
+            {manage && (
+              <>
+                <CommandItem value={`importar una sesión a ${project.name}`} onSelect={run(() => setUi({ importFor: project.id }))}>
+                  <Import />
+                  Importar una sesión…
+                </CommandItem>
+                <CommandItem value={`herramientas del proyecto ${project.name}`} onSelect={go(`/p/${project.id}/tools`)}>
+                  <Blocks />
+                  Herramientas del proyecto
+                </CommandItem>
+              </>
+            )}
+            {manage && (
             <CommandItem
               value={`sesiones archivadas de ${project.name}`}
               onSelect={run(() => {
@@ -278,7 +299,8 @@ export function CommandPalette() {
               <Archive />
               Sesiones archivadas
             </CommandItem>
-            {projectApps.map((a) => {
+            )}
+            {manage && projectApps.map((a) => {
               const up = appIsRunning(a)
               return (
                 <CommandItem key={`app-${a.id}`} value={`${up ? "bajar" : "levantar"} app ${a.name}`} onSelect={run(() => appAction(a.id, up ? "stop" : "start"))}>
@@ -322,11 +344,13 @@ export function CommandPalette() {
             <Inbox />
             Abrir la Bandeja
           </CommandItem>
-          <CommandItem value="nuevo proyecto" onSelect={run(() => setUi({ newProject: true }))}>
-            <Plus />
-            Nuevo proyecto
-          </CommandItem>
-          {projects
+          {manage && (
+            <CommandItem value="nuevo proyecto" onSelect={run(() => setUi({ newProject: true }))}>
+              <Plus />
+              Nuevo proyecto
+            </CommandItem>
+          )}
+          {manage && projects
             .filter((p) => p.id !== project?.id)
             .map((p) => (
               <CommandItem key={`ns-${p.id}`} value={`nueva sesión en ${p.name}`} onSelect={run(() => setUi({ newSessionFor: p.id }))}>
@@ -334,14 +358,18 @@ export function CommandPalette() {
                 Nueva sesión en {p.name}
               </CommandItem>
             ))}
-          <CommandItem value="herramientas skills plugins mcp clis" onSelect={go("/tools")}>
-            <Blocks />
-            Herramientas
-          </CommandItem>
-          <CommandItem value="cuentas de claude code" onSelect={run(() => setUi({ accountsDialog: true }))}>
-            <Users />
-            Cuentas…
-          </CommandItem>
+          {manage && (
+            <>
+              <CommandItem value="herramientas skills plugins mcp clis" onSelect={go("/tools")}>
+                <Blocks />
+                Herramientas
+              </CommandItem>
+              <CommandItem value="cuentas de claude code" onSelect={run(() => setUi({ accountsDialog: true }))}>
+                <Users />
+                Cuentas…
+              </CommandItem>
+            </>
+          )}
           {accounts.length > 1 &&
             accounts
               .filter((a) => a.id !== account?.id)

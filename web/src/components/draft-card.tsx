@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
+import { draftEditMode } from "@shared/remote-access"
 import type { Draft } from "@shared/types"
 
 import { DraftAfkMarks } from "@/components/afk-summary"
@@ -16,6 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
+import { useAccess, useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { draftStateView } from "@/lib/status"
@@ -33,6 +35,10 @@ export function DraftCard(props: CardProps) {
 function PromptCard({ draft, compact = false, className }: CardProps) {
   const target = useStore((s) => (draft.targetSessionId ? s.sessions[draft.targetSessionId] : undefined))
   const [editing, setEditing] = useState(false)
+  // Desde otro dispositivo, enviar, editar y descartar piden el nivel "responder".
+  const respond = useCan("respond")
+  // Desde otro dispositivo solo se editan el título y el prompt: modelo, esfuerzo, empezar de cero, subagentes, nombre y rol son de esta máquina.
+  const basic = draftEditMode(useAccess((s) => s.caps)) === "basic"
   const [expanded, setExpanded] = useState(!compact)
   const [title, setTitle] = useState(draft.title)
   const [prompt, setPrompt] = useState(draft.prompt)
@@ -84,9 +90,13 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
       () =>
         api.sendDraft(
           draft.id,
-          editing
-            ? { title, prompt, subagents: cleanSpecs(subagents), ...modelEdits, ...(draft.kind === "session" ? { name, role } : { fresh }) }
-            : { ...modelEdits, ...(draft.kind === "prompt" ? { fresh } : {}) }
+          basic
+            ? editing
+              ? { title, prompt }
+              : {}
+            : editing
+              ? { title, prompt, subagents: cleanSpecs(subagents), ...modelEdits, ...(draft.kind === "session" ? { name, role } : { fresh }) }
+              : { ...modelEdits, ...(draft.kind === "prompt" ? { fresh } : {}) }
         ),
       draft.kind === "session" ? `Sesión ${name || draft.newSession?.name} creada` : `Propuesta enviada a ${target?.name ?? "la sesión"}`,
       draft.kind === "session" ? "No se pudo crear la sesión" : "No se pudo enviar la propuesta"
@@ -146,7 +156,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
 
         {editing ? (
           <div className="mt-3 space-y-2">
-            {draft.kind === "session" && (
+            {draft.kind === "session" && !basic && (
               <div className="grid gap-2 sm:grid-cols-2">
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre" aria-label="Nombre de la sesión" />
                 <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Rol" aria-label="Rol de la sesión" />
@@ -160,7 +170,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
               className="min-h-40 text-sm leading-relaxed"
               autoFocus
             />
-            <SubagentSpecEditor specs={subagents} onChange={setSubagents} />
+            {!basic && <SubagentSpecEditor specs={subagents} onChange={setSubagents} />}
           </div>
         ) : (
           <>
@@ -194,7 +204,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
           </>
         )}
 
-        {open ? (
+        {open && !basic ? (
           <ModelPill
             className="mt-3"
             model={model.model}
@@ -211,7 +221,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
           )
         )}
 
-        {draft.kind === "prompt" && open && (
+        {draft.kind === "prompt" && open && !basic && (
           <FreshToggle
             checked={fresh}
             onChange={setFresh}
@@ -228,7 +238,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
           </p>
         )}
 
-        {draft.state === "ready" && (
+        {draft.state === "ready" && respond && (
           <footer className="mt-3 flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={send} disabled={busy !== null}>
               {busy === "send" ? <Spinner /> : <Send />}
@@ -243,7 +253,7 @@ function PromptCard({ draft, compact = false, className }: CardProps) {
                   onClick={() =>
                     run(
                       "save",
-                      () => api.editDraft(draft.id, { title, prompt, subagents: cleanSpecs(subagents), ...modelEdits, ...(draft.kind === "prompt" ? { fresh } : {}) }),
+                      () => api.editDraft(draft.id, basic ? { title, prompt } : { title, prompt, subagents: cleanSpecs(subagents), ...modelEdits, ...(draft.kind === "prompt" ? { fresh } : {}) }),
                       "Propuesta guardada",
                       "No se pudo guardar la propuesta"
                     )

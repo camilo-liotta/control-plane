@@ -3,11 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { deliver } from "@shared/deliver"
+import { canAttachFiles } from "@shared/remote-access"
 import type { Session, SlashCommand } from "@shared/types"
 
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Spinner } from "@/components/ui/spinner"
+import { useAccess } from "@/lib/access"
 import { api } from "@/lib/api"
 import { interruptSession } from "@/lib/session-actions"
 import { freshFiles, registerDropTarget } from "@/lib/desktop-drop"
@@ -106,6 +108,8 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   const fileInput = useRef<HTMLInputElement>(null)
   const busy = session.status === "working" || session.status === "needs_input"
   const stopped = session.status === "stopped" || session.status === "error"
+  // Desde otro dispositivo no se adjuntan archivos (subirlos no se abre): ni botón, ni pegar, ni arrastrar.
+  const canAttach = canAttachFiles(useAccess((s) => s.caps))
 
   const query = /^\/([^\s]*)$/.exec(text)?.[1]
   const menuOpen = query !== undefined && dismissed !== text
@@ -147,6 +151,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   }
 
   const addFiles = (files: File[]) => {
+    if (!canAttach) return
     for (const file of files) {
       const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const preview = VISION_TYPES.has(file.type) ? URL.createObjectURL(file) : undefined
@@ -166,7 +171,7 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
   // Los archivos que la app de escritorio lee cuando se sueltan en la ventana.
   const addRef = useRef(addFiles)
   addRef.current = addFiles
-  useEffect(() => registerDropTarget({ add: (files) => addRef.current(files), dragging: setDragging }), [])
+  useEffect(() => (canAttach ? registerDropTarget({ add: (files) => addRef.current(files), dragging: setDragging }) : undefined), [canAttach])
 
   const remove = (key: string) =>
     setPending((p) => {
@@ -434,6 +439,8 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
             onChange={(e) => update(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={(e) => {
+              // Sin adjuntos, se pega solo el texto (el comportamiento normal del campo).
+              if (!canAttach) return
               const files = Array.from(e.clipboardData.files)
               if (files.length) {
                 e.preventDefault()
@@ -454,26 +461,30 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
             className="block max-h-80 min-h-11 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-2 px-2.5 pb-2">
-            <input
-              ref={fileInput}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                addFiles(Array.from(e.target.files ?? []))
-                e.target.value = ""
-              }}
-            />
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="text-muted-foreground"
-              onClick={() => fileInput.current?.click()}
-              aria-label="Adjuntar archivos"
-              title="Adjuntar archivos o imágenes (también podés pegarlos o arrastrarlos)"
-            >
-              <Paperclip />
-            </Button>
+            {canAttach && (
+              <>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    addFiles(Array.from(e.target.files ?? []))
+                    e.target.value = ""
+                  }}
+                />
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={() => fileInput.current?.click()}
+                  aria-label="Adjuntar archivos"
+                  title="Adjuntar archivos o imágenes (también podés pegarlos o arrastrarlos)"
+                >
+                  <Paperclip />
+                </Button>
+              </>
+            )}
             <span className={cn("min-w-0 truncate text-xs", failed ? "text-status-error" : "text-muted-foreground")} title={hint ?? undefined}>
               {hint ?? (
                 <>

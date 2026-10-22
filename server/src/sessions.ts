@@ -1350,6 +1350,14 @@ export class SessionManager extends EventEmitter<{
     this.setStatus(id, rt, this.deriveStatus(rt))
   }
 
+  /** El permiso que la CLI dejó pendiente (herramienta e input tal cual los pidió), o null. Solo lee. La herramienta nunca sale del cliente. */
+  pendingPermission(id: string, requestId: string): { toolName: string; input: Record<string, unknown> } | null {
+    const p = this.runtimes.get(id)?.pendingControl.get(requestId)
+    if (!p || p.kind !== "permission") return null
+    const { __toolName, ...input } = p.input
+    return { toolName: typeof __toolName === "string" ? __toolName : "", input }
+  }
+
   respondPermission(id: string, requestId: string, allow: boolean, message?: string) {
     const rt = this.runtimes.get(id)
     const p = rt?.pendingControl.get(requestId)

@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Link } from "wouter"
 
+import { draftEditMode } from "@shared/remote-access"
 import type { Draft, ModelOption, PlanStep, Session } from "@shared/types"
 
 import { FileRefScope, RefText } from "@/components/file-ref"
@@ -32,6 +33,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
+import { useAccess, useCan } from "@/lib/access"
 import { api, type PlanStepEdit } from "@/lib/api"
 import { failed } from "@/lib/errors"
 import { timeAgo } from "@/lib/format"
@@ -134,6 +136,11 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
   const isNew = !target && draft.newSession !== null
   const fallback = useSessionModelName(draft.projectId, target)
   const action = useAction()
+  // Desde otro dispositivo, editar, enviar, pausar y cancelar piden el nivel "responder".
+  const respond = useCan("respond")
+  // Reanudar un plan es de control; los pasos (modelo, esfuerzo, prompts) solo se editan desde esta máquina.
+  const control = useCan("control")
+  const fullEdit = draftEditMode(useAccess((s) => s.caps)) === "full"
   const [steps, setSteps] = useState<PlanStepEdit[]>(() => draft.steps.map(toEdit))
   const [hidden, setHidden] = useState(false)
   // Si la orquestadora (o el server, al avanzar) cambia el plan, la copia local la sigue.
@@ -161,8 +168,8 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
 
   // Se cambian los pasos que faltan: todos antes de enviarlo, los pendientes con el plan en pausa.
   // El paso que volvió trabado también, para corregirlo antes de repetirlo.
-  const editable = (i: number) => (ready || paused) && ((draft.steps[i]?.state ?? "pending") === "pending" || ((stuck || cut) && i === draft.currentStep))
-  const removable = ready && steps.length > 1 && !draft.revises
+  const editable = (i: number) => respond && fullEdit && (ready || paused) && ((draft.steps[i]?.state ?? "pending") === "pending" || ((stuck || cut) && i === draft.currentStep))
+  const removable = respond && fullEdit && ready && steps.length > 1 && !draft.revises
   const busy = action.busy()
 
   const patch = (i: number, p: Partial<PlanStepEdit>) => setSteps((list) => list.map((s, j) => (j === i ? { ...s, ...p } : s)))
@@ -321,7 +328,7 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
           </p>
         )}
 
-        {ready && (
+        {ready && respond && (
           <footer className="mt-3 flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={send} disabled={busy}>
               {action.busy("send") ? <Spinner /> : <Send />}
@@ -345,10 +352,10 @@ export function PlanCard({ draft, compact = false, bare = false, className }: { 
           </footer>
         )}
 
-        {approved && (draft.planState === "running" || paused) && (
+        {approved && respond && (draft.planState === "running" || paused) && (
           <footer className="mt-3 flex flex-wrap items-center gap-2">
             {paused ? (
-              stuck || cut ? (
+              !control ? null : stuck || cut ? (
                 <>
                   <Button size="sm" onClick={() => resume("retry")} disabled={busy}>
                     {action.busy("resume-retry") ? <Spinner /> : <RotateCcw />}

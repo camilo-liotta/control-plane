@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useNow } from "@/hooks/use-now"
 import { timeAgo } from "@/lib/format"
 import { api } from "@/lib/api"
+import { useCan } from "@/lib/access"
 import { EDITOR_NAMES, useEditor } from "@/lib/editor"
 import { useSectionOpen } from "@/lib/panel-sections"
 import { isNotFound, STALE_SERVER } from "@/lib/server-version"
@@ -26,6 +27,8 @@ function Delta({ added, deleted, className }: { added: number; deleted: number; 
 }
 
 function FileRow({ file, onOpen, editor }: { file: FileChange; onOpen: () => void; editor: string }) {
+  // Abrir en el editor es de esta máquina: desde otro dispositivo la fila solo muestra el cambio.
+  const manage = useCan("manage")
   const slash = file.path.lastIndexOf("/")
   const dir = slash >= 0 ? file.path.slice(0, slash + 1) : ""
   const name = file.path.slice(slash + 1)
@@ -40,7 +43,8 @@ function FileRow({ file, onOpen, editor }: { file: FileChange; onOpen: () => voi
         <button
           type="button"
           onClick={onOpen}
-          className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted"
+          disabled={!manage}
+          className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
         >
           <span className={cn("min-w-0 flex-1 truncate font-mono text-2xs", file.removed && "line-through decoration-muted-foreground/60")}>
             <span className="text-muted-foreground">{dir}</span>

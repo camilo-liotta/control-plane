@@ -16,6 +16,8 @@ import { InboxSheet } from "@/components/inbox-sheet"
 import { NewProjectDialog } from "@/components/new-project-dialog"
 import { NewSessionDialog } from "@/components/new-session-dialog"
 import { AfkDialog } from "@/components/afk-dialog"
+import { PairDevice } from "@/components/pair-device"
+import { RemoteDialog } from "@/components/remote-dialog"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { CompactionSheet } from "@/components/compaction-sheet"
 import { SubagentSheet } from "@/components/subagent-sheet"
@@ -24,6 +26,9 @@ import { UpdateFailureDialog } from "@/components/update-failure-dialog"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { accessIndicator } from "@shared/remote-access"
+import { useAccess, useCan } from "@/lib/access"
+import { api } from "@/lib/api"
 import { restartHint, versionMismatch } from "@/lib/server-version"
 import { useCurrentAccount, useStore } from "@/lib/store"
 import { toneSoft, type Tone } from "@/lib/status"
@@ -40,6 +45,10 @@ import { ToolsPage } from "@/pages/tools-page"
 
 function Dialogs() {
   const ui = useUi()
+  // Desde otro dispositivo, lo que gestiona la máquina (proyectos, cuentas, herramientas, ajustes) no existe;
+  // AFK necesita el nivel Control. El server lo exige igual: esto solo evita mostrar lo que no anda.
+  const manage = useCan("manage")
+  const control = useCan("control")
   const projects = useStore((s) => s.projects)
   const sessionProject = ui.newSessionFor ? (projects[ui.newSessionFor] ?? null) : null
   const settingsProject = ui.settingsFor ? projects[ui.settingsFor] : undefined
@@ -48,43 +57,48 @@ function Dialogs() {
   const deleteProject = ui.deleteFor ? projects[ui.deleteFor] : undefined
   return (
     <>
-      <NewProjectDialog open={ui.newProject} onOpenChange={(v) => ui.set({ newProject: v })} />
-      <NewSessionDialog
-        project={sessionProject}
-        open={Boolean(sessionProject)}
-        onOpenChange={(v) => !v && ui.set({ newSessionFor: null })}
-      />
-      {settingsProject && (
+      {manage && <NewProjectDialog open={ui.newProject} onOpenChange={(v) => ui.set({ newProject: v })} />}
+      {manage && (
+        <NewSessionDialog
+          project={sessionProject}
+          open={Boolean(sessionProject)}
+          onOpenChange={(v) => !v && ui.set({ newSessionFor: null })}
+        />
+      )}
+      {manage && settingsProject && (
         <ProjectSettingsDialog
           project={settingsProject}
           open={Boolean(settingsProject)}
           onOpenChange={(v) => !v && ui.set({ settingsFor: null })}
         />
       )}
-      {afkProject && <AfkDialog project={afkProject} open onOpenChange={(v) => !v && ui.set({ afkFor: null })} />}
-      {deleteProject && (
+      {control && afkProject && <AfkDialog project={afkProject} open onOpenChange={(v) => !v && ui.set({ afkFor: null })} />}
+      {manage && deleteProject && (
         <DeleteProjectDialog
           project={deleteProject}
           open={Boolean(deleteProject)}
           onOpenChange={(v) => !v && ui.set({ deleteFor: null })}
         />
       )}
-      <ImportSessionDialog
-        project={importProject}
-        open={Boolean(importProject)}
-        onOpenChange={(v) => !v && ui.set({ importFor: null })}
-      />
+      {manage && (
+        <ImportSessionDialog
+          project={importProject}
+          open={Boolean(importProject)}
+          onOpenChange={(v) => !v && ui.set({ importFor: null })}
+        />
+      )}
       <InboxSheet />
       <CommandPalette />
-      <SessionDialogs />
+      {manage && <SessionDialogs />}
       <GlobalShortcuts />
       <SubagentSheet />
-      <CompactionSheet />
-      <SessionToolsSheet />
+      {manage && <CompactionSheet />}
+      {manage && <SessionToolsSheet />}
       <Lightbox />
-      <AccountsDialog />
-      <ClaudeSettingsDialog />
+      {manage && <AccountsDialog />}
+      {manage && <ClaudeSettingsDialog />}
       <UpdateFailureDialog />
+      {manage && <RemoteDialog />}
     </>
   )
 }
@@ -178,6 +192,48 @@ function Banner({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   )
 }
 
+/**
+ * El aviso permanente del acceso remoto, neutro (no es una alarma). Desde esta máquina: que hay acceso abierto
+ * y cuántos dispositivos. Desde otro dispositivo: quién sos y con qué nivel.
+ */
+function AccessBanner() {
+  const caps = useAccess((s) => s.caps)
+  const local = useAccess((s) => s.local)
+  const setUi = useUi((s) => s.set)
+  // Salir de este dispositivo (revoca su vínculo) es de "responder" para arriba, igual que en el server.
+  const canLogout = useCan("respond") && caps?.mode !== "local"
+  const text = accessIndicator(caps, local)
+  if (!text) return null
+  const logout = () =>
+    api.remoteLogout().then(
+      () => {
+        toast.success("Saliste de este dispositivo")
+        useAccess.getState().unpair()
+      },
+      () => toast.error("No se pudo salir de este dispositivo")
+    )
+  return (
+    <Banner tone="idle">
+      <span>{text}</span>
+      {caps?.mode === "local" && (
+        <button type="button" onClick={() => setUi({ remoteDialog: true })} className="underline underline-offset-2 outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          Administrar
+        </button>
+      )}
+      {canLogout && (
+        <button type="button" onClick={() => void logout()} className="underline underline-offset-2 outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          Salir
+        </button>
+      )}
+    </Banner>
+  )
+}
+
+/** Desde otro dispositivo, las herramientas (cuentas, MCP, skills, CLIs) no existen: se vuelve al inicio. */
+function ManageOnly({ children }: { children: React.ReactNode }) {
+  return useCan("manage") ? children : <Redirect to="/" />
+}
+
 const UPDATE_DISMISSED_KEY = "control-plane:update-dismissed"
 
 /** La app de escritorio avisa que hay una versión nueva. Solo informa: se actualiza desde el menú del ícono. */
@@ -234,12 +290,34 @@ const SIDEBAR_WIDTH = "clamp(13.5rem, 24vw, 16rem)"
 export default function App() {
   const loaded = useStore((s) => s.loaded)
   const pending = useInboxCount()
+  const caps = useAccess((s) => s.caps)
+  const known = caps !== null
+  // Desde otro dispositivo sin vincular no hay nada que mirar: va la pantalla de vinculación.
+  const unpaired = caps !== null && caps.mode !== "local" && caps.paired === false
 
-  useEffect(() => connect(), [])
+  useEffect(() => {
+    void useAccess.getState().load()
+  }, [])
+
+  // Primero se sabe desde dónde se entra; recién después se conecta (y se vuelve a conectar al vincular).
+  useEffect(() => {
+    if (!known || unpaired) return
+    return connect()
+  }, [known, unpaired])
 
   useEffect(() => {
     document.title = pending ? `(${pending}) control-plane` : "control-plane"
   }, [pending])
+
+  if (!known) {
+    return (
+      <div role="status" className="flex h-svh items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        Conectando con el server local…
+      </div>
+    )
+  }
+  if (unpaired) return <PairDevice />
 
   return (
     <SidebarProvider className="h-svh overflow-hidden" style={{ "--sidebar-width": SIDEBAR_WIDTH } as React.CSSProperties}>
@@ -251,6 +329,7 @@ export default function App() {
         <ConnectionBanner />
         <VersionBanner />
         <UpdateBanner />
+        <AccessBanner />
         {!loaded ? (
           <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Spinner />
@@ -262,9 +341,17 @@ export default function App() {
               <Home />
             </Route>
             <Route path="/tools">
-              <ToolsPage />
+              <ManageOnly>
+                <ToolsPage />
+              </ManageOnly>
             </Route>
-            <Route path="/p/:projectId/tools">{(params) => <ToolsPage key={params.projectId} projectId={params.projectId} />}</Route>
+            <Route path="/p/:projectId/tools">
+              {(params) => (
+                <ManageOnly>
+                  <ToolsPage key={params.projectId} projectId={params.projectId} />
+                </ManageOnly>
+              )}
+            </Route>
             <Route path="/p/:projectId">{(params) => <ProjectBoard projectId={params.projectId} />}</Route>
             <Route path="/p/:projectId/s/:sessionId">
               {(params) => <SessionPage key={params.sessionId} projectId={params.projectId} sessionId={params.sessionId} />}

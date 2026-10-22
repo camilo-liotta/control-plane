@@ -1,4 +1,5 @@
 import * as React from "react"
+import { flushSync } from "react-dom"
 import { cn } from "@/lib/utils"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
@@ -197,7 +198,9 @@ function AlertDialogAction({
             .then(
               () => {
                 done.current = true
-                setPending(false)
+                // El botón sigue deshabilitado (pending) hasta que React pinte: sin flushSync el click
+                // de abajo caería sobre un botón disabled, no se dispararía y el diálogo no se cerraría.
+                flushSync(() => setPending(false))
                 ref.current?.click()
                 done.current = false
               },

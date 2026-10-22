@@ -345,7 +345,120 @@ const MIGRATIONS: string[] = [
     data TEXT NOT NULL
   );
   `,
+  // Acceso remoto (Tailscale): una sola fila de ajustes. Apagado de fábrica; los puertos son los de siempre.
+  `
+  CREATE TABLE remote_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    tier TEXT NOT NULL DEFAULT 'read',
+    require_local_dangerous INTEGER NOT NULL DEFAULT 1,
+    https_port INTEGER NOT NULL DEFAULT 8443,
+    local_port INTEGER NOT NULL DEFAULT 4710,
+    origin TEXT,
+    serve_owned INTEGER NOT NULL DEFAULT 0,
+    serve_target TEXT,
+    serve_created_at INTEGER,
+    updated_at INTEGER NOT NULL
+  );
+  INSERT INTO remote_config (id, updated_at) VALUES (1, 0);
+  `,
+  // Dispositivos emparejados y enlaces de pareo. Solo se guardan los hashes (sha256) de lo secreto.
+  `
+  CREATE TABLE remote_devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'read',
+    token_hash TEXT NOT NULL UNIQUE,
+    ts_login TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    last_seen_at INTEGER,
+    revoked_at INTEGER
+  );
+  CREATE TABLE remote_pairings (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    name TEXT,
+    tier TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER
+  );
+  CREATE INDEX remote_pairings_hash ON remote_pairings(token_hash);
+  `,
+  // Auditoría del acceso remoto: acotada (ver remote/audit.ts). Nunca guarda cuerpos, mensajes, inputs, cookies ni tokens.
+  `
+  CREATE TABLE remote_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    device_id TEXT,
+    kind TEXT NOT NULL,
+    method TEXT,
+    route TEXT,
+    target_id TEXT,
+    tool_name TEXT,
+    input_hash TEXT,
+    status INTEGER,
+    outcome TEXT NOT NULL,
+    reason TEXT
+  );
+  CREATE INDEX remote_audit_at ON remote_audit(at);
+  `,
 ]
+
+/** Un dispositivo emparejado (la fila de remote_devices; el hash es de la cookie, nunca la cookie). */
+export interface RemoteDeviceRow {
+  id: string
+  name: string
+  tier: "read" | "respond" | "control"
+  tokenHash: string
+  tsLogin: string | null
+  createdAt: number
+  expiresAt: number
+  lastSeenAt: number | null
+  revokedAt: number | null
+}
+
+export interface RemotePairingRow {
+  id: string
+  tokenHash: string
+  name: string | null
+  tier: "read" | "respond" | "control"
+  expiresAt: number
+  usedAt: number | null
+}
+
+/** Una fila de remote_audit (ver remote/audit.ts). */
+export interface RemoteAuditRow {
+  id?: number
+  at: number
+  deviceId: string | null
+  kind: string
+  method: string | null
+  route: string | null
+  targetId: string | null
+  toolName: string | null
+  inputHash: string | null
+  status: number | null
+  outcome: string
+  reason: string | null
+}
+
+/** Los ajustes del acceso remoto (la fila única de remote_config). */
+export interface RemoteConfig {
+  enabled: boolean
+  /** El techo de nivel de todos los dispositivos: read, respond o control. */
+  tier: "read" | "respond" | "control"
+  requireLocalForDangerous: boolean
+  httpsPort: number
+  localPort: number
+  /** https://<dns>:<puerto>, el único Origin válido mientras está activo. */
+  origin: string | null
+  /** Si la entrada de serve la creamos nosotros (solo esa se saca). */
+  serveOwned: boolean
+  serveTarget: string | null
+  serveCreatedAt: number | null
+  updatedAt: number
+}
 
 const bool = (v: unknown) => v === 1 || v === true
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
@@ -842,6 +955,163 @@ export class Db {
 
   setFingerprint(sessionId: string, f: Fingerprint) {
     this.db.prepare("INSERT INTO session_fingerprints (session_id, data) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET data = excluded.data").run(sessionId, JSON.stringify(f))
+  }
+
+  // ------------------------------------------------------------ acceso remoto
+
+  getRemoteConfig(): RemoteConfig {
+    const r = this.db.prepare("SELECT * FROM remote_config WHERE id = 1").get() as Row
+    const tier = String(r.tier)
+    return {
+      enabled: bool(r.enabled),
+      tier: tier === "respond" || tier === "control" ? tier : "read",
+      requireLocalForDangerous: bool(r.require_local_dangerous),
+      httpsPort: Number(r.https_port),
+      localPort: Number(r.local_port),
+      origin: str(r.origin),
+      serveOwned: bool(r.serve_owned),
+      serveTarget: str(r.serve_target),
+      serveCreatedAt: num(r.serve_created_at),
+      updatedAt: Number(r.updated_at),
+    }
+  }
+
+  insertRemoteDevice(d: RemoteDeviceRow) {
+    this.db
+      .prepare("INSERT INTO remote_devices (id, name, tier, token_hash, ts_login, created_at, expires_at, last_seen_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(d.id, d.name, d.tier, d.tokenHash, d.tsLogin, d.createdAt, d.expiresAt, d.lastSeenAt, d.revokedAt)
+  }
+
+  private toDevice(r: Row): RemoteDeviceRow {
+    const tier = String(r.tier)
+    return {
+      id: String(r.id),
+      name: String(r.name),
+      tier: tier === "respond" || tier === "control" ? tier : "read",
+      tokenHash: String(r.token_hash),
+      tsLogin: str(r.ts_login),
+      createdAt: Number(r.created_at),
+      expiresAt: Number(r.expires_at),
+      lastSeenAt: num(r.last_seen_at),
+      revokedAt: num(r.revoked_at),
+    }
+  }
+
+  /** Por el hash de la cookie (la columna es única, así que la búsqueda va por índice). */
+  getRemoteDeviceByHash(hash: string): RemoteDeviceRow | null {
+    const r = this.db.prepare("SELECT * FROM remote_devices WHERE token_hash = ?").get(hash) as Row | undefined
+    return r ? this.toDevice(r) : null
+  }
+
+  getRemoteDevice(id: string): RemoteDeviceRow | null {
+    const r = this.db.prepare("SELECT * FROM remote_devices WHERE id = ?").get(id) as Row | undefined
+    return r ? this.toDevice(r) : null
+  }
+
+  /** Los que no fueron revocados, del más nuevo al más viejo. */
+  listRemoteDevices(): RemoteDeviceRow[] {
+    return (this.db.prepare("SELECT * FROM remote_devices WHERE revoked_at IS NULL ORDER BY created_at DESC, id").all() as Row[]).map((r) => this.toDevice(r))
+  }
+
+  touchRemoteDevice(id: string, at: number) {
+    this.db.prepare("UPDATE remote_devices SET last_seen_at = ? WHERE id = ?").run(at, id)
+  }
+
+  insertRemoteAudit(r: RemoteAuditRow) {
+    this.db
+      .prepare("INSERT INTO remote_audit (at, device_id, kind, method, route, target_id, tool_name, input_hash, status, outcome, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(r.at, r.deviceId, r.kind, r.method, r.route, r.targetId, r.toolName, r.inputHash, r.status, r.outcome, r.reason)
+  }
+
+  /** Borra lo anterior a `cutoff` y, de lo que queda, todo menos las `maxRows` más nuevas. */
+  pruneRemoteAudit(cutoff: number, maxRows: number) {
+    this.db.prepare("DELETE FROM remote_audit WHERE at < ?").run(cutoff)
+    this.db.prepare("DELETE FROM remote_audit WHERE id <= (SELECT id FROM remote_audit ORDER BY id DESC LIMIT 1 OFFSET ?)").run(maxRows)
+  }
+
+  /** Las más nuevas primero. */
+  listRemoteAudit(limit: number): RemoteAuditRow[] {
+    return (this.db.prepare("SELECT * FROM remote_audit ORDER BY id DESC LIMIT ?").all(limit) as Row[]).map((r) => ({
+      id: Number(r.id),
+      at: Number(r.at),
+      deviceId: str(r.device_id),
+      kind: String(r.kind),
+      method: str(r.method),
+      route: str(r.route),
+      targetId: str(r.target_id),
+      toolName: str(r.tool_name),
+      inputHash: str(r.input_hash),
+      status: num(r.status),
+      outcome: String(r.outcome),
+      reason: str(r.reason),
+    }))
+  }
+
+  /** Revoca todos los dispositivos vigentes; devuelve sus ids. */
+  revokeAllRemoteDevices(at: number): string[] {
+    const ids = (this.db.prepare("SELECT id FROM remote_devices WHERE revoked_at IS NULL").all() as Row[]).map((r) => String(r.id))
+    this.db.prepare("UPDATE remote_devices SET revoked_at = ? WHERE revoked_at IS NULL").run(at)
+    return ids
+  }
+
+  /** Cambia el nivel de un dispositivo no revocado; true si existía. */
+  setRemoteDeviceTier(id: string, tier: RemoteDeviceRow["tier"]): boolean {
+    return Number(this.db.prepare("UPDATE remote_devices SET tier = ? WHERE id = ? AND revoked_at IS NULL").run(tier, id).changes) > 0
+  }
+
+  /** true si estaba activo y quedó revocado. */
+  revokeRemoteDevice(id: string, at: number): boolean {
+    return Number(this.db.prepare("UPDATE remote_devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(at, id).changes) > 0
+  }
+
+  /** Hay un solo enlace activo: el nuevo reemplaza a todos los anteriores. */
+  replaceRemotePairing(p: Omit<RemotePairingRow, "usedAt">) {
+    this.db.exec("BEGIN")
+    try {
+      this.db.prepare("DELETE FROM remote_pairings").run()
+      this.db.prepare("INSERT INTO remote_pairings (id, token_hash, name, tier, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)").run(p.id, p.tokenHash, p.name, p.tier, p.expiresAt)
+      this.db.exec("COMMIT")
+    } catch (err) {
+      this.db.exec("ROLLBACK")
+      throw err
+    }
+  }
+
+  getRemotePairingByHash(hash: string): RemotePairingRow | null {
+    const r = this.db.prepare("SELECT * FROM remote_pairings WHERE token_hash = ?").get(hash) as Row | undefined
+    if (!r) return null
+    const tier = String(r.tier)
+    return { id: String(r.id), tokenHash: String(r.token_hash), name: str(r.name), tier: tier === "respond" || tier === "control" ? tier : "read", expiresAt: Number(r.expires_at), usedAt: num(r.used_at) }
+  }
+
+  /** Marca el enlace como usado; true solo para quien lo gasta primero (un enlace sirve una vez). */
+  consumeRemotePairing(id: string, at: number): boolean {
+    return Number(this.db.prepare("UPDATE remote_pairings SET used_at = ? WHERE id = ? AND used_at IS NULL").run(at, id).changes) > 0
+  }
+
+  /** Cambia solo lo que viene en el parche; devuelve cómo quedó. */
+  updateRemoteConfig(patch: Partial<Omit<RemoteConfig, "updatedAt">>): RemoteConfig {
+    const columns: Record<string, string> = {
+      enabled: "enabled",
+      tier: "tier",
+      requireLocalForDangerous: "require_local_dangerous",
+      httpsPort: "https_port",
+      localPort: "local_port",
+      origin: "origin",
+      serveOwned: "serve_owned",
+      serveTarget: "serve_target",
+      serveCreatedAt: "serve_created_at",
+    }
+    const sets: string[] = ["updated_at = ?"]
+    const values: (string | number | null)[] = [Date.now()]
+    for (const [key, value] of Object.entries(patch)) {
+      const col = columns[key]
+      if (!col || value === undefined) continue
+      sets.push(`${col} = ?`)
+      values.push(typeof value === "boolean" ? (value ? 1 : 0) : (value as string | number | null))
+    }
+    this.db.prepare(`UPDATE remote_config SET ${sets.join(", ")} WHERE id = 1`).run(...values)
+    return this.getRemoteConfig()
   }
 
   // --------------------------------------------------------------------- afk

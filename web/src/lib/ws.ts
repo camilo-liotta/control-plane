@@ -1,5 +1,6 @@
 import type { ServerMessage } from "@shared/types"
 
+import { useAccess } from "./access"
 import { useStore } from "./store"
 
 /** Conexión en vivo con el server; se reconecta sola si se corta. */
@@ -25,6 +26,8 @@ export function connect() {
     socket.onclose = () => {
       useStore.getState().setConnected(false)
       if (stopped) return
+      // Desde otro dispositivo, un corte puede ser que lo revocaron: se vuelve a mirar si sigue vinculado.
+      if (useAccess.getState().caps?.mode !== "local") void useAccess.getState().load()
       const delay = Math.min(10_000, 500 * 2 ** attempt++)
       setTimeout(open, delay)
     }

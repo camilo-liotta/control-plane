@@ -3,6 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { resolveClaudeBin } from "./claude/bin.ts"
+import { resolveRemotePort } from "./remote/listener.ts"
 import pkg from "../package.json" with { type: "json" }
 import rootPkg from "../../package.json" with { type: "json" }
 
@@ -12,9 +13,13 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 declare const __CONTROL_PLANE_BUNDLE__: boolean | undefined
 const bundled = typeof __CONTROL_PLANE_BUNDLE__ !== "undefined" && __CONTROL_PLANE_BUNDLE__
 
+const mainPort = Number(process.env.CONTROL_PLANE_PORT ?? 4700)
+
 export const config = {
   host: process.env.CONTROL_PLANE_HOST ?? "127.0.0.1",
-  port: Number(process.env.CONTROL_PLANE_PORT ?? 4700),
+  port: mainPort,
+  /** El puerto de loopback del acceso remoto (Tailscale serve apunta acá). Solo se abre mientras el acceso está activo. */
+  remotePort: resolveRemotePort(process.env.CONTROL_PLANE_REMOTE_PORT, mainPort),
   /** Carpeta con la base de datos y el estado local de esta máquina. */
   home: process.env.CONTROL_PLANE_HOME ?? path.join(os.homedir(), ".control-plane"),
   /** Binario de Claude Code (el que ya tenés instalado y logueado). En Windows se resuelve al claude.exe. */

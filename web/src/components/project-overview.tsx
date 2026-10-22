@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 import { EDITOR_NAMES, useEditor } from "@/lib/editor"
 import { costsByModel } from "@/lib/models"
@@ -102,6 +103,8 @@ function useOpenInEditor(projectId: string) {
 function OpenFolder({ projectId, path }: { projectId: string; path: string }) {
   const settings = useEditor()
   const open = useOpenInEditor(projectId)
+  const manage = useCan("manage")
+  if (!manage) return null
   const label = `Abrir en ${settings ? EDITOR_NAMES[settings.kind] : "VS Code"}`
   return (
     <Tooltip>
@@ -124,6 +127,8 @@ function OpenFolder({ projectId, path }: { projectId: string; path: string }) {
 function OpenProject({ projectId }: { projectId: string }) {
   const settings = useEditor()
   const open = useOpenInEditor(projectId)
+  const manage = useCan("manage")
+  if (!manage) return null
   return (
     <Button size="xs" variant="outline" className="shrink-0" onClick={() => void open()}>
       <SquareArrowOutUpRight />

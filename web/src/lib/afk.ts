@@ -12,10 +12,12 @@ export type Afk = AfkState
 export const afkOf = (project: Project): Afk | null => project.afk
 
 async function call(method: "POST" | "DELETE", projectId: string, body?: { until: number | null; budgetUsd: number | null }) {
+  // Un DELETE sin cuerpo no manda Content-Length en los navegadores y la puerta del listener remoto lo rechaza (411): va con {}.
+  const payload = body ?? {}
   const res = await fetch(`/api/projects/${projectId}/afk`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
   })
   const data = (await res.json().catch(() => null)) as { error?: string } | null
   if (!res.ok) throw new Error(data?.error ?? `Error ${res.status}`)
