@@ -12,6 +12,7 @@ import { GithubMark } from "@/components/github-mark"
 import { SettingsMenu } from "@/components/settings-menu"
 import { SoundsMenu } from "@/components/sounds-menu"
 import { Lamp, SessionLamp } from "@/components/status"
+import { limitTitle } from "@/lib/limit"
 import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -79,7 +80,7 @@ function SessionLink({ session, active }: { session: Session; active: boolean })
   return (
     <SidebarMenuSubItem>
       <SidebarMenuSubButton asChild isActive={active} className="h-7 text-ui">
-        <Link href={`/p/${session.projectId}/s/${session.id}`} title={name}>
+        <Link href={`/p/${session.projectId}/s/${session.id}`} title={session.limited ? `${name} · ${limitTitle(session.limited)}` : name}>
           <SessionLamp session={session} className="shrink-0" />
           <span className={cn("name min-w-0 flex-1 truncate", session.kind === "orchestrator" && "text-muted-foreground", showUnread && "text-foreground")}>
             {name}

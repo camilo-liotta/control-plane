@@ -26,7 +26,7 @@ const SECRET_EMAIL = "ana-fixture@example.com"
 
 function fixtureSnapshot(): Snapshot {
   const s = emptySnapshot()
-  s.accounts = [{ id: "a1", name: "Trabajo", configDir: SECRET_DIR, isDefault: true, bin: "/usr/local/bin/claude-fixture", auth: { loggedIn: true, email: SECRET_EMAIL } as never, usage: null, projects: 1, engram: { state: "missing", plugin: "missing", mcp: false, binary: null } }]
+  s.accounts = [{ id: "a1", name: "Trabajo", configDir: SECRET_DIR, isDefault: true, bin: "/usr/local/bin/claude-fixture", auth: { loggedIn: true, email: SECRET_EMAIL } as never, usage: null, limit: null, projects: 1, engram: { state: "missing", plugin: "missing", mcp: false, binary: null } }]
   s.apps = [
     {
       id: "app1", projectId: "p1", name: "web", command: SECRET_COMMAND, shell: false, cwd: "services/web", env: { TOKEN: "ENVFIX42" }, health: null, url: null, stopCommand: "docker compose down --secret=STOPFIX7",
@@ -49,7 +49,7 @@ function snapshotDeps(s: Snapshot): Partial<RoutesDeps> {
   return {
     db: { listProjects: () => s.projects, listRecentDrafts: () => s.drafts, listRecentReports: () => s.reports, listArchivedProjects: () => [] },
     orchestration: { projectView: (p: unknown) => p, reportView: (r: unknown) => r },
-    sessions: { list: () => s.sessions, usageFor: () => null, turns: () => s.turns, meta: s.meta },
+    sessions: { list: () => s.sessions, usageFor: () => null, limitFor: () => null, turns: () => s.turns, meta: s.meta },
     accounts: { list: () => s.accounts, view: (a: unknown) => a },
     compaction: { list: () => [] },
     tasks: { list: () => [] },

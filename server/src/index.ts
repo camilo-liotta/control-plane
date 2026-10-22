@@ -29,6 +29,7 @@ import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
 import { Terminals } from "./terminal/manager.ts"
 import { Afk } from "./afk.ts"
+import { UsageLimits } from "./limit.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
 import { SessionManager } from "./sessions.ts"
@@ -171,11 +172,11 @@ async function main() {
   sessions.on("account_info", (accountId, info) => {
     accounts.rememberAuth(accountId, info)
     const a = accounts.get(accountId)
-    if (a) hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) })
+    if (a) hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id)) })
   })
   // El login de cada cuenta se consulta en segundo plano al arrancar.
   for (const a of accounts.list()) {
-    void accounts.authStatus(a).then(() => hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) }))
+    void accounts.authStatus(a).then(() => hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id)) }))
   }
 
   // Cada tanto se mira qué conversaciones del dashboard están abiertas en una terminal, para avisarlo.
@@ -202,6 +203,20 @@ async function main() {
 
   const orchestration = new Orchestration(db, hub, sessions, accounts)
   const afk = new Afk({ db, hub, sessions, orchestration })
+  // El límite de uso (5 h, semanal, tope de gasto): retiene lo que se manda a una cuenta sin uso y retoma las sesiones cortadas al renovarse.
+  const limits = new UsageLimits({
+    db,
+    hub,
+    sessions,
+    orchestration,
+    broadcastAccount: (id) => {
+      const a = accounts.get(id)
+      if (a) hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id)) })
+    },
+    accountName: (id) => accounts.get(id)?.name ?? "de siempre",
+    // Solo para las pruebas de punta a punta (scripts/ux/e2e-limite.mjs): los tiempos de verdad son de minutos.
+    ...(process.env.CONTROL_PLANE_LIMIT_FAST === "1" ? { sweepMs: 400, gapMs: 300, announceMs: 300, marginMs: 300, retryMs: 3000, probeMs: 700 } : {}),
+  })
   const compaction = new Compaction({
     db,
     hub,
@@ -317,6 +332,7 @@ async function main() {
     // Las apps levantadas desde el dashboard se bajan ordenadas (su comando de bajar, o SIGTERM y SIGKILL).
     await apps.shutdown().catch(() => {})
     orchestration.dispose()
+    limits.dispose()
     afk.dispose()
     compaction.dispose()
     clis.dispose()
@@ -354,6 +370,8 @@ async function main() {
     })
     // Después de retomar las sesiones: los planes que se cortaron entre un paso y el siguiente siguen.
     .finally(() => orchestration.plans.recover())
+  // Lo que esperaba el uso se retoma si ya se renovó (la app pudo estar cerrada), sin esperar a que termine el reinicio de arriba.
+  limits.start()
 }
 
 main().catch((err) => {

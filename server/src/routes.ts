@@ -9,7 +9,7 @@ import { registerDesktopShutdown, registerHealth, registerWs, type WsOptions } f
 import { registerMcp } from "./mcp.ts"
 import { registerRemoteRoutes, type RemoteRoutesDeps } from "./remote/routes.ts"
 import { registerRestart, type Restart } from "./restart.ts"
-import { decideSend, SEND_DENIED, type SendDecision, type SendGuardDeps } from "./send-guard.ts"
+import { decideSend, SEND_DENIED, withRecipient, type SendDecision, type SendGuardDeps } from "./send-guard.ts"
 import type { ServerMessage } from "./shared/types.ts"
 import { registerTerminal } from "./terminal/routes.ts"
 import type { Terminals } from "./terminal/manager.ts"
@@ -87,6 +87,11 @@ export function registerRoutes(app: FastifyInstance, deps: RoutesDeps) {
       decision = await decideSend(sendGuard, db.getSessionByToken(req.params.token) ?? null, input)
     } catch {
       decision = { allow: false, reason: SEND_DENIED.unresolved(String(input.to ?? "")) }
+    }
+    if (decision.allow && decision.rewriteTo) {
+      return reply.type("application/json").send({
+        hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: withRecipient(input, decision.rewriteTo) },
+      })
     }
     if (decision.allow) return reply.type("text/plain; charset=utf-8").send("")
     return reply.type("application/json").send({

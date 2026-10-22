@@ -12,7 +12,8 @@ import type { Db, SessionRecord } from "./db.ts"
 import type { Orchestration } from "./orchestration.ts"
 import type { StepInput } from "./plans.ts"
 import type { SessionManager } from "./sessions.ts"
-import type { AppInput, AppStatus, AppView, ContextUsage, SessionStatus } from "./shared/types.ts"
+import type { AppInput, AppStatus, AppView, ContextUsage, SessionLimit, SessionStatus } from "./shared/types.ts"
+import { untilText } from "./limit.ts"
 import { hash } from "./fingerprint.ts"
 import { errorMessage } from "./util.ts"
 
@@ -111,6 +112,14 @@ const tagsSchema = z
   .optional()
   .describe("Etiquetas cortas, en minúsculas y con guiones (ej. postmark-dominios). Solo para relacionar dos o más tareas que van juntas; no etiquetes una tarea sola ni para clasificar.")
 
+/** "sin uso hasta las 22:00 (límite de 5 h): sigue sola" para list_sessions. */
+export function limitLine(l: SessionLimit | null): string | null {
+  if (!l) return null
+  const kind = l.kind === "five_hour" ? "límite de 5 h" : l.kind === "seven_day" ? "límite semanal" : l.kind === "spend" ? "tope de gasto" : "límite de uso"
+  const when = l.source === "fallback" ? `reintenta a las ${new Date(l.resetsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })}` : untilText(l.resetsAt)
+  return `sin uso, ${when} (${kind})${l.willResume ? ": sigue sola" : l.interrupted ? "" : ": se le puede escribir cuando se renueve"}`
+}
+
 /** Cuánto contexto usa una sesión, para que la orquestadora sepa si conviene empezar de cero. */
 function contextLine(ctx: ContextUsage | null): string | null {
   if (!ctx || !ctx.max) return null
@@ -198,7 +207,7 @@ function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string,
     {
       title: "Sesiones del proyecto",
       description:
-        "Lista las sesiones del proyecto con su rol, estado actual, tarea asignada y último resultado reportado. Sirve para saber quién está haciendo qué antes de coordinar.",
+        "Lista las sesiones del proyecto con su rol, estado actual, tarea asignada y último resultado reportado. Sirve para saber quién está haciendo qué antes de coordinar. Los nombres son únicos dentro del proyecto; con SendMessage usá el nombre que muestra acá.",
       annotations: { readOnlyHint: true },
     },
     wrap(() => {
@@ -213,6 +222,7 @@ function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string,
             s.taskTitle ? `tarea: ${s.taskTitle}` : null,
             choiceLine(orchestration, s),
             orchestration.plans.sessionLine(s.id),
+            limitLine(sessions.view(s).limited),
             contextLine(sessions.contextOf(s.id)),
             s.worktree ? "worktree propio" : null,
             last ? `último resultado: ${last.status} — ${last.summary.split("\n")[0]}` : null,
@@ -459,7 +469,7 @@ function buildServer(self: SessionRecord, deps: McpDeps, record?: Record<string,
         description:
           "Propone crear una sesión worker nueva con su primer prompt. Solo se crea si el usuario la aprueba (o se crea sola si está AFK, salvo que la marques con hold). model y effort son OBLIGATORIOS (la sesión arranca con ellos): sonnet para implementar, haiku para lo mecánico, opus solo si hace falta.",
         inputSchema: {
-          name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E)."),
+          name: z.string().describe("Nombre corto en mayúsculas, sin espacios (ej. BACKEND, TESTS-E2E). Único dentro del proyecto."),
           role: z.string().describe("Rol o responsabilidad de la sesión."),
           title: z.string().describe("Título corto de la primera tarea."),
           prompt: z.string().min(1).describe("Primer prompt, completo y autocontenido."),

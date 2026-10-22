@@ -57,6 +57,13 @@ export const POLICY: Readonly<Record<string, Tier>> = {
   "POST /api/drafts/:id/plan/resume": "control",
 
   // ---- never: todo lo demás, a propósito y una por una
+  // Ajustes del dashboard y el límite de uso (5 h, semanal, tope de gasto): se manejan desde esta máquina.
+  "GET /api/settings": "never",
+  "PATCH /api/settings": "never",
+  "POST /api/accounts/:id/limit/retry": "never",
+  "POST /api/sessions/:id/limit/retry": "never",
+  "PATCH /api/sessions/:id/limit": "never",
+  "DELETE /api/sessions/:id/held/:heldId": "never",
   "GET /api/accounts": "never",
   "POST /api/accounts": "never",
   "DELETE /api/accounts/:id": "never",

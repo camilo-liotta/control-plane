@@ -11,7 +11,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useEditor, useEditorStore } from "@/lib/editor"
-import { useProjects } from "@/lib/store"
+import { Switch } from "@/components/ui/switch"
+import { api } from "@/lib/api"
+import { useProjects, useStore } from "@/lib/store"
 import { useUi } from "@/lib/ui"
 
 /** Ajustes del dashboard que no son de un proyecto: por ahora, con qué editor se abren los cambios. */
@@ -30,6 +32,13 @@ export function SettingsMenu() {
     setOpen(false)
     setUi({ settingsFor: id })
   }
+
+  const resume = useStore((s) => s.settings.resumeOnRenewal)
+  const setResume = (v: boolean) =>
+    api.saveSettings({ resumeOnRenewal: v }).then(
+      () => void toast.success(v ? "Las sesiones van a seguir solas" : "Las sesiones ya no siguen solas"),
+      (err) => toast.error("No se pudo guardar el ajuste", { description: err instanceof Error ? err.message : String(err) })
+    )
 
   const apply = async (patch: { kind?: EditorKind; command?: string }) => {
     try {
@@ -109,6 +118,15 @@ export function SettingsMenu() {
               </p>
             </form>
           )}
+        </div>
+        <div className="space-y-2 border-t pt-3">
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              Retomar las sesiones cuando se renueva el uso
+              <span className="block text-2xs text-muted-foreground">Si se acaba el uso de 5 horas o el semanal, las sesiones cortadas siguen solas al renovarse</span>
+            </span>
+            <Switch checked={resume} onCheckedChange={(v) => void setResume(v)} aria-label="Retomar las sesiones cuando se renueva el uso" />
+          </label>
         </div>
         <div className="space-y-1.5 border-t pt-3">
           <p className="eyebrow">Acceso remoto</p>

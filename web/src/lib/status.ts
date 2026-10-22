@@ -1,3 +1,4 @@
+import { limitText } from "@/lib/limit"
 import type { DraftState, PlanState, PlanStepState, ReportState, ReportStatus, Session } from "@shared/types"
 
 /**
@@ -30,10 +31,13 @@ export function sessionStatus(s: Session): StatusView {
     case "starting":
       return { label: "Arrancando", tone: "working", pulse: true }
     case "stopped":
+      if (s.limited && !s.external) return { label: limitText(s.limited), tone: "pending", pulse: false }
       if (s.external) return { label: s.external.kind === "background" ? "En segundo plano" : "En una terminal", tone: "pending", pulse: false }
       if (s.taskState === "reported_done") return { label: "Terminó", tone: "done", pulse: false }
       return { label: "Detenida", tone: "idle", pulse: false }
     case "idle":
+      // Sin uso: no es una alarma ni una falla, solo espera (pending). La hora está en la pastilla.
+      if (s.limited) return { label: limitText(s.limited), tone: "pending", pulse: false }
       if (s.kind === "worker") {
         if (s.taskState === "reported_done") return { label: "Terminó", tone: "done", pulse: false }
         if (s.taskState === "reported_blocked") return { label: "Bloqueada", tone: "attention", pulse: false }

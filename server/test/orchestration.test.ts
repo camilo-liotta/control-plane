@@ -91,6 +91,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     projectId,
     kind,
     name,
+    processName: name,
     role: "",
     claudeSessionId: `uuid-${counter}`,
     startedOnce: true,
@@ -286,6 +287,34 @@ describe("cola de resultados", () => {
     await sleep(20)
     assert.equal(db.listDrafts({ projectId, states: ["sent"] }).length, 1)
     assert.equal(sessions.sent.at(-1)!.id, a.id)
+  })
+
+  it("ninguna sesión puede llamarse como los nombres reservados de Claude Code, sin distinguir mayúsculas, en ningún camino", async () => {
+    const reserved = /MAIN es un nombre reservado de Claude Code: elegí otro\./i
+    const draft = { role: "QA", title: "T", prompt: "p", model: "sonnet", effort: "medium" }
+    for (const name of ["main", "MAIN", "Main", "team-lead", "User", "SYSTEM"]) {
+      assert.throws(() => orch.proposeSession(orq, { name, ...draft }), /es un nombre reservado de Claude Code: elegí otro\./)
+      assert.throws(() => orch.plans.propose(orq, { newSession: { name, role: "QA" }, title: "P", steps: [{ title: "a", prompt: "a", model: "sonnet", effort: "low" }] }), /nombre reservado/)
+      await assert.rejects(orch.createWorker(projectId, { name, role: "QA" }), /nombre reservado/)
+      await assert.rejects(orch.assertNameFreeFor(name, "c-x", projectId), /nombre reservado/, "importar")
+    }
+    await assert.rejects(orch.createWorker(projectId, { name: "main", role: "QA" }), reserved)
+    // Al aprobar una propuesta de sesión nueva se puede editar el nombre: tampoco vale.
+    orch.proposeSession(orq, { name: "ok", ...draft })
+    sessions.endTurn(orq)
+    const [ready] = db.listDrafts({ projectId, states: ["ready"] })
+    await assert.rejects(orch.sendDraft(ready!.id, { name: "main" }), reserved)
+    assert.equal(db.getDraft(ready!.id)!.state, "ready", "la propuesta sigue lista para aprobarla con otro nombre")
+    assert.ok(!db.listSessions().some((s) => s.name === "MAIN"))
+  })
+
+  it("una sesión que ya se llama como un nombre reservado sigue funcionando; solo se bloquean las nuevas", async () => {
+    const old = db.listSessions().find((s) => s.name === "BACKEND")!
+    db.updateSession(old.id, { name: "MAIN", processName: "MAIN" })
+    assert.equal(orch.findSessionByName(projectId, "main")?.id, old.id)
+    orch.proposePrompt(orq, { session: "MAIN", title: "T", prompt: "Hacé algo", model: "sonnet", effort: "medium" })
+    assert.equal(db.listDrafts({ projectId, states: ["staged"] }).length, 1)
+    await assert.rejects(orch.createWorker(projectId, { name: "main", role: "QA" }), /nombre reservado/)
   })
 
   it("las propuestas de sesión nueva crean la sesión al aprobarlas", async () => {
@@ -642,4 +671,19 @@ describe("mensajes entre orquestadoras", () => {
     assert.deepEqual([m!.fromProjectName, m!.toProjectName, m!.text], ["Alfa", "Beta", "uno"])
     assert.equal(orch.projectMessages("pc").length, 0)
   })
+
+  it("los nombres de sesión son únicos por proyecto: el mismo nombre en otro proyecto no choca, en el propio sí", () => {
+    // W-BETA es de Beta; Alfa puede tener una con ese nombre (sin distinguir mayúsculas), W-ALFA no.
+    assert.equal(orch.nameTaken("pa", "w-beta"), false)
+    assert.equal(orch.nameTaken("pb", "w-beta"), true)
+    assert.equal(orch.nameTaken("pa", "W-ALFA"), true)
+    assert.equal(orch.nameTaken("pa", "W-ALFA", workerA.id), false, "la misma sesión (al renombrarse) no choca consigo")
+    const draft = { role: "QA", title: "T", prompt: "P", model: "sonnet", effort: "medium" }
+    assert.match(orch.proposeSession(orqA, { name: "w-beta", ...draft }), /Propuesta .* creada: sesión nueva W-BETA/)
+    assert.throws(() => orch.proposeSession(orqA, { name: "w-alfa", ...draft }), /Ya existe una sesión llamada W-ALFA en este proyecto/)
+    const steps = [{ title: "a", prompt: "a", model: "sonnet" as const, effort: "low" as const }]
+    assert.match(orch.plans.propose(orqB, { newSession: { name: "w-alfa", role: "x" }, title: "Plan", steps }), /Plan/)
+    assert.throws(() => orch.plans.propose(orqB, { newSession: { name: "w-beta", role: "x" }, title: "Plan 2", steps }), /Ya existe una sesión llamada W-BETA en este proyecto/)
+  })
+
 })

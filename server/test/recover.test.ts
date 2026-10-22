@@ -75,6 +75,35 @@ describe("reparar las sesiones que un /clear viejo dejó sin conversación", () 
     assert.equal(idOf(s.id), "real-1")
   })
 
+  it("encuentra el transcript de una sesión que corría con el nombre calificado con su proyecto", () => {
+    // INFRA·p (otro proyecto ya tenía INFRA): Claude Code guardó el nombre calificado, no el corto.
+    const s = session("INFRA", "no-existe", [T0])
+    db.updateSession(s.id, { processName: "INFRA·p" })
+    transcript("real-q", T0 + 500, "INFRA·p")
+    assert.deepEqual(sessions.repairConversations(), [{ id: s.id, name: "INFRA", from: "no-existe", to: "real-q" }])
+    assert.equal(idOf(s.id), "real-q")
+  })
+
+  it("también el de antes de que se calificara (con el nombre corto), y no el de una sesión de otro nombre", () => {
+    const s = session("INFRA", "no-existe", [T0])
+    db.updateSession(s.id, { processName: "INFRA·p" })
+    transcript("de-otra", T0 + 500, "OTRA")
+    transcript("corto", T0 + 800, "INFRA")
+    assert.equal(sessions.repairConversations()[0]?.to, "corto")
+  })
+
+  it("no adopta el de la sesión de otro proyecto que hoy corre con el nombre corto (misma carpeta y cuenta)", () => {
+    db.insertProject({ id: "p2", name: "Q", repoPath: dir, settings: defaultSettings, accountId: null, createdAt: 2, archivedAt: null })
+    const s = session("INFRA", "no-existe", [T0])
+    db.updateSession(s.id, { processName: "INFRA·p" })
+    const other = sessions.create({ projectId: "p2", kind: "worker", name: "INFRA", role: "", cwd: dir })
+    db.updateSession(other.id, { processName: "INFRA" })
+    transcript("de-la-otra", T0 + 500, "INFRA")
+    assert.deepEqual(sessions.repairConversations(), [])
+    transcript("propio", T0 + 800, "INFRA·p")
+    assert.equal(sessions.repairConversations()[0]?.to, "propio")
+  })
+
   it("sin candidatos no toca nada", () => {
     const sinClear = session("A", "no-existe-a")
     transcript("suelto", T0, "A")

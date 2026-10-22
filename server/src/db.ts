@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite"
 import type { Fingerprint } from "./fingerprint.ts"
 import type {
   AfkEndReason,
+  AccountLimit,
   AfkState,
   AppDef,
   AppHealth,
@@ -12,6 +13,9 @@ import type {
   Credential,
   Environment,
   ContextUsage,
+  LimitKind,
+  SessionLimit,
+  UsageInfo,
   Draft,
   DraftKind,
   PlanState,
@@ -91,6 +95,8 @@ export interface SessionRecord {
   projectId: string
   kind: SessionKind
   name: string
+  /** El --name del proceso de Claude Code: único entre las sesiones vivas del dashboard (ver names.ts). Casi siempre igual a `name`. */
+  processName: string
   role: string
   claudeSessionId: string
   startedOnce: boolean
@@ -108,8 +114,31 @@ export interface SessionRecord {
   costByModel: Record<string, number>
   tokens: TokenUsage | null
   context: ContextUsage | null
+  /** Si el uso se acabó y el turno se cortó (ver limit.ts): lo que hace falta para retomarla aunque el server se haya reiniciado. */
+  limited?: StoredSessionLimit | null
   createdAt: number
   archivedAt: number | null
+}
+
+/** Lo que se guarda del límite de una sesión (willResume se calcula al mostrarlo). */
+export type StoredSessionLimit = Omit<SessionLimit, "willResume">
+
+/** Un lapso sin uso de una cuenta, para el registro del AFK. */
+export interface LimitWaitRow {
+  accountId: string
+  kind: LimitKind
+  since: number
+  endedAt: number | null
+}
+
+/** Un mensaje retenido por el límite de uso: lo que hace falta para mandarlo después. */
+export interface HeldRow {
+  id: string
+  sessionId: string
+  text: string
+  /** SendOptions en JSON (los adjuntos, por id). */
+  opts: string
+  createdAt: number
 }
 
 type Row = Record<string, unknown>
@@ -345,6 +374,47 @@ const MIGRATIONS: string[] = [
     data TEXT NOT NULL
   );
   `,
+  `
+  -- El nombre con que corre el proceso de Claude Code (--name): el de la sesión, o calificado con el proyecto si otro proyecto ya lo usa.
+  ALTER TABLE sessions ADD COLUMN process_name TEXT;
+  UPDATE sessions SET process_name = name;
+  `,
+  `
+  -- Límite de uso (5 h, semanal, tope de gasto): el de cada cuenta, lo que esperó, el último uso informado y lo retenido.
+  CREATE TABLE account_limits (
+    account_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    resets_at INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    message TEXT NOT NULL,
+    since INTEGER NOT NULL
+  );
+  CREATE TABLE limit_waits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    since INTEGER NOT NULL,
+    ended_at INTEGER
+  );
+  CREATE INDEX limit_waits_account ON limit_waits(account_id, since);
+  CREATE TABLE account_usage (
+    account_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
+  ALTER TABLE sessions ADD COLUMN limited TEXT;
+  CREATE TABLE held_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    opts TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX held_messages_session ON held_messages(session_id, created_at);
+  CREATE TABLE app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  `,
   // Acceso remoto (Tailscale): una sola fila de ajustes. Apagado de fábrica; los puertos son los de siempre.
   `
   CREATE TABLE remote_config (
@@ -524,6 +594,7 @@ function toSession(r: Row): SessionRecord {
     projectId: String(r.project_id),
     kind: r.kind as SessionKind,
     name: String(r.name),
+    processName: String(r.process_name ?? r.name),
     role: String(r.role ?? ""),
     claudeSessionId: String(r.claude_session_id),
     startedOnce: bool(r.started_once),
@@ -541,8 +612,26 @@ function toSession(r: Row): SessionRecord {
     costByModel: parseCostByModel(r.cost_by_model),
     tokens: parseTokens(r.tokens),
     context: parseContext(r.context),
+    limited: parseLimited(r.limited),
     createdAt: Number(r.created_at),
     archivedAt: num(r.archived_at),
+  }
+}
+
+function parseLimited(raw: unknown): StoredSessionLimit | null {
+  if (!raw) return null
+  try {
+    const l = JSON.parse(String(raw)) as Partial<StoredSessionLimit>
+    if (typeof l.kind !== "string" || typeof l.resetsAt !== "number") return null
+    return {
+      kind: l.kind,
+      resetsAt: l.resetsAt,
+      source: l.source ?? "fallback",
+      since: typeof l.since === "number" ? l.since : l.resetsAt,
+      interrupted: l.interrupted === true,
+    }
+  } catch {
+    return null
   }
 }
 
@@ -762,6 +851,7 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   projectId: "project_id",
   kind: "kind",
   name: "name",
+  processName: "process_name",
   role: "role",
   claudeSessionId: "claude_session_id",
   startedOnce: "started_once",
@@ -779,6 +869,7 @@ const SESSION_COLUMNS: Record<keyof SessionRecord, string> = {
   costByModel: "cost_by_model",
   tokens: "tokens",
   context: "context",
+  limited: "limited",
   createdAt: "created_at",
   archivedAt: "archived_at",
 }
@@ -1114,6 +1205,105 @@ export class Db {
     return this.getRemoteConfig()
   }
 
+  // ------------------------------------------------------- límite de uso
+
+  listAccountLimits(): (AccountLimit & { accountId: string })[] {
+    return (this.db.prepare("SELECT * FROM account_limits").all() as Row[]).map((r) => ({
+      accountId: String(r.account_id),
+      kind: r.kind as LimitKind,
+      resetsAt: Number(r.resets_at),
+      source: r.source as AccountLimit["source"],
+      message: String(r.message),
+      since: Number(r.since),
+    }))
+  }
+
+  setAccountLimit(accountId: string, l: AccountLimit | null) {
+    if (!l) {
+      this.db.prepare("DELETE FROM account_limits WHERE account_id = ?").run(accountId)
+      return
+    }
+    this.db
+      .prepare(
+        "INSERT INTO account_limits (account_id, kind, resets_at, source, message, since) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET kind = excluded.kind, resets_at = excluded.resets_at, source = excluded.source, message = excluded.message, since = excluded.since"
+      )
+      .run(accountId, l.kind, l.resetsAt, l.source, l.message, l.since)
+  }
+
+  openLimitWait(accountId: string, kind: LimitKind, since: number) {
+    this.db.prepare("INSERT INTO limit_waits (account_id, kind, since) VALUES (?, ?, ?)").run(accountId, kind, since)
+  }
+
+  /** Cambia el tipo del lapso abierto (el límite pasó de uno a otro sin que volviera el uso). */
+  updateOpenLimitWait(accountId: string, kind: LimitKind) {
+    this.db.prepare("UPDATE limit_waits SET kind = ? WHERE account_id = ? AND ended_at IS NULL").run(kind, accountId)
+  }
+
+  closeLimitWait(accountId: string, endedAt: number) {
+    this.db.prepare("UPDATE limit_waits SET ended_at = ? WHERE account_id = ? AND ended_at IS NULL").run(endedAt, accountId)
+  }
+
+  /** Los lapsos sin uso de una cuenta que se cruzan con [from, to]. */
+  listLimitWaits(accountId: string, from: number, to: number): LimitWaitRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM limit_waits WHERE account_id = ? AND since <= ? AND (ended_at IS NULL OR ended_at >= ?) ORDER BY since")
+        .all(accountId, to, from) as Row[]
+    ).map((r) => ({ accountId: String(r.account_id), kind: r.kind as LimitKind, since: Number(r.since), endedAt: num(r.ended_at) }))
+  }
+
+  listAccountUsage(): { accountId: string; usage: UsageInfo }[] {
+    const out: { accountId: string; usage: UsageInfo }[] = []
+    for (const r of this.db.prepare("SELECT * FROM account_usage").all() as Row[]) {
+      try {
+        const usage = JSON.parse(String(r.data)) as UsageInfo
+        if (usage && typeof usage.updatedAt === "number") out.push({ accountId: String(r.account_id), usage })
+      } catch {
+        // un registro roto no frena el arranque
+      }
+    }
+    return out
+  }
+
+  setAccountUsage(accountId: string, usage: UsageInfo) {
+    this.db
+      .prepare("INSERT INTO account_usage (account_id, data) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET data = excluded.data")
+      .run(accountId, JSON.stringify(usage))
+  }
+
+  /** Las sesiones (sin archivar) que quedaron marcadas por el límite. */
+  listLimitedSessions(): SessionRecord[] {
+    // Una marca que no se puede leer (parseLimited devuelve null) no cuenta.
+    return (this.db.prepare("SELECT * FROM sessions WHERE limited IS NOT NULL AND archived_at IS NULL").all() as Row[]).map(toSession).filter((s) => s.limited)
+  }
+
+  insertHeld(h: HeldRow) {
+    this.db.prepare("INSERT INTO held_messages (id, session_id, text, opts, created_at) VALUES (?, ?, ?, ?, ?)").run(h.id, h.sessionId, h.text, h.opts, h.createdAt)
+  }
+
+  listHeld(): HeldRow[] {
+    return (this.db.prepare("SELECT * FROM held_messages ORDER BY created_at, rowid").all() as Row[]).map((r) => ({
+      id: String(r.id),
+      sessionId: String(r.session_id),
+      text: String(r.text),
+      opts: String(r.opts),
+      createdAt: Number(r.created_at),
+    }))
+  }
+
+  deleteHeld(id: string) {
+    this.db.prepare("DELETE FROM held_messages WHERE id = ?").run(id)
+  }
+
+  getSetting(key: string): string | null {
+    const r = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as Row | undefined
+    return r ? String(r.value) : null
+  }
+
+  setSetting(key: string, value: string) {
+    this.db.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value)
+  }
+
   // --------------------------------------------------------------------- afk
 
   /** Lo que gastó el proyecto hasta ahora: la suma del costo de todas sus sesiones (también las archivadas). */
@@ -1238,7 +1428,7 @@ export class Db {
   insertSession(s: SessionRecord) {
     const cols = Object.values(SESSION_COLUMNS)
     const values = (Object.keys(SESSION_COLUMNS) as (keyof SessionRecord)[]).map((k) =>
-      sqlValue(s[k])
+      sqlValue(k === "processName" ? (s.processName || s.name) : s[k])
     )
     this.db
       .prepare(`INSERT INTO sessions (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
@@ -1287,6 +1477,7 @@ export class Db {
         .prepare("UPDATE drafts SET state = 'discarded' WHERE target_session_id = ? AND state IN ('staged', 'ready')")
         .run(id)
       this.db.prepare("DELETE FROM session_fingerprints WHERE session_id = ?").run(id)
+      this.db.prepare("DELETE FROM held_messages WHERE session_id = ?").run(id)
       this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
       this.db.exec("COMMIT")
     } catch (err) {
@@ -1317,6 +1508,7 @@ export class Db {
       this.db.prepare("DELETE FROM drafts WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM afk_periods WHERE project_id = ?").run(id)
       this.db.prepare(`DELETE FROM session_fingerprints WHERE session_id IN (${sessionIds})`).run(id)
+      this.db.prepare(`DELETE FROM held_messages WHERE session_id IN (${sessionIds})`).run(id)
       this.db.prepare("DELETE FROM user_tasks WHERE project_id = ?").run(id)
       this.db.prepare("DELETE FROM credentials WHERE environment_id IN (SELECT id FROM environments WHERE project_id = ?)").run(id)
       this.db.prepare("DELETE FROM environments WHERE project_id = ?").run(id)

@@ -10,14 +10,14 @@ import { buildLaunch } from "../src/claude/args.ts"
 import { sessionRunDir, writePrivateFile } from "../src/claude/run-files.ts"
 import { config } from "../src/config.ts"
 import type { SessionRecord } from "../src/db.ts"
-import { decideSend, SEND_DENIED, type SendGuardDeps } from "../src/send-guard.ts"
+import { decideSend, SEND_DENIED, withRecipient, type SendGuardDeps } from "../src/send-guard.ts"
 import { tmpRunRoot } from "./run-root.ts"
 
 let n = 0
-function rec(projectId: string, name: string, kind: "worker" | "orchestrator" = "worker"): SessionRecord {
+function rec(projectId: string, name: string, kind: "worker" | "orchestrator" = "worker", processName = name): SessionRecord {
   n++
   return {
-    id: `s_${n}`, projectId, kind, name, role: "", claudeSessionId: `c-${n}`, startedOnce: true, mcpToken: `tok-${n}`, model: null,
+    id: `s_${n}`, projectId, kind, name, processName, role: "", claudeSessionId: `c-${n}`, startedOnce: true, mcpToken: `tok-${n}`, model: null,
     effort: null, worktree: false, cwd: "/tmp", status: "idle", taskTitle: null, taskState: "none", lastActivity: null,
     lastActivityAt: null, costUsd: 0, costByModel: {}, tokens: null, context: null, createdAt: 1, archivedAt: null,
   }
@@ -28,9 +28,9 @@ const backA = rec("pa", "BACKEND")
 const webA = rec("pa", "WEB")
 const orqB = rec("pb", "ORQ-B", "orchestrator")
 const backB = rec("pb", "BACKEND-B")
-// Dos sesiones que se llaman igual en dos proyectos.
+// Dos sesiones que se llaman igual en dos proyectos: la de B corre con el nombre calificado.
 const dupA = rec("pa", "TESTS")
-const dupB = rec("pb", "TESTS")
+const dupB = rec("pb", "TESTS", "worker", "TESTS·pb")
 const all = [orqA, backA, webA, orqB, backB, dupA, dupB]
 const PIDS = new Map<number, string>([[1001, backA.id], [1002, webA.id], [2001, orqB.id], [2002, backB.id], [1000, orqA.id]])
 const sock = (pid: number) => `uds:/run/user/1000/cc-socks/${pid}.sock`
@@ -53,7 +53,8 @@ const denied = (r: { allow: boolean; reason?: string }) => (r.allow ? null : (r.
 describe("cerrojo de SendMessage: a quién va el mensaje", () => {
   it("el nombre de una sesión del propio proyecto pasa, sin distinguir mayúsculas", async () => {
     assert.deepEqual(await send(backA, "WEB"), { allow: true })
-    assert.deepEqual(await send(backA, "web"), { allow: true })
+    assert.deepEqual(await send(backA, "web"), { allow: true, rewriteTo: "WEB" }, "con otras mayúsculas, al nombre exacto")
+    assert.deepEqual(await send(backA, " WEB "), { allow: true, rewriteTo: "WEB" }, "con espacios, también: Claude Code recibe lo crudo")
     assert.deepEqual(await send(backA, "ORQ-A"), { allow: true })
     assert.deepEqual(await send(orqA, "BACKEND"), { allow: true })
     assert.deepEqual(await send(backA, "BACKEND"), { allow: true }, "a sí misma")
@@ -69,7 +70,8 @@ describe("cerrojo de SendMessage: a quién va el mensaje", () => {
   })
 
   it("nombre [ref]: se resuelve por el nombre", async () => {
-    assert.deepEqual(await send(backA, "WEB [3fa9c1]", { recipient_kind: "name" }), { allow: true })
+    // Con [ref] el destino se cambia por el nombre exacto del proceso, sin el ref: no se puede comprobar a qué sesión apunta.
+    assert.deepEqual(await send(backA, "WEB [3fa9c1]", { recipient_kind: "name" }), { allow: true, rewriteTo: "WEB" })
     assert.equal(denied(await send(backA, "BACKEND-B [3fa9c1]")), SEND_DENIED.otherProjectWorker)
   })
 
@@ -110,11 +112,32 @@ describe("cerrojo de SendMessage: a quién va el mensaje", () => {
     assert.match(denied(await send(backA, "*"))!, /no es una sesión de este dashboard/)
   })
 
-  it("el nombre repetido en dos proyectos se deniega y pide el nombre exacto", async () => {
-    const r = denied(await send(dupA, "TESTS"))
-    assert.equal(r, SEND_DENIED.ambiguous("TESTS"))
-    assert.match(r!, /list_sessions/)
-    assert.equal(denied(await send(backA, "TESTS [abc123]")), SEND_DENIED.ambiguous("TESTS"))
+  it("un nombre repetido en dos proyectos se resuelve dentro del proyecto de quien manda", async () => {
+    // A: TESTS corre como TESTS; B: TESTS corre como TESTS·pb.
+    assert.deepEqual(await send(dupA, "TESTS"), { allow: true })
+    assert.deepEqual(await send(webA, "TESTS"), { allow: true }, "a la suya, sin traducir")
+    assert.deepEqual(await send(backB, "TESTS"), { allow: true, rewriteTo: "TESTS·pb" }, "el destino pasa al nombre del proceso")
+    assert.deepEqual(await send(orqB, "tests"), { allow: true, rewriteTo: "TESTS·pb" }, "con otras mayúsculas también")
+    assert.deepEqual(await send(backB, "TESTS·pb"), { allow: true }, "el nombre del proceso, tal cual")
+    assert.deepEqual(await send(backB, "TESTS [abc123]"), { allow: true, rewriteTo: "TESTS·pb" }, "el [ref] no puede llevarlo a la de A")
+    assert.deepEqual(await send(webA, "TESTS [abc123]"), { allow: true, rewriteTo: "TESTS" })
+  })
+
+  it("el nombre de otro proyecto, corto o calificado, se deniega aunque el propio proyecto no lo tenga", async () => {
+    assert.equal(denied(await send(dupA, "TESTS·pb")), SEND_DENIED.otherProjectWorker)
+    assert.equal(denied(await send(orqA, "TESTS·pb")), SEND_DENIED.otherProjectOrchestrator)
+    // Un proyecto sin TESTS que escribe TESTS: es el de otro proyecto.
+    const d = deps({ sessions: () => [backA, dupB] })
+    assert.equal(denied(await send(backA, "TESTS", {}, d)), SEND_DENIED.otherProjectWorker)
+    assert.equal(denied(await send(backA, "TESTS·pb", {}, d)), SEND_DENIED.otherProjectWorker)
+  })
+
+  it("la salida del hook lleva el tool_input entero con el destino cambiado", () => {
+    const input = { to: "TESTS", recipient: "TESTS", recipient_kind: "name", summary: "hola", message: "x" }
+    assert.deepEqual(withRecipient(input, "TESTS·pb"), { ...input, to: "TESTS·pb", recipient: "TESTS·pb" })
+    assert.deepEqual(withRecipient({ to: "A", message: "x" }, "B"), { to: "B", message: "x" })
+    assert.deepEqual(withRecipient({ recipient: "A" }, "B"), { recipient: "B" })
+    assert.equal(input.to, "TESTS", "no toca el original")
   })
 
   it("un nombre repetido solo entre sesiones de otros proyectos es de otro proyecto", async () => {
@@ -149,14 +172,31 @@ describe("cerrojo de SendMessage: a quién va el mensaje", () => {
   })
 
   it("un subagente propio con ese nombre gana (SendMessage lo elige a él), sin [ref]", async () => {
-    const d = deps({ agentNames: (id) => (id === backA.id ? ["BACKEND-B", "revisor"] : []) })
+    const d = deps({ agentNames: (id) => (id === backA.id ? ["revisor", "WEB"] : []) })
     assert.deepEqual(await send(backA, "revisor", {}, d), { allow: true })
-    assert.deepEqual(await send(backA, "BACKEND-B", {}, d), { allow: true })
+    assert.deepEqual(await send(backA, "WEB", {}, d), { allow: true }, "igual que una sesión del propio proyecto: da lo mismo cuál")
+    assert.equal(denied(await send(webA, "revisor", {}, d)), SEND_DENIED.notDashboard("revisor", true), "los subagentes son de cada sesión")
+  })
+
+  it("un subagente que se llama como una sesión o un proceso de otro proyecto no abre el paso", async () => {
+    // El Agent puede no haber lanzado nada (un subagent_type que no existe) y SendMessage iría a la sesión de B.
+    const d = deps({ agentNames: (id) => (id === backA.id ? ["BACKEND-B", "TESTS·pb", "TESTS", "afuera"] : []) })
+    assert.equal(denied(await send(backA, "BACKEND-B", {}, d)), SEND_DENIED.agentClash("BACKEND-B"))
+    assert.equal(denied(await send(backA, "TESTS·pb", {}, d)), SEND_DENIED.agentClash("TESTS·pb"), "con el nombre calificado")
+    assert.equal(denied(await send(backA, "TESTS", {}, d)), SEND_DENIED.agentClash("TESTS"), "con el corto que B también usa")
     assert.equal(denied(await send(backA, "BACKEND-B [abc123]", {}, d)), SEND_DENIED.otherProjectWorker, "con [ref] se pide una sesión")
-    assert.equal(denied(await send(webA, "BACKEND-B", {}, d)), SEND_DENIED.otherProjectWorker, "los subagentes son de cada sesión")
+    // Un proceso de B que corre con otro nombre que el de la base, o uno de afuera del dashboard.
+    const live = async () => [
+      { pid: 2002, name: "revisor", cwd: "/y", kind: "interactive" as const },
+      { pid: 777, name: "afuera", cwd: "/z", kind: "interactive" as const },
+      { pid: 1002, name: "WEB", cwd: "/x", kind: "interactive" as const },
+    ]
+    const withLive = deps({ live, agentNames: (id) => (id === backA.id ? ["revisor", "afuera", "WEB"] : []) })
+    assert.equal(denied(await send(backA, "revisor", {}, withLive)), SEND_DENIED.agentClash("revisor"))
+    assert.equal(denied(await send(backA, "afuera", {}, withLive)), SEND_DENIED.agentClash("afuera"))
+    assert.deepEqual(await send(backA, "WEB", {}, withLive), { allow: true }, "un proceso del propio proyecto no molesta")
     // Con otras mayúsculas puede no ser el subagente (los de las propuestas van en minúsculas) y sí la sesión.
     const lower = deps({ agentNames: (id) => (id === backA.id ? ["backend-b"] : []) })
-    assert.deepEqual(await send(backA, "backend-b", {}, lower), { allow: true })
     assert.equal(denied(await send(backA, "BACKEND-B", {}, lower)), SEND_DENIED.otherProjectWorker)
   })
 

@@ -11,7 +11,12 @@ import type { LiveSession } from "./claude/local.ts"
  * --dangerously-skip-permissions. Ante la duda, deniega.
  */
 
-export type SendDecision = { allow: true } | { allow: false; reason: string }
+/**
+ * `rewriteTo`: el nombre exacto con que corre el proceso destino, cuando no es lo que escribió quien manda (el nombre
+ * corto, otras mayúsculas, un [ref]): el hook devuelve el SendMessage con ese destino (updatedInput) y llega a la
+ * sesión de su proyecto aunque el nombre corto exista también en otro proyecto (ver names.ts).
+ */
+export type SendDecision = { allow: true; rewriteTo?: string } | { allow: false; reason: string }
 
 export interface SendGuardDeps {
   /** Las sesiones del dashboard (sin archivar). */
@@ -32,9 +37,11 @@ export const SEND_DENIED = {
   notDashboard: (to: string, worker: boolean) =>
     `«${to}» no es una sesión de este dashboard (puede ser una sesión de Claude Code tuya fuera del dashboard, una de la nube o de otra máquina). Las sesiones del dashboard solo hablan con las de su proyecto.${worker ? " Si necesitás algo de afuera, pedíselo a tu orquestadora." : " Entre proyectos, usá message_project."}`,
   ambiguous: (name: string) =>
-    `Hay más de una sesión llamada «${name}» (en distintos proyectos o fuera del dashboard) y no puedo saber a cuál iría tu mensaje, así que no se envía. Escribile a una sesión de tu proyecto con el nombre exacto que muestra list_sessions; si el nombre se repite, pedile al usuario que renombre una de las dos.`,
+    `Hay más de una sesión llamada «${name}» (fuera del dashboard, o con un [ref] que no puedo comprobar) y no puedo saber a cuál iría tu mensaje, así que no se envía. Escribile a una sesión de tu proyecto con el nombre que muestra list_sessions, sin [ref]; si no alcanza, pedile al usuario que renombre una de las dos.`,
   unresolved: (to: string) =>
     `No pude saber a quién va «${to}», y por seguridad no se envía. Reintentá con el nombre exacto que muestra list_sessions (las sesiones de tu proyecto).`,
+  agentClash: (name: string) =>
+    `Tu subagente «${name}» se llama igual que una sesión que no es de tu proyecto: si Claude Code no lo registró con ese nombre, el mensaje iría a esa sesión, así que no se envía. Lanzá el subagente con otro nombre.`,
   noCaller: "No pude identificar tu sesión en el dashboard, y por seguridad no se envía el mensaje.",
 }
 
@@ -82,28 +89,57 @@ export async function decideSend(deps: SendGuardDeps, caller: SessionRecord | nu
   const withRef = /^(.*?)\s*\[([^\]]+)\]\s*$/.exec(to)
   const base = (withRef ? withRef[1]! : to).trim()
   if (!base) return deny(SEND_DENIED.unresolved(to))
+  const all = deps.sessions()
+  const matches = (s: SessionRecord) => eq(s.name, base) || eq(s.processName, base)
+
   // Si el nombre también es el de un subagente propio, SendMessage elige al subagente. Solo con el nombre
   // exacto: con otras mayúsculas puede no ser el subagente y sí una sesión de otro proyecto.
-  if (!withRef && deps.agentNames(caller.id).some((n) => n.trim() === base)) return ALLOW
+  // Pero lo que se ve es el Agent que se pidió, no el subagente que Claude Code registró: si no llegó a lanzarse (un
+  // subagent_type que no existe), le cambió el nombre (uno repetido) o se lo rechazó, SendMessage busca entre las
+  // sesiones. Así que el nombre de un subagente no puede ser el de una sesión o un proceso de otro proyecto.
+  if (!withRef && deps.agentNames(caller.id).some((n) => n.trim() === base)) {
+    if (all.some((s) => matches(s) && !sameProject(s))) return deny(SEND_DENIED.agentClash(base))
+    if (deps.live) {
+      const pids = deps.pids()
+      for (const l of (await deps.live(caller).catch(() => [])).filter((l) => l.name && eq(l.name, base))) {
+        const owner = l.pid ? pids.get(l.pid) : undefined
+        const t = owner ? all.find((s) => s.id === owner) : undefined
+        if (!t || !sameProject(t)) return deny(SEND_DENIED.agentClash(base))
+      }
+    }
+    return ALLOW
+  }
 
-  const named = deps.sessions().filter((s) => eq(s.name, base))
-  if (!named.length) return deny(SEND_DENIED.notDashboard(to, worker))
-  const own = named.filter(sameProject)
-  if (!own.length) return crossProject
-  if (named.length > 1) return deny(SEND_DENIED.ambiguous(base))
+  // Los nombres son únicos por proyecto, no en toda la máquina: el corto se resuelve primero dentro del proyecto de quien
+  // manda. Lo que resuelve SendMessage es el nombre del proceso (`processName`, calificado con el proyecto si otro
+  // proyecto repite el nombre), y ese es único entre las sesiones del dashboard.
+  const own = all.filter((s) => matches(s) && sameProject(s))
+  if (!own.length) return all.some(matches) ? crossProject : deny(SEND_DENIED.notDashboard(to, worker))
+  if (own.length > 1) return deny(SEND_DENIED.ambiguous(base))
+  const target = own[0]!
+  const final = target.processName
 
-  // Lo que resuelve SendMessage es el nombre con que corre cada proceso, que puede no ser el de la base (un
-  // renombre que no le llegó al proceso). Una sesión tuya de afuera del dashboard con ese nombre podría ser
-  // la elegida: no se puede saber; un proceso del dashboard con ese nombre tiene que ser del proyecto.
+  // Una sesión tuya de afuera del dashboard (o un proceso cuyo nombre no se actualizó) con el nombre con que se va a
+  // enviar podría ser la elegida: no se puede saber; un proceso del dashboard con ese nombre tiene que ser del proyecto.
   if (deps.live) {
     const pids = deps.pids()
-    const all = deps.sessions()
-    for (const l of (await deps.live(caller).catch(() => [])).filter((l) => l.name && eq(l.name, base))) {
+    for (const l of (await deps.live(caller).catch(() => [])).filter((l) => l.name && eq(l.name, final))) {
       const owner = l.pid ? pids.get(l.pid) : undefined
-      const target = owner ? all.find((s) => s.id === owner) : undefined
-      if (!target) return deny(SEND_DENIED.ambiguous(base))
-      if (!sameProject(target)) return crossProject
+      const t = owner ? all.find((s) => s.id === owner) : undefined
+      if (!t) return deny(SEND_DENIED.ambiguous(base))
+      if (!sameProject(t)) return crossProject
     }
   }
-  return ALLOW
+  // Tal cual lo escribió, si ya es el nombre exacto (sin espacios de más: Claude Code recibe lo crudo); si no, el destino
+  // se cambia por el del proceso.
+  return raw === final ? ALLOW : { allow: true, rewriteTo: final }
+}
+
+/** El tool_input con el destino cambiado (lo que el hook devuelve como updatedInput). */
+export function withRecipient(input: Record<string, unknown>, to: string): Record<string, unknown> {
+  const out = { ...input }
+  const has = (k: string) => typeof out[k] === "string"
+  if (has("recipient")) out.recipient = to
+  if (has("to") || !has("recipient")) out.to = to
+  return out
 }

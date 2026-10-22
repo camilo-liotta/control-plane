@@ -3,6 +3,7 @@ import { create } from "zustand"
 
 import type {
   Account,
+  AppSettings,
   AppView,
   CompactionState,
   Draft,
@@ -56,6 +57,8 @@ interface State {
   /** Si hay una app de escritorio conectada al server. */
   desktopConnected: boolean
   meta: Meta | null
+  /** Ajustes del dashboard (de toda la instalación). */
+  settings: AppSettings
   /** Sesión que estás mirando (no suma no leídos). */
   focused: string | null
   /** El último proyecto borrado (para sacarte de sus pantallas si estabas ahí). */
@@ -102,6 +105,7 @@ export const useStore = create<State>((set, get) => ({
   clisTick: 0,
   desktopConnected: false,
   meta: null,
+  settings: { resumeOnRenewal: true },
   focused: null,
   removedProject: null,
 
@@ -127,6 +131,7 @@ export const useStore = create<State>((set, get) => ({
           compactions: Object.fromEntries((snapshot.compactions ?? []).map((c) => [c.sessionId, c])),
           turns: Object.fromEntries((snapshot.turns ?? []).map((t) => [t.sessionId, t.turn])),
           meta: snapshot.meta,
+          settings: snapshot.settings ?? { resumeOnRenewal: true },
           partials: {},
         })
         // Tras una reconexión, rellenamos lo que nos perdimos de las sesiones abiertas.
@@ -249,6 +254,9 @@ export const useStore = create<State>((set, get) => ({
         break
       case "account":
         set((s) => ({ accounts: { ...s.accounts, [msg.account.id]: msg.account } }))
+        break
+      case "settings":
+        set({ settings: msg.settings })
         break
       case "account_removed":
         set((s) => {

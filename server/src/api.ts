@@ -21,6 +21,7 @@ import type { SessionManager } from "./sessions.ts"
 import type { McpInput, McpScope, PluginAction, Tools } from "./tools.ts"
 import type { Overview } from "./overview.ts"
 import { deleteProject } from "./project-delete.ts"
+import { assertNotReserved, nameTaken } from "./names.ts"
 import { archiveProject, restoreProject } from "./project-archive.ts"
 import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
@@ -28,7 +29,7 @@ import type { Environments } from "./environments.ts"
 import type { SkillMarket } from "./skill-market.ts"
 import { redactSnapshot } from "./remote/redact.ts"
 import { checkModelChoice } from "./shared/models.ts"
-import type { AppInput, ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
+import type { AppInput, AppSettings, ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
 export interface Deps {
@@ -58,18 +59,21 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|types
 
 const DAY = 24 * 60 * 60 * 1000
 
+const DEFAULT_APP_SETTINGS: AppSettings = { resumeOnRenewal: true }
+
 export function snapshot({ db, sessions, orchestration, accounts, compaction, tasks, environments, apps }: Deps): Snapshot {
   return {
     projects: db.listProjects().map((p) => orchestration.projectView(p)),
     sessions: sessions.list(),
     drafts: db.listRecentDrafts(now() - DAY),
     reports: db.listRecentReports(now() - 2 * DAY).map((r) => orchestration.reportView(r)),
-    accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id))),
+    accounts: accounts.list().map((a) => accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id))),
     compactions: compaction.list(),
     tasks: tasks.list(),
     environments: environments.list(),
     apps: apps.all(),
     turns: sessions.turns(),
+    settings: sessions.limits?.settings() ?? DEFAULT_APP_SETTINGS,
     meta: sessions.meta,
   }
 }
@@ -206,7 +210,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
 
   const broadcastAccount = (id: string) => {
     const a = accounts.get(id)
-    if (a) deps.hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id)) })
+    if (a) deps.hub.broadcast({ type: "account", account: accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id)) })
   }
 
   const requireAccount = (id: string) => {
@@ -226,7 +230,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, async () => {
       const list = accounts.list()
       if (req.query.refresh) await Promise.all(list.map((a) => accounts.authStatus(a, true)))
-      return list.map((a) => accounts.view(a, sessions.usageFor(a.id)))
+      return list.map((a) => accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id)))
     })
   )
 
@@ -258,7 +262,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       accounts.update(a.id, req.body ?? {})
       if (req.body?.bin !== undefined) await accounts.authStatus(accounts.get(a.id)!, true)
       broadcastAccount(a.id)
-      return accounts.view(accounts.get(a.id)!, sessions.usageFor(a.id))
+      return accounts.view(accounts.get(a.id)!, sessions.usageFor(a.id), sessions.limitFor(a.id))
     })
   )
 
@@ -351,6 +355,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         db.insertProject(project)
         const taken = new Set(db.listSessions().map((s) => s.name.toLowerCase()))
         let orchName = sanitizeSessionName(req.body.orchestratorName ?? "").toUpperCase() || `ORQ-${slug(name)}`
+        assertNotReserved(orchName)
         for (let i = 2; taken.has(orchName.toLowerCase()); i++) orchName = `ORQ-${slug(name)}-${i}`
         const orch = sessions.create({
           projectId: project.id,
@@ -560,7 +565,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, async () => {
       const p = requireProject(req.params.id)
       const list = db.listSessions().filter((s) => s.projectId === p.id)
-      await Promise.allSettled(list.map((s) => sessions.stop(s.id)))
+      await Promise.allSettled(list.map((s) => sessions.stop(s.id, { manual: true })))
     })
   )
 
@@ -650,7 +655,58 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
       if (s.kind === "worker" && s.taskState === "none" && text)
         sessions.update(s.id, { taskTitle: text.split("\n")[0]!.slice(0, 80), taskState: "assigned" })
       const clientId = typeof req.body.clientId === "string" && req.body.clientId.length <= 100 ? req.body.clientId : undefined
-      return sessions.send(s.id, text, { origin: "user", attachments: files, clientId })
+      // Sin uso, el mensaje queda en espera y sale solo al renovarse: la respuesta trae `held` en lugar del evento.
+      const opts = { origin: "user" as const, attachments: files, clientId }
+      if (!sessions.limits) return sessions.send(s.id, text, opts)
+      const sent = await sessions.limits.sendOrHold(s.id, text, opts)
+      return "held" in sent ? { held: sent.held, note: sent.note } : sent.event
+    })
+  )
+
+  // ------------------------------------------------------------- límite de uso
+
+  app.get("/api/settings", () => sessions.limits?.settings() ?? DEFAULT_APP_SETTINGS)
+
+  app.patch<{ Body: Partial<AppSettings> }>("/api/settings", (req, reply) =>
+    guard(reply, () => {
+      if (!sessions.limits) throw new Error("No disponible")
+      return sessions.limits.setSettings({ resumeOnRenewal: typeof req.body?.resumeOnRenewal === "boolean" ? req.body.resumeOnRenewal : undefined })
+    })
+  )
+
+  /** «Reintentar ahora» en una cuenta (por ejemplo, si subiste el tope de gasto): da el límite por renovado. */
+  app.post<{ Params: { id: string } }>("/api/accounts/:id/limit/retry", (req, reply) =>
+    guard(reply, () => {
+      const a = requireAccount(req.params.id)
+      sessions.limits?.retryAccount(a.id)
+      return accounts.view(a, sessions.usageFor(a.id), sessions.limitFor(a.id))
+    })
+  )
+
+  /** «Reintentar ahora» en una sesión: sigue (o manda lo que tenía en espera) sin esperar a la cuenta. */
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/limit/retry", (req, reply) =>
+    guard(reply, async () => {
+      const s = requireSession(req.params.id)
+      await sessions.limits?.retrySession(s.id)
+      return sessions.view(db.getSession(s.id)!)
+    })
+  )
+
+  /** «No retomar» (resume: false) cancela la continuación de la sesión; resume: true la vuelve a pedir. */
+  app.patch<{ Params: { id: string }; Body: { resume?: boolean } }>("/api/sessions/:id/limit", (req, reply) =>
+    guard(reply, () => {
+      const s = requireSession(req.params.id)
+      if (typeof req.body?.resume !== "boolean") throw new Error("Falta resume (true o false)")
+      sessions.limits?.setResume(s.id, req.body.resume)
+      return sessions.view(db.getSession(s.id)!)
+    })
+  )
+
+  app.delete<{ Params: { id: string; heldId: string } }>("/api/sessions/:id/held/:heldId", (req, reply) =>
+    guard(reply, () => {
+      const s = requireSession(req.params.id)
+      sessions.limits?.cancelHeld(s.id, req.params.heldId)
+      return sessions.view(db.getSession(s.id)!)
     })
   )
 
@@ -703,7 +759,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
   )
 
   app.post<{ Params: { id: string } }>("/api/sessions/:id/stop", (req, reply) =>
-    guard(reply, () => sessions.stop(requireSession(req.params.id).id))
+    guard(reply, () => sessions.stop(requireSession(req.params.id).id, { manual: true }))
   )
 
   app.post<{ Params: { id: string } }>("/api/sessions/:id/interrupt", (req, reply) =>
@@ -939,8 +995,8 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         if (req.body.name !== undefined) {
           const name = sanitizeSessionName(req.body.name).toUpperCase()
           if (!name) throw new Error("El nombre no es válido")
-          const clash = db.listSessions().some((x) => x.id !== s.id && x.name.toLowerCase() === name.toLowerCase())
-          if (clash) throw new Error(`Ya existe una sesión llamada ${name}`)
+          if (name.toLowerCase() !== s.name.toLowerCase()) assertNotReserved(name)
+          if (nameTaken(db.listSessions(), s.projectId, name, s.id)) throw new Error(`Ya existe una sesión llamada ${name} en este proyecto`)
           await sessions.rename(s.id, name)
         }
         if (req.body.role !== undefined) sessions.update(s.id, { role: req.body.role.trim() })
@@ -972,9 +1028,9 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     guard(reply, () => {
       const s = db.getSession(req.params.id)
       if (!s) throw new Error("La sesión no existe")
-      const clash = db.listSessions().some((x) => x.id !== s.id && x.name.toLowerCase() === s.name.toLowerCase())
-      if (clash) throw new Error(`Ya hay otra sesión llamada ${s.name}: renombrala antes de restaurar esta`)
+      if (nameTaken(db.listSessions(), s.projectId, s.name, s.id)) throw new Error(`Ya hay otra sesión llamada ${s.name} en el proyecto: renombrala antes de restaurar esta`)
       sessions.update(s.id, { archivedAt: null, status: "stopped" })
+      sessions.refreshProcessName(s.id)
       return sessions.view(db.getSession(s.id)!)
     })
   )

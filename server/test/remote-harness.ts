@@ -68,7 +68,7 @@ export function freePort(): Promise<number> {
   })
 }
 
-export const emptySnapshot = (): Snapshot => ({ projects: [], sessions: [], drafts: [], reports: [], accounts: [], compactions: [], turns: [], tasks: [], environments: [], apps: [], meta: { version: "0", claudeVersion: null, models: [], account: null, homeDir: "" } })
+export const emptySnapshot = (): Snapshot => ({ projects: [], sessions: [], drafts: [], reports: [], accounts: [], compactions: [], turns: [], tasks: [], environments: [], apps: [], settings: { resumeOnRenewal: true }, meta: { version: "0", claudeVersion: null, models: [], account: null, homeDir: "" } })
 
 export interface Res {
   status: number

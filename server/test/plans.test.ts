@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test"
 
 import { Db, defaultSettings, type SessionRecord } from "../src/db.ts"
 import type { Hub } from "../src/hub.ts"
+import { LimitedError } from "../src/limit.ts"
 import { Orchestration } from "../src/orchestration.ts"
 import type { SendOptions, SessionManager } from "../src/sessions.ts"
 import type { Draft, ModelOption, SessionStatus, TimelineEvent } from "../src/shared/types.ts"
@@ -28,6 +29,8 @@ class FakeSessions extends EventEmitter {
   events: { id: string; event: TimelineEvent }[] = []
   meta = { models: CATALOG }
   failNextSend = false
+  /** Lo que usa el límite de uso (ver limit.ts): sin esto no hay límite. */
+  limits: { blocking: (rec: SessionRecord) => unknown; cutByLimit: (id: string) => boolean; adopt?: (id: string) => boolean } | null = null
   db: Db
   constructor(db: Db) {
     super()
@@ -71,11 +74,11 @@ class FakeSessions extends EventEmitter {
     return rec
   }
   /** La sesión terminó su turno. */
-  endTurn(rec: SessionRecord, info: { ok?: boolean; aborted?: boolean; local?: boolean; result?: string } = {}) {
+  endTurn(rec: SessionRecord, info: { ok?: boolean; aborted?: boolean; local?: boolean; result?: string; limit?: "five_hour" } = {}) {
     this.statuses.set(rec.id, "idle")
     const fresh = this.db.getSession(rec.id) ?? rec
     this.emit("status", fresh, "idle")
-    this.emit("turnEnd", fresh, { ok: info.ok ?? true, aborted: info.aborted ?? false, result: info.result ?? "", local: info.local ?? false, contextFull: false, retried: false })
+    this.emit("turnEnd", fresh, { ok: info.ok ?? true, aborted: info.aborted ?? false, result: info.result ?? "", local: info.local ?? false, contextFull: false, retried: false, limit: info.limit ?? null })
   }
   setStatus(rec: SessionRecord, status: SessionStatus) {
     this.statuses.set(rec.id, status)
@@ -91,6 +94,7 @@ function session(projectId: string, name: string, kind: "worker" | "orchestrator
     projectId,
     kind,
     name,
+    processName: name,
     role: "",
     claudeSessionId: `uuid-${counter}`,
     startedOnce: true,
@@ -627,5 +631,113 @@ describe("planes por pasos", () => {
     await orch.sendDraft(rev.id, {})
     assert.deepEqual(plan().steps.map((s) => s.title), ["Tipos", "Nuevo"])
     assert.equal(plan().steps[0]!.state, "running")
+  })
+
+  describe("sin uso (límite de 5 horas, semanal o de gasto)", () => {
+    /** La cuenta del worker queda sin uso (o vuelve a tener). */
+    const limit = (on: boolean) => {
+      sessions.limits = on ? { blocking: () => ({ kind: "five_hour", resetsAt: Date.now() + 3_600_000, source: "event" }), cutByLimit: () => true } : null
+    }
+
+    it("un paso cortado por el límite no pausa el plan ni le avisa a la orquestadora: sigue en curso", async () => {
+      await approved()
+      limit(true)
+      sessions.endTurn(w, { ok: false, result: "You've hit your session limit · resets 10pm (America/New_York)", limit: "five_hour" })
+      await sleep(20)
+      const d = plan()
+      assert.equal(d.planState, "running")
+      assert.equal(d.steps[0]!.state, "running")
+      assert.equal(db.listReports({ projectId }).length, 0, "no hay resultado en la cola")
+      assert.equal(toOrq().length, 0, "la orquestadora no se entera")
+      assert.equal(toWorker().length, 1)
+      // Sin el límite, el mismo error sí pausa (es una falla del paso).
+      limit(false)
+      sessions.endTurn(w, { ok: false, result: "API Error: 529" })
+      assert.equal(plan().planState, "paused")
+    })
+
+    it("el siguiente paso espera mientras no hay uso y sale solo al renovarse", async () => {
+      await approved()
+      limit(true)
+      orch.report(db.getSession(w.id)!, { status: "done", summary: "Tipos listos" })
+      sessions.endTurn(w, { ok: false, result: "You've hit your session limit", limit: "five_hour" })
+      await sleep(30)
+      assert.equal(plan().planState, "running")
+      assert.equal(plan().steps[0]!.state, "done", "el reporte del paso vale aunque el turno se haya cortado")
+      assert.equal(toWorker().length, 1, "el paso 2 no sale sin uso")
+      assert.equal(plan().steps[1]!.state, "pending")
+      // Una orden de la web que pase por acá tampoco lo adelanta.
+      orch.plans.onLimitCleared()
+      await sleep(20)
+      assert.equal(toWorker().length, 1, "con la cuenta todavía sin uso, sigue esperando")
+      // Se renovó.
+      limit(false)
+      orch.plans.onLimitCleared()
+      await sleep(20)
+      assert.equal(toWorker().length, 2)
+      assert.match(toWorker()[1]!.text, /^Paso 2 de 3/)
+      assert.equal(plan().steps[1]!.state, "running")
+      assert.equal(plan().planState, "running")
+    })
+
+    it("aprobar un plan con la cuenta sin uso: el primer paso espera y sale al renovarse", async () => {
+      limit(true)
+      await approved()
+      assert.equal(toWorker().length, 0)
+      assert.equal(plan().planState, "running")
+      assert.equal(plan().steps[0]!.state, "pending")
+      limit(false)
+      orch.plans.onLimitCleared()
+      await sleep(20)
+      assert.equal(toWorker().length, 1)
+      assert.equal(plan().steps[0]!.state, "running")
+    })
+
+    it("si el límite salta justo al mandar el paso, vuelve a esperar (no es una falla del plan)", async () => {
+      await approved()
+      orch.report(db.getSession(w.id)!, { status: "done", summary: "ok" })
+      const real = sessions.send.bind(sessions)
+      sessions.send = async (_id: string, _text: string, _opts: SendOptions) => {
+        sessions.send = real
+        throw new LimitedError({ kind: "five_hour", resetsAt: Date.now() + 1000, source: "event" })
+      }
+      sessions.endTurn(w)
+      await sleep(30)
+      assert.equal(plan().planState, "running")
+      assert.equal(plan().steps[1]!.state, "pending", "el paso vuelve a pendiente")
+      assert.equal(db.listReports({ projectId }).length, 0)
+      orch.plans.onLimitCleared()
+      await sleep(20)
+      assert.equal(toWorker().length, 2)
+      assert.equal(plan().steps[1]!.state, "running")
+    })
+
+    it("si la sesión no va a seguir sola (No retomar, la detuviste), el plan se pausa sin avisarle a la orquestadora en vez de esperar para siempre", async () => {
+      await approved()
+      orch.plans.onResumeSkipped(w.id, "Pediste que la sesión no siga sola cuando se renueve el uso")
+      assert.equal(plan().planState, "paused")
+      assert.equal(plan().planNote, "Pediste que la sesión no siga sola cuando se renueve el uso: reanudalo cuando quieras.")
+      assert.equal(db.listReports({ projectId }).length, 0)
+      // Sin un paso en curso no hace nada.
+      orch.plans.onResumeSkipped(w.id, "otra vez")
+      assert.match(plan().planNote!, /^Pediste/)
+    })
+
+    it("al arrancar el server, un paso cortado por el límite no se da por perdido", async () => {
+      await approved()
+      // Se cortó y el server se reinició: la sesión quedó marcada y sin proceso.
+      db.updateSession(w.id, { limited: { kind: "five_hour", resetsAt: Date.now() + 3_600_000, source: "event", since: Date.now(), interrupted: true } })
+      orch.dispose()
+      sessions.removeAllListeners()
+      sessions.statuses.set(w.id, "stopped")
+      const adopted: string[] = []
+      sessions.limits = { blocking: () => null, cutByLimit: (id) => db.getSession(id)?.limited?.interrupted === true, adopt: (id) => (adopted.push(id), true) }
+      orch = newOrchestration()
+      orch.plans.graceMs = 1
+      orch.plans.recover()
+      assert.equal(plan().planState, "running", "no se pausa: lo retoma limit.ts al renovarse")
+      assert.equal(plan().steps[0]!.state, "running")
+      assert.deepEqual(adopted, [w.id], "y la sesión queda marcada para que siga")
+    })
   })
 })

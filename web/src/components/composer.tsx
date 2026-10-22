@@ -1,4 +1,4 @@
-import { ArrowUp, File as FileIcon, Paperclip, RotateCw, Square, TerminalSquare, X } from "lucide-react"
+import { ArrowUp, File as FileIcon, Hourglass, Paperclip, RotateCw, Square, TerminalSquare, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
@@ -14,6 +14,7 @@ import { api } from "@/lib/api"
 import { interruptSession } from "@/lib/session-actions"
 import { freshFiles, registerDropTarget } from "@/lib/desktop-drop"
 import { clipboardImages, formatSize, prepareUpload, shrunkText, VISION_TYPES } from "@/lib/files"
+import { limitWhen } from "@/lib/limit"
 import { inDesktop } from "@/lib/notify"
 import { useStore } from "@/lib/store"
 import { toneSoft } from "@/lib/status"
@@ -244,11 +245,13 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     const clientId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
     const ids = ready.map((p) => p.id!)
     try {
-      await deliver({
+      const sent = await deliver({
         send: () => api.send(session.id, message, ids, clientId),
         echoed: () =>
           (useStore.getState().events[session.id] ?? []).some((e) => e.event.kind === "user" && e.event.clientId === clientId),
       })
+      // Sin uso, el server lo deja en espera: sale solo cuando se renueve.
+      if (sent && "held" in sent) toast(sent.note)
       for (const p of attached) if (p.preview) URL.revokeObjectURL(p.preview)
     } catch (err) {
       toast.error("No se pudo enviar el mensaje", { description: err instanceof Error ? err.message : String(err) })
@@ -319,9 +322,11 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
     ? session.external
       ? null
       : "La sesión está detenida: tu mensaje la reanuda."
-    : busy
-      ? "Está trabajando: tu mensaje se suma al turno en curso."
-      : null
+    : session.limited
+      ? `Sin uso: lo que escribas queda en cola y sale ${session.limited.source === "fallback" ? "cuando vuelva el uso" : limitWhen(session.limited.resetsAt)}.`
+      : busy
+        ? "Está trabajando: tu mensaje se suma al turno en curso."
+        : null
 
   return (
     <div className="bg-background px-4 pt-2 pb-4">
@@ -343,6 +348,28 @@ export function Composer({ session, dropTarget }: { session: Session; dropTarget
               )}
             </span>
           </div>
+        )}
+        {session.held.length > 0 && (
+          <ul aria-label="Mensajes en cola" className="mb-2 space-y-1">
+            {session.held.map((h) => (
+              <li key={h.id} className={cn("flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs", toneSoft.pending)}>
+                <Hourglass className="size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-foreground" title={h.text}>
+                  {h.draftTitle ? `Propuesta «${h.draftTitle}»` : h.text}
+                </span>
+                <span className="shrink-0 text-2xs">en cola</span>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Quitar de la cola"
+                  title="Quitar de la cola"
+                  onClick={() => api.cancelHeld(session.id, h.id).then(() => void toast("Mensaje quitado de la cola"), (e) => toast.error("No se pudo quitar el mensaje", { description: e instanceof Error ? e.message : String(e) }))}
+                >
+                  <X />
+                </Button>
+              </li>
+            ))}
+          </ul>
         )}
         {menuOpen && matches.length > 0 && (
           <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl bg-popover shadow-overlay">

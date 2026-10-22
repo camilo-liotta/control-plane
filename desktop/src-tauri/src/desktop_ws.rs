@@ -51,6 +51,12 @@ pub struct Summary {
     /// Un server anterior no lo manda: es false.
     #[serde(default)]
     pub remote: bool,
+    /// Sesiones sin uso (esperan que se renueve el límite de 5 horas, el semanal o el tope de gasto).
+    #[serde(default)]
+    pub limited: u32,
+    /// Hasta cuándo, ya con el formato para mostrar ("22:00", "lun 9:00"); el más lejano si hay varios.
+    #[serde(default, rename = "limitedUntil")]
+    pub limited_until: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,7 +295,7 @@ mod tests {
                     needs: 3,
                     working: 0
                 }],
-                remote: false,
+                ..Summary::default()
             }))
         );
     }

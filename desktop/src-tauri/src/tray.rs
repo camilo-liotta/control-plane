@@ -48,12 +48,29 @@ pub fn status_text(snap: &Snapshot) -> String {
     let Some(s) = snap.summary.as_ref().filter(|_| snap.connected) else {
         return "Sin conexión con el server".into();
     };
-    let needs = (s.needs > 0).then(|| plural(s.needs, "te necesita", "te necesitan"));
-    let working = (s.working > 0).then(|| format!("{} trabajando", s.working));
-    let line = match (needs, working) {
-        (Some(n), Some(w)) => format!("{n} · {w}"),
-        (Some(t), None) | (None, Some(t)) => t,
-        (None, None) => "Todo tranquilo".into(),
+    let mut parts = Vec::new();
+    if s.needs > 0 {
+        parts.push(plural(s.needs, "te necesita", "te necesitan"));
+    }
+    if s.working > 0 {
+        parts.push(format!("{} trabajando", s.working));
+    }
+    // Sin uso no es una alarma: no cambia el ícono ni suma a "te necesita".
+    if s.limited > 0 {
+        let until = s
+            .limited_until
+            .as_deref()
+            .map(|u| format!(" ({u})"))
+            .unwrap_or_default();
+        parts.push(format!(
+            "{}{until}",
+            plural(s.limited, "espera el uso", "esperan el uso")
+        ));
+    }
+    let line = if parts.is_empty() {
+        "Todo tranquilo".into()
+    } else {
+        parts.join(" · ")
     };
     if s.remote {
         format!("{line} · Acceso remoto activo")
@@ -534,7 +551,7 @@ mod tests {
                 working,
                 running: needs + working,
                 projects,
-                remote: false,
+                ..Summary::default()
             }),
         }
     }
@@ -603,6 +620,28 @@ mod tests {
             ..snap(2, 0, vec![])
         };
         assert_eq!(status_text(&stale), "Sin conexión con el server");
+    }
+
+    #[test]
+    fn sessions_waiting_for_usage_are_listed_without_counting_as_needs() {
+        let mut s = snap(0, 0, vec![]);
+        if let Some(sum) = s.summary.as_mut() {
+            sum.limited = 3;
+            sum.limited_until = Some("22:00".into());
+        }
+        assert_eq!(status_text(&s), "3 esperan el uso (22:00)");
+        assert_eq!(title_text(&s), None, "no suma al número del ícono");
+        assert_eq!(icon_kind(&s), IconKind::Calm);
+        if let Some(sum) = s.summary.as_mut() {
+            sum.needs = 1;
+            sum.working = 2;
+            sum.limited = 1;
+            sum.limited_until = None;
+        }
+        assert_eq!(
+            status_text(&s),
+            "1 te necesita · 2 trabajando · 1 espera el uso"
+        );
     }
 
     #[test]

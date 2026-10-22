@@ -186,6 +186,64 @@ export interface Session {
   external: ExternalSession | null
   /** Lo que programó para más tarde (crons, wakeups de /loop, rutinas): lo activo y lo reciente. */
   scheduled: ScheduledItem[]
+  /** Sin uso: la cuenta (o, en un límite de un modelo, esta sesión) está frenada hasta que se renueve. null = anda. */
+  limited: SessionLimit | null
+  /** Mensajes tuyos que esperan a que se renueve el uso (salen solos al renovarse). */
+  held: HeldMessage[]
+}
+
+/**
+ * De qué es el límite de uso que frenó a la cuenta:
+ * - five_hour: el de 5 horas ("session limit");
+ * - seven_day: el semanal ("weekly limit");
+ * - spend: el tope de gasto de un plan Team ("individual spend limit"), que se renueva con el semanal y se puede subir a mano;
+ * - other: uno que no se reconoce (por ejemplo, el de un modelo). Solo frena a la sesión que lo recibió, no a la cuenta.
+ */
+export type LimitKind = "five_hour" | "seven_day" | "spend" | "other"
+
+/** De dónde salió cuándo se renueva: el reloj del CLI (rate_limit_event), el texto del error ("resets 10pm") o un reintento a ciegas. */
+export type LimitSource = "event" | "text" | "fallback"
+
+/** El límite de una cuenta (CLAUDE_CONFIG_DIR): mientras dura, el server no le manda nada a sus sesiones. */
+export interface AccountLimit {
+  kind: LimitKind
+  /** Cuándo se renueva (ms desde epoch). Con source "fallback" es solo cuándo se vuelve a probar. */
+  resetsAt: number
+  source: LimitSource
+  /** El texto del error, tal cual lo dio Claude Code. */
+  message: string
+  since: number
+}
+
+/** El límite visto desde una sesión. */
+export interface SessionLimit {
+  kind: LimitKind
+  resetsAt: number
+  source: LimitSource
+  since: number
+  /** El turno se cortó por el límite: al renovarse se le pide que siga. */
+  interrupted: boolean
+  /** Sigue sola al renovarse (el ajuste está prendido, el turno se cortó y no la marcaste con "No retomar"). */
+  willResume: boolean
+}
+
+/** Un mensaje tuyo (o una propuesta aprobada) retenido hasta que se renueve el uso. */
+export interface HeldMessage {
+  id: string
+  sessionId: string
+  /** Lo que se ve en el chat (sin las instrucciones de subagentes). */
+  text: string
+  origin: UserOrigin
+  /** Título de la propuesta, si es una. */
+  draftTitle: string | null
+  attachments: number
+  createdAt: number
+}
+
+/** Ajustes del dashboard (de toda la instalación, no de un proyecto). */
+export interface AppSettings {
+  /** Retomar solas las sesiones cuando se renueva el uso (5 h y semanal). Prendido por defecto. */
+  resumeOnRenewal: boolean
 }
 
 export interface RepoInfo {
@@ -342,6 +400,8 @@ export interface Account {
   bin: string | null
   auth: AccountAuth | null
   usage: UsageInfo | null
+  /** Sin uso hasta que se renueve (null = anda). */
+  limit: AccountLimit | null
   projects: number
   engram: EngramStatus
 }
@@ -671,6 +731,15 @@ export interface AfkLog {
   held: AfkLogDraft[]
   /** Los resultados de los workers que llegaron en el período. */
   results: AfkLogResult[]
+  /** Lo que la cuenta del proyecto esperó a que se renovara el uso durante el período. */
+  limitWaits: AfkLogLimitWait[]
+}
+
+/** Un lapso sin uso ("esperó el límite de 5 h de 18:10 a 22:00"). endedAt null = sigue esperando. */
+export interface AfkLogLimitWait {
+  kind: LimitKind
+  since: number
+  endedAt: number | null
 }
 
 export type ReportStatus = "done" | "blocked" | "partial"
@@ -777,6 +846,8 @@ export type TimelineEvent =
       model?: string
       terminalReason?: string
       error?: string
+      /** El turno se cortó porque se acabó el uso (ver LimitKind). */
+      limit?: LimitKind
     }
   | {
       kind: "question"
@@ -877,6 +948,7 @@ export interface Snapshot {
   /** Entornos con sus credenciales, sin los secretos. */
   environments: Environment[]
   apps: AppView[]
+  settings: AppSettings
   meta: Meta
 }
 
@@ -907,6 +979,10 @@ export interface DesktopSummary {
   projects: { id: string; name: string; needs: number; working: number }[]
   /** El acceso remoto está activo (hay exposición por Tailscale). Solo viene cuando es true; la app lo toma como false si falta. */
   remote?: boolean
+  /** Sesiones sin uso (esperan que se renueve el límite): no cuentan en `needs`. */
+  limited: number
+  /** Hasta cuándo, ya formateado ("22:00", "lun 9:00"); el más lejano si hay varios. null si no hay. */
+  limitedUntil: string | null
 }
 
 /** Lo que responde GET /api/health: la app de escritorio lo usa para reconocer al server. */
@@ -1026,6 +1102,7 @@ export type ServerMessage =
   | { type: "report"; report: Report }
   | { type: "usage"; accountId: string; usage: UsageInfo }
   | { type: "account"; account: Account }
+  | { type: "settings"; settings: AppSettings }
   | { type: "account_removed"; id: string }
   | { type: "meta"; meta: Meta }
   | { type: "compaction"; state: CompactionState }

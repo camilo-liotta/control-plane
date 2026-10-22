@@ -15,7 +15,7 @@ import { CLI_DONE_NOTE, detectCli, sameTask, UserTasks } from "../src/user-tasks
 
 function session(name: string): SessionRecord {
   return {
-    id: `s_${name.toLowerCase()}`, projectId: "p1", kind: "worker", name, role: "", claudeSessionId: `c-${name}`, startedOnce: true,
+    id: `s_${name.toLowerCase()}`, projectId: "p1", kind: "worker", name, processName: name, role: "", claudeSessionId: `c-${name}`, startedOnce: true,
     mcpToken: `tok-${name}`, model: null, effort: null, worktree: false, cwd: "/tmp", status: "idle", taskTitle: null, taskState: "none",
     lastActivity: null, lastActivityAt: null, costUsd: 0, costByModel: {}, tokens: null, context: null, createdAt: 1, archivedAt: null,
   }
