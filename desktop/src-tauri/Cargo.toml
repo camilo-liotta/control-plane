@@ -21,7 +21,6 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
-libc = "0.2"
 tauri-plugin-dialog = "2"
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
@@ -30,6 +29,26 @@ tokio = { version = "1.53.1", features = ["time", "sync", "macros"] }
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# RNG del sistema para el token de la pantalla local (en unix se lee /dev/urandom).
+getrandom = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

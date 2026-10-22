@@ -50,10 +50,15 @@ pub fn status_text(snap: &Snapshot) -> String {
     };
     let needs = (s.needs > 0).then(|| plural(s.needs, "te necesita", "te necesitan"));
     let working = (s.working > 0).then(|| format!("{} trabajando", s.working));
-    match (needs, working) {
+    let line = match (needs, working) {
         (Some(n), Some(w)) => format!("{n} · {w}"),
         (Some(t), None) | (None, Some(t)) => t,
         (None, None) => "Todo tranquilo".into(),
+    };
+    if s.remote {
+        format!("{line} · Acceso remoto activo")
+    } else {
+        line
     }
 }
 
@@ -529,8 +534,16 @@ mod tests {
                 working,
                 running: needs + working,
                 projects,
+                remote: false,
             }),
         }
+    }
+
+    fn with_remote(mut snap: Snapshot) -> Snapshot {
+        if let Some(s) = snap.summary.as_mut() {
+            s.remote = true;
+        }
+        snap
     }
 
     fn project(id: &str, name: &str, needs: u32) -> ProjectSummary {
@@ -540,6 +553,30 @@ mod tests {
             needs,
             working: 0,
         }
+    }
+
+    #[test]
+    fn status_line_says_when_remote_access_is_on() {
+        assert_eq!(
+            status_text(&with_remote(snap(3, 2, vec![]))),
+            "3 te necesitan · 2 trabajando · Acceso remoto activo"
+        );
+        assert_eq!(
+            status_text(&with_remote(snap(0, 0, vec![]))),
+            "Todo tranquilo · Acceso remoto activo"
+        );
+        assert_eq!(
+            status_text(&with_remote(snap(0, 1, vec![]))),
+            "1 trabajando · Acceso remoto activo"
+        );
+        // Sin conexión no se afirma nada del acceso remoto.
+        let stale = Snapshot {
+            connected: false,
+            ..with_remote(snap(2, 0, vec![]))
+        };
+        assert_eq!(status_text(&stale), "Sin conexión con el server");
+        // Apagado, la línea queda como siempre.
+        assert_eq!(status_text(&snap(0, 0, vec![])), "Todo tranquilo");
     }
 
     #[test]

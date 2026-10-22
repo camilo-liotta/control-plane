@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,16 +32,36 @@ fn show(v: Version) -> String {
     format!("v{}.{}.{}", v.0, v.1, v.2)
 }
 
+#[cfg(unix)]
 fn is_executable(p: &Path) -> bool {
     p.metadata()
         .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
+/// En Windows no hay bit de ejecución: cuenta que sea un archivo (la extensión la pone `which`).
+#[cfg(windows)]
+fn is_executable(p: &Path) -> bool {
+    p.metadata().is_ok_and(|m| m.is_file())
+}
+
+/// Los nombres que prueba `which` para `name`: en Windows el ejecutable lleva extensión.
+fn candidates(name: &str) -> Vec<String> {
+    #[cfg(windows)]
+    if Path::new(name).extension().is_none() {
+        return ["exe", "cmd", "bat"]
+            .iter()
+            .map(|ext| format!("{name}.{ext}"))
+            .collect();
+    }
+    vec![name.to_string()]
+}
+
 /// Busca un ejecutable en un PATH (solo entradas absolutas).
 pub fn which(name: &str, path: &OsStr) -> Option<PathBuf> {
+    let names = candidates(name);
     std::env::split_paths(path)
         .filter(|d| d.is_absolute())
-        .map(|d| d.join(name))
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
         .find(|p| is_executable(p))
 }
 
@@ -258,7 +279,7 @@ pub fn find_claude(
         };
     }
     let name = claude_bin.filter(|s| !s.is_empty()).unwrap_or("claude");
-    if name.contains('/') {
+    if name.contains(['/', std::path::MAIN_SEPARATOR]) {
         let p = PathBuf::from(name);
         return if is_executable(&p) {
             Ok(p)
@@ -275,7 +296,7 @@ pub fn find_claude(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::ffi::OsString;

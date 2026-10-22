@@ -23,16 +23,19 @@ pub struct LaunchEnv {
 impl LaunchEnv {
     pub fn prepare(settings: &Settings) -> Self {
         // Sin lo que pone un AppImage: ni la shell ni el server tienen que ver sus librerías.
-        let app_env: Vec<(String, String)> = login_env::without_bundle_env(std::env::vars())
-            .into_iter()
-            .collect();
+        let app_env: Vec<(String, String)> =
+            login_env::canonical_env_names(login_env::without_bundle_env(std::env::vars()))
+                .into_iter()
+                .collect();
         let get = |k: &str| {
             app_env
                 .iter()
                 .find(|(n, _)| n == k)
                 .map(|(_, v)| v.as_str())
         };
-        let home = get("HOME").map(PathBuf::from);
+        let home = get("HOME")
+            .or_else(|| get("USERPROFILE"))
+            .map(PathBuf::from);
         let shell = login_env::detect_shell(get("SHELL"));
         let login = LoginEnv::read_with(
             &shell,

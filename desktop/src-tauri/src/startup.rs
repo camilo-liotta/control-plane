@@ -68,6 +68,16 @@ pub fn autostart_enabled<R: Runtime>(_app: &AppHandle<R>) -> bool {
         use tauri_plugin_autostart::ManagerExt;
         return _app.autolaunch().is_enabled().unwrap_or(false);
     }
+    #[cfg(windows)]
+    return windows_store::is_enabled(
+        windows_autostart::RUN_KEY,
+        windows_autostart::APPROVED_KEY,
+        windows_autostart::value_name(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("No pude leer el inicio automático: {e}");
+        false
+    });
     #[allow(unreachable_code)]
     false
 }
@@ -99,6 +109,20 @@ pub fn set_autostart<R: Runtime>(_app: &AppHandle<R>, on: bool) -> Result<(), St
         let auto = _app.autolaunch();
         let res = if on { auto.enable() } else { auto.disable() };
         return res.map_err(|e| e.to_string());
+    }
+    #[cfg(windows)]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe = exe
+            .to_str()
+            .ok_or("la ruta del ejecutable no es texto válido")?;
+        return windows_store::set(
+            windows_autostart::RUN_KEY,
+            windows_autostart::APPROVED_KEY,
+            windows_autostart::value_name(),
+            exe,
+            on,
+        );
     }
     #[allow(unreachable_code)]
     {
@@ -166,6 +190,83 @@ pub mod linux_autostart {
              X-GNOME-Autostart-enabled=true\n",
             string_value(&exec)
         ))
+    }
+}
+
+/// El inicio automático en Windows: un valor propio en `HKCU\...\Run` (sin tocar los demás) y el
+/// interruptor del Administrador de tareas en `StartupApproved\Run`. Lo que decide qué se escribe y
+/// cómo se lee es puro (se prueba en cualquier sistema); el registro está en `sys::registry`.
+#[cfg(any(windows, test))]
+pub mod windows_autostart {
+    use super::{autostart_name, HIDDEN_ARG};
+
+    pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    pub const APPROVED_KEY: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+    /// El nombre del valor en ambas claves (el de desarrollo, aparte).
+    pub fn value_name() -> &'static str {
+        autostart_name()
+    }
+
+    /// La línea de comandos que ejecuta el Explorador al iniciar sesión: la ruta siempre entre
+    /// comillas y `--hidden`. Una ruta con `"` o con caracteres de control no se escribe.
+    pub fn run_value(exe: &str) -> Result<String, String> {
+        if exe.is_empty() {
+            return Err("la ruta del ejecutable está vacía".into());
+        }
+        if exe.contains('"') || exe.chars().any(char::is_control) {
+            return Err("la ruta tiene comillas o caracteres de control".into());
+        }
+        Ok(format!("\"{exe}\" {HIDDEN_ARG}"))
+    }
+
+    /// `StartupApproved\Run`: si el primer byte es par (0x02, 0x06) está habilitado; impar (0x03,
+    /// 0x07) lo apagó el usuario. Sin valor, o vacío, nadie lo tocó: habilitado.
+    pub fn approved(data: Option<&[u8]>) -> bool {
+        match data.and_then(|d| d.first()) {
+            Some(b) => b % 2 == 0,
+            None => true,
+        }
+    }
+
+    /// Prendido de verdad: hay valor en `Run` y el Administrador de tareas no lo apagó.
+    pub fn enabled(run: Option<&str>, approved_data: Option<&[u8]>) -> bool {
+        run.is_some_and(|r| !r.trim().is_empty()) && approved(approved_data)
+    }
+}
+
+/// Windows: lee y escribe el registro con las reglas de [`windows_autostart`]. Las claves y el
+/// nombre llegan por parámetro para probarlo contra una clave de prueba.
+#[cfg(windows)]
+mod windows_store {
+    use crate::sys::registry;
+
+    use super::windows_autostart::{enabled, run_value};
+
+    pub fn is_enabled(run_key: &str, approved_key: &str, name: &str) -> Result<bool, String> {
+        let run = registry::get_string(run_key, name).map_err(|e| e.to_string())?;
+        let flag = registry::get_binary(approved_key, name).map_err(|e| e.to_string())?;
+        Ok(enabled(run.as_deref(), flag.as_deref()))
+    }
+
+    /// Prende (escribe el valor y borra la marca de "apagado" del Administrador de tareas) o apaga
+    /// (borra ambos). Solo toca el valor propio; con una ruta inválida no escribe nada.
+    pub fn set(
+        run_key: &str,
+        approved_key: &str,
+        name: &str,
+        exe: &str,
+        on: bool,
+    ) -> Result<(), String> {
+        let err = |e: std::io::Error| e.to_string();
+        if !on {
+            registry::delete_value(run_key, name).map_err(err)?;
+            return registry::delete_value(approved_key, name).map_err(err);
+        }
+        let value = run_value(exe)?;
+        registry::set_string(run_key, name, &value).map_err(err)?;
+        registry::delete_value(approved_key, name).map_err(err)
     }
 }
 
@@ -272,5 +373,123 @@ mod tests {
         );
         assert_eq!(activation_token(&["app", "--activation-token="]), None);
         assert_eq!(activation_token(&["app", "--activation-token=a\nb"]), None);
+    }
+
+    #[test]
+    fn windows_run_value_quotes_the_exe_and_starts_hidden() {
+        use windows_autostart::run_value;
+        assert_eq!(
+            run_value(r"C:\Program Files\X\a.exe").unwrap(),
+            r#""C:\Program Files\X\a.exe" --hidden"#
+        );
+        assert_eq!(
+            run_value(r"C:\Users\Ñandú\App (x86)\cp.exe").unwrap(),
+            r#""C:\Users\Ñandú\App (x86)\cp.exe" --hidden"#
+        );
+        assert_eq!(run_value(r"C:\a.exe").unwrap(), r#""C:\a.exe" --hidden"#);
+    }
+
+    #[test]
+    fn windows_run_value_rejects_quotes_and_control_chars() {
+        use windows_autostart::run_value;
+        assert!(run_value("C:\\a\"b.exe").is_err());
+        assert!(run_value("C:\\a\nb.exe").is_err());
+        assert!(run_value("C:\\a\u{7}b.exe").is_err());
+        assert!(run_value("").is_err());
+    }
+
+    #[test]
+    fn windows_startup_approved_first_byte_decides() {
+        use windows_autostart::approved;
+        // Sin valor o vacío: habilitado (Windows no escribió nada).
+        assert!(approved(None));
+        assert!(approved(Some(&[])));
+        // 0x02 y 0x06: habilitado; 0x03 y 0x07: lo apagó el usuario en el Administrador de tareas.
+        assert!(approved(Some(&[0x02, 0, 0, 0])));
+        assert!(approved(Some(&[0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
+        assert!(!approved(Some(&[0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
+        assert!(!approved(Some(&[0x07])));
+    }
+
+    #[test]
+    fn windows_autostart_is_on_only_with_a_run_value_that_is_approved() {
+        use windows_autostart::enabled;
+        let on = Some(&[0x02u8, 0, 0, 0][..]);
+        let off = Some(&[0x03u8, 0, 0, 0][..]);
+        let run = Some("\"C:\\a.exe\" --hidden");
+        assert!(enabled(run, None));
+        assert!(enabled(run, on));
+        assert!(!enabled(run, off));
+        assert!(!enabled(None, None));
+        assert!(!enabled(None, on));
+        assert!(!enabled(Some("   "), None));
+    }
+
+    #[test]
+    fn windows_dev_builds_use_their_own_value_name() {
+        assert_eq!(windows_autostart::value_name(), autostart_name());
+        // Los tests corren en debug: el nombre de producción no se toca.
+        assert_eq!(windows_autostart::value_name(), "control-plane-dev");
+    }
+
+    /// Windows, contra una clave de prueba: prender, apagar, el interruptor del Administrador de
+    /// tareas y lo que no se toca.
+    #[cfg(windows)]
+    #[test]
+    fn windows_autostart_roundtrip_in_a_scratch_key() {
+        use crate::sys::registry::{get_binary, get_string, set_raw, set_string, Scratch};
+        use windows_sys::Win32::System::Registry::REG_BINARY;
+
+        let scratch = Scratch::new();
+        let (run, approved) = (scratch.child("Run"), scratch.child("Approved"));
+        let exe = r"C:\Program Files\X\a.exe";
+        let is_on = || windows_store::is_enabled(&run, &approved, "cp").unwrap();
+
+        assert!(!is_on());
+        // Un valor ajeno no se toca nunca.
+        set_string(&run, "otra-app", "otra.exe").unwrap();
+
+        windows_store::set(&run, &approved, "cp", exe, true).unwrap();
+        assert!(is_on());
+        assert_eq!(
+            get_string(&run, "cp").unwrap().as_deref(),
+            Some(r#""C:\Program Files\X\a.exe" --hidden"#)
+        );
+
+        // Lo apagó el usuario en el Administrador de tareas: el valor sigue, pero no está prendido.
+        set_raw(
+            &approved,
+            "cp",
+            REG_BINARY,
+            &[0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        )
+        .unwrap();
+        assert!(!is_on());
+        // Prenderlo desde la app borra esa marca (lo pide el usuario, explícito).
+        windows_store::set(&run, &approved, "cp", exe, true).unwrap();
+        assert!(is_on());
+        assert_eq!(get_binary(&approved, "cp").unwrap(), None);
+
+        // Apagar borra los dos valores, y repetirlo no falla.
+        set_raw(&approved, "cp", REG_BINARY, &[0x02, 0, 0, 0]).unwrap();
+        windows_store::set(&run, &approved, "cp", exe, false).unwrap();
+        assert!(!is_on());
+        assert_eq!(get_string(&run, "cp").unwrap(), None);
+        assert_eq!(get_binary(&approved, "cp").unwrap(), None);
+        windows_store::set(&run, &approved, "cp", exe, false).unwrap();
+        assert_eq!(
+            get_string(&run, "otra-app").unwrap().as_deref(),
+            Some("otra.exe")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_autostart_refuses_a_bad_path_and_writes_nothing() {
+        use crate::sys::registry::{get_string, Scratch};
+        let scratch = Scratch::new();
+        let (run, approved) = (scratch.child("Run"), scratch.child("Approved"));
+        assert!(windows_store::set(&run, &approved, "cp", "C:\\a\"b.exe", true).is_err());
+        assert_eq!(get_string(&run, "cp").unwrap(), None);
     }
 }

@@ -17,6 +17,7 @@ pub struct Choice {
     pub remember: bool,
 }
 
+#[cfg(not(windows))]
 pub const REMEMBER: &str = "Recordar mi elección";
 
 /// Muestra el diálogo y espera. `buttons`: el principal, el otro y el de cancelar.
@@ -78,6 +79,35 @@ fn show(title: &str, message: &str, buttons: &[String; 3]) -> Choice {
     Choice {
         button,
         remember: checked && button.is_some(),
+    }
+}
+
+/// En Windows, un `MessageBox` de Sí / No / Cancelar (sin casilla: no se recuerda la elección).
+#[cfg(windows)]
+fn show(title: &str, message: &str, _buttons: &[String; 3]) -> Choice {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDNO, IDYES, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNOCANCEL,
+    };
+
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (text, caption) = (wide(message), wide(title));
+    // SAFETY: los dos buffers terminan en NUL y viven hasta que vuelve la llamada.
+    let response = unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_YESNOCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST,
+        )
+    };
+    let button = match response {
+        IDYES => Some(0),
+        IDNO => Some(1),
+        _ => None,
+    };
+    Choice {
+        button,
+        remember: false,
     }
 }
 

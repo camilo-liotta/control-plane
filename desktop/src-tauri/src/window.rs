@@ -17,6 +17,12 @@ pub const MAIN: &str = "main";
 pub const DEFAULT_PORT: u16 = 4700;
 pub const DEV_DEFAULT_PORT: u16 = 4710;
 
+/// Windows: los argumentos de WebView2 de la ventana principal. Lo primero es lo que wry pasa por
+/// defecto (0.55.1, `webview2/mod.rs`): al pasar los nuestros hay que repetirlo, no se suma. Lo
+/// segundo deja sonar el aviso con la ventana escondida (arranque con `--hidden`) sin que nadie
+/// haya tocado la página.
+pub const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortError {
     /// `CONTROL_PLANE_PORT` no es un puerto válido.
@@ -149,7 +155,10 @@ pub fn create_main<R: Runtime>(
     let handle = app.clone();
     let start = WebviewUrl::App(format!("index.html?{}", first.query().unwrap_or_default()).into());
 
-    WebviewWindowBuilder::new(app, MAIN, start)
+    let builder = WebviewWindowBuilder::new(app, MAIN, start);
+    #[cfg(windows)]
+    let builder = builder.additional_browser_args(BROWSER_ARGS);
+    builder
         .title("control-plane")
         .inner_size(1280.0, 820.0)
         .min_inner_size(720.0, 480.0)
@@ -334,6 +343,17 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn browser_args_keep_the_webview2_defaults_and_allow_autoplay() {
+        // Lo que wry 0.55 pasa por defecto, tal cual: al pisar los argumentos hay que repetirlo.
+        let wry_default = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+        assert!(BROWSER_ARGS.starts_with(wry_default), "{BROWSER_ARGS}");
+        let flags: Vec<&str> = BROWSER_ARGS.split_whitespace().collect();
+        assert_eq!(flags.len(), 2, "{BROWSER_ARGS}");
+        assert_eq!(flags[0], wry_default);
+        assert_eq!(flags[1], "--autoplay-policy=no-user-gesture-required");
     }
 
     #[test]

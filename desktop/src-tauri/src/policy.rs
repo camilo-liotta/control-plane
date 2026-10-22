@@ -204,6 +204,16 @@ pub fn server_age(app: &str, server: &str, kind: ServerKind, working: u32) -> Se
     }
 }
 
+/// Con el acceso remoto activo, el diálogo de salida avisa que dejar el server corriendo lo deja expuesto
+/// (dentro de la tailnet) mientras el server siga corriendo.
+pub fn with_remote_note(message: String, remote: bool) -> String {
+    if remote {
+        format!("{message}\n\nEl acceso remoto sigue activo mientras el server siga corriendo.")
+    } else {
+        message
+    }
+}
+
 /// El texto del diálogo de salida: cuántas sesiones corta detener el server, separando las que
 /// están trabajando (cortan su turno) de las quietas. `running` son las que tienen el proceso
 /// vivo; `working`, las que están trabajando o arrancando (son parte de `running`).
@@ -500,6 +510,16 @@ mod tests {
         // Un resumen desparejo (más trabajando que abiertas) no da números negativos.
         assert!(exit_question(Some(1), Some(3)).starts_with("Hay 1 sesión trabajando."));
         assert!(exit_question(None, Some(2)).starts_with("Detener el server cierra"));
+    }
+
+    #[test]
+    fn exit_dialog_warns_that_remote_access_stays_on() {
+        let base = "Hay 1 sesión abierta.".to_string();
+        assert_eq!(with_remote_note(base.clone(), false), base);
+        assert_eq!(
+            with_remote_note(base, true),
+            "Hay 1 sesión abierta.\n\nEl acceso remoto sigue activo mientras el server siga corriendo."
+        );
     }
 
     #[test]

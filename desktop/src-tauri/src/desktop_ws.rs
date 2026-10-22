@@ -47,6 +47,10 @@ pub struct Summary {
     pub running: u32,
     #[serde(default)]
     pub projects: Vec<ProjectSummary>,
+    /// El acceso remoto (Tailscale) está activo: la línea de estado y el diálogo de salida lo dicen.
+    /// Un server anterior no lo manda: es false.
+    #[serde(default)]
+    pub remote: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,8 +289,25 @@ mod tests {
                     needs: 3,
                     working: 0
                 }],
+                remote: false,
             }))
         );
+    }
+
+    #[test]
+    fn summary_remote_flag_defaults_to_false_and_reads_true() {
+        // Un server anterior no manda `remote`: es false.
+        let old = parse(r#"{"type":"desktop_summary","summary":{"needs":1}}"#);
+        let Some(ServerMessage::Summary(old)) = old else {
+            panic!("no es un resumen")
+        };
+        assert!(!old.remote);
+        let on = parse(r#"{"type":"desktop_summary","summary":{"needs":1,"remote":true}}"#);
+        let Some(ServerMessage::Summary(on)) = on else {
+            panic!("no es un resumen")
+        };
+        assert!(on.remote);
+        assert_eq!(on.needs, 1);
     }
 
     #[test]
