@@ -6,7 +6,7 @@ Reemplaza el copy-paste entre terminales y el chat que orquesta: los workers le 
 
 No reinventa nada: cada sesión es el `claude` que ya tenés instalado, con tu login, corriendo en modo headless. El dashboard le da una UI y un poco de estructura.
 
-Es 100% local: corre en tu máquina, escucha solo en `127.0.0.1` y no tiene cuentas propias, servicios externos ni telemetría. Lo único que sale a internet es lo que ya hace Claude Code (y `git clone` cuando agregás un marketplace de skills). La [app de escritorio](#actualizaciones) además consulta una vez por día si hay una versión nueva, y eso se apaga.
+Local por defecto: el panel solo escucha en 127.0.0.1. El acceso remoto es opcional (opt-in), solo dentro de tu tailnet de Tailscale, con dispositivos emparejados, sin Funnel ni exposición a internet o a la red local. No tiene cuentas propias, servicios externos ni telemetría. Lo único que sale a internet es lo que ya hace Claude Code (y `git clone` cuando agregás un marketplace de skills). La [app de escritorio](#actualizaciones) además consulta una vez por día si hay una versión nueva, y eso se apaga.
 
 > *A local dashboard to run several Claude Code sessions in parallel, coordinated by an orchestrator session that drafts their prompts for your approval. The docs are in Spanish; issues and PRs in English are welcome.*
 
@@ -15,7 +15,7 @@ Es 100% local: corre en tu máquina, escucha solo en `127.0.0.1` y no tiene cuen
 - **Node.js 24 o más nuevo** (corre TypeScript y SQLite nativos, sin compilar ni dependencias nativas).
 - **Claude Code** instalado y logueado (`claude --version` tiene que andar en la terminal donde levantás el dashboard).
 - **git** (para el resumen de cada proyecto y los marketplaces de skills).
-- Linux, macOS o Windows (en Windows, con `npm start`; la app de escritorio no).
+- Linux, macOS o Windows. En Windows, el dashboard corre con `npm start`; la [app de escritorio](#compilar-en-windows) hay que compilarla (todavía no tiene instalador).
 
 ## Instalación y uso diario
 
@@ -38,9 +38,9 @@ Para desarrollar el dashboard: `npm run dev` (server en 4700 + Vite con recarga 
 
 Una ventana propia para el dashboard, con un ícono en la barra de arriba (Linux) o en la barra de menú (macOS), avisos nativos y arranque al iniciar sesión. Por dentro es el mismo server de siempre: la app lo lanza, o usa el que ya tengas corriendo, y abre su página en `127.0.0.1`.
 
-- Linux (Ubuntu) y macOS. Windows no.
+- Linux (Ubuntu) y macOS, con instalador. Windows: se [compila desde el repo](#compilar-en-windows) (todavía no se publica un instalador).
 - Necesita **Node 24** instalado: la app no lo trae. También Claude Code, igual que el dashboard (ver [Requisitos](#requisitos)).
-- Hay instaladores listos en [Releases](https://github.com/camilo-liotta/control-plane/releases), o se compila desde el repo con un solo comando (ver abajo).
+- En Linux y macOS hay instaladores listos en [Releases](https://github.com/camilo-liotta/control-plane/releases), o se compila desde el repo con un solo comando (ver abajo).
 
 ### Instalar sin compilar
 
@@ -91,6 +91,41 @@ Para desinstalar el `.deb`: `sudo apt remove control-plane`. Lo que queda en tu 
 - Los logs, el estado del server y las copias del AppImage, en `~/.local/share/app.control-plane.desktop/`.
 
 Para sacar todo, con la app cerrada: `rm -rf ~/.config/autostart/control-plane.desktop ~/.config/app.control-plane.desktop ~/.local/share/app.control-plane.desktop`. La base del dashboard (`~/.control-plane`) no es de la app: queda donde está.
+
+### Compilar en Windows
+
+Windows 10 u 11 (la ventana usa WebView2, que ya viene con Windows 11 y con Edge). No hay instalador en Releases: se compila el `.exe` y se abre desde su carpeta.
+
+Hace falta, además de Node 24 y Claude Code:
+
+- **Rust** (`rustup`, toolchain estable para MSVC) y las **Build Tools de Visual Studio** con "Desarrollo de escritorio con C++". Es lo que pide [Tauri en Windows](https://v2.tauri.app/start/prerequisites/#windows).
+
+```powershell
+git clone <url de este repo> control-plane
+cd control-plane
+npm install
+cd desktop
+npx tauri build --no-bundle
+.\src-tauri\target\release\control-plane-desktop.exe
+```
+
+- Abrilo desde esa carpeta: junto al `.exe` queda `app\` con el server y la web, que es donde la app los busca. Para tenerlo a mano, creá un acceso directo al `.exe` (no lo copies solo).
+- Encuentra `node.exe` y `claude` en el PATH de la app (también `claude.cmd`, el de `npm`). Si algo no lo encuentra, elegilo en los ajustes de la app, o definí `CONTROL_PLANE_NODE` / `CLAUDE_BIN` con la ruta completa. Ver [El entorno de tu shell](#el-entorno-de-tu-shell).
+- No uses `npm run dev` en `desktop/`: en ese modo la pantalla local de carga y de errores no se encuentra ("asset not found"). Para probar cambios, volvé a compilar con el comando de arriba. Si querés ver los logs en una consola, compilá con `npx tauri build --debug --no-bundle`: el `.exe` queda en `src-tauri\target\debug\` y abre una consola.
+
+Lo que sí anda en Windows, además de la ventana y el ícono de la barra:
+
+- **Avisos propios**: con la ventana escondida o sin foco, cada aviso del server sale como una tarjeta chica abajo a la derecha del área de trabajo (la barra de tareas queda afuera, esté donde esté). Como mucho tres a la vez, la más nueva contra la esquina; los de la misma sesión o proyecto se reemplazan entre sí. Se van solos a los 8 s (10 s si apuntan a una sesión; 15 s las advertencias, los errores y los que piden abrir algo). Con el puntero encima se pausan. Tocar la tarjeta trae la ventana y abre la sesión; la "x" la cierra sin más. No suenan (el sonido sigue siendo el de la página), no te sacan el foco ni aparecen en la barra de tareas o en Alt-Tab, y no se llegan con el teclado: lo que decían queda en la **Bandeja** de la web. Son ventanas nativas de Windows, sin navegador adentro: sin avisos a la vista no gastan nada (ni ventana, ni hilo, ni timer), y al irse la última se suelta todo. Para verlas sin esperar un aviso de verdad, abrí la app con la variable `CONTROL_PLANE_TEST_TOAST=1` (una tarjeta) o `=3` (tres, de distinto nivel); sin la variable no pasa nada. Ejemplo en PowerShell: `$env:CONTROL_PLANE_TEST_TOAST = "1"; .\src-tauri\target\release\control-plane-desktop.exe`.
+- **Abrir al iniciar sesión**: está en el menú del ícono → **Abrir al iniciar sesión**. Prendido, escribe un valor propio en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (`control-plane`, o `control-plane-dev` en una compilación de desarrollo) con la ruta del `.exe` entre comillas y `--hidden`, y arranca escondida: solo el ícono. No toca ningún otro valor. Si lo apagás en **Configuración → Aplicaciones → Inicio** (o en la pestaña Inicio del Administrador de tareas), la app lo respeta y el menú lo muestra apagado; volver a prenderlo desde la app lo vuelve a habilitar. Si movés el `.exe`, la ruta del valor queda vieja: apagá y prendé de nuevo desde el nuevo lugar. Para sacarlo a mano: `reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v control-plane /f`.
+- **Sonido con la ventana escondida**: la ventana de la app deja sonar sin que toques la página antes (`--autoplay-policy=no-user-gesture-required`), así el sonido de un aviso suena también tras un arranque con `--hidden`. Si en tu equipo no sonara con la ventana escondida, avisá: es un caso que hoy solo se verifica a mano.
+
+Lo que verificar a mano en Windows (no hay prueba automática de cómo se ve o se siente): el aspecto con ClearType y en tema oscuro, tarjetas en monitores con distinto DPI, que escribir en otra aplicación no pierda el foco cuando aparece una tarjeta, que el clic traiga la ventana y abra la sesión, el sonido tras iniciar sesión con `--hidden`, el interruptor del Administrador de tareas, y la memoria, los hilos y los handles del proceso antes y después de mostrar tarjetas.
+
+Lo que todavía no anda en Windows:
+
+- **Actualizar desde la app**: el instalador es un script de `bash`. Para actualizar, `git pull` y volver a compilar.
+- **"Recordar mi elección"** al salir: el diálogo de Windows tiene Sí / No / Cancelar, sin casilla.
+- **Entorno de la shell de login**: en Windows no se lee ninguna shell; el server hereda el entorno de la app.
 
 ### Compilar en Linux
 
@@ -145,7 +180,7 @@ Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--qu
 - Si lo lanzó ella, hace lo que diga **Al salir ▸** en el menú del ícono:
   - **Preguntar** (el default): separa las sesiones que están trabajando, que cortan su turno a la mitad, de las quietas. Por ejemplo: "Hay 2 sesiones trabajando y 1 quieta". Los botones: **Detener y salir**, **Dejarlo corriendo** y **Cancelar**. Si tildás **Recordar mi elección**, tu respuesta queda en **Al salir** (el mismo ajuste del menú) y no vuelve a preguntar. Para que pregunte de nuevo, elegí **Al salir ▸ Preguntar**.
   - **Detener el server**: apagado ordenado. Las sesiones se reanudan cuando les escribís. Si en 15 s no terminó, lo fuerza. "Deteniendo el server…" se ve en la ventana, no en el menú del ícono.
-  - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta.
+  - **Dejarlo corriendo**: la próxima vez que abras la app, lo adopta. Con el [acceso remoto](#acceso-remoto-tailscale) activo, el diálogo avisa que sigue activo mientras el server siga corriendo.
 - `--quit --keep-server` sale sin preguntar y deja el server corriendo, diga lo que diga **Al salir** (el ajuste no cambia).
 - `--quit --restart-for-update` sale sin preguntar y detiene el server, que antes guarda las sesiones activas para que el próximo las retome. Es lo que usan el botón **Actualizar a…**, `get.sh` y `npm run app:install` al actualizar.
 - Al apagar el equipo o cerrar la sesión no pregunta: el sistema le avisa al server y se cierra ordenado.
@@ -155,7 +190,7 @@ Con menú del ícono → Salir, <kbd>⌘</kbd> + <kbd>Q</kbd> en la Mac, o `--qu
 
 El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú (Mac). Acá le decimos **el menú del ícono**, para no confundirlo con la **Bandeja** de la web.
 
-- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". "Te necesitan" es el mismo número que el de la **Bandeja** de la web: las sesiones que te necesitan, las propuestas listas y las tareas que frenan a una sesión. Los dos salen de la misma función (`server/src/shared/inbox-count.ts`). Tocar la línea abre la Bandeja. En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va el mismo número. Cuando algo te necesita, el ícono lleva un punto.
+- La línea de estado: "3 te necesitan · 2 trabajando", "Todo tranquilo" o "Sin conexión con el server". Con el [acceso remoto](#acceso-remoto-tailscale) activo, termina en "· Acceso remoto activo". "Te necesitan" es el mismo número que el de la **Bandeja** de la web: las sesiones que te necesitan, las propuestas listas y las tareas que frenan a una sesión. Los dos salen de la misma función (`server/src/shared/inbox-count.ts`). Tocar la línea abre la Bandeja. En GNOME es la primera línea del menú, porque ahí el ícono no tiene tooltip. En la Mac, al lado del ícono va el mismo número. Cuando algo te necesita, el ícono lleva un punto.
 - El menú: la línea de estado, **Abrir**, **Proyectos**, **Avisos**, **Abrir al iniciar sesión**, **Buscar actualizaciones**, **Buscar ahora**, **Al salir**, **Ver log del server** y **Salir**. Si hay una versión nueva, arriba aparece **Actualizar a vX.Y.Z**.
 - En GNOME hace falta la extensión AppIndicator, que Ubuntu trae activada.
 
@@ -164,6 +199,7 @@ El ícono de control-plane en la barra de arriba (Linux) o en la barra de menú 
 - Dentro de la app, los avisos del sistema los manda la app, no el navegador, y tocarlos te lleva a la sesión. Se prenden y apagan en el menú del ícono → **Avisos**.
 - Si tenés el dashboard abierto también en una pestaña, esa pestaña deja de mandar los suyos mientras la app está conectada, así no se duplican.
 - En Linux los avisos nativos piden no sonar (`suppress-sound`): el sonido lo pone la página, así no suenan dos.
+- En Windows los avisos son tarjetas propias de la app (ver [Compilar en Windows](#compilar-en-windows)): tampoco suenan, el sonido lo pone la página.
 - Los [sonidos](#sonidos) siguen saliendo de la página y se configuran con el parlante de la barra lateral. **Avisos** no los apaga. Dentro de la app esa configuración es propia, aparte de la del navegador.
 
 ### Actualizaciones
@@ -369,7 +405,7 @@ Cada cuenta es un directorio de configuración de Claude Code, el que se elige c
 - **Agregar una cuenta**: selector → **Administrar cuentas…**. Los directorios `~/.claude-*` que ya tengas aparecen detectados.
   - Si tu comando es un alias del tipo `claude-personal` = `CLAUDE_CONFIG_DIR=~/.claude-personal claude`, poné `~/.claude-personal` como directorio y listo.
   - Si es un script que hace algo más, ponelo además en **Comando**. Tiene que ser un ejecutable (en el `PATH` o con ruta completa): los alias y las funciones de la shell no se ven desde el server.
-- **Login**: el dashboard nunca toca credenciales. Si una cuenta figura **Sin login**, abrí una terminal con `CLAUDE_CONFIG_DIR=<directorio> claude`, usá `/login` y después **Volver a verificar los logins**.
+- **Login**: el dashboard nunca toca credenciales. Si una cuenta figura **Sin login**, abrí una terminal con `CLAUDE_CONFIG_DIR=<directorio> claude` (la tarjeta de la cuenta te da el comando listo para copiar), usá `/login` y después **Volver a verificar los logins**. En Windows el comando depende de la terminal: en PowerShell es `$env:CLAUDE_CONFIG_DIR="C:\Users\vos\.claude-x"; claude`, y en Git Bash `CLAUDE_CONFIG_DIR="C:/Users/vos/.claude-x" claude` (con barras normales: una barra invertida la toma como escape y `claude` crea una carpeta con otro nombre).
 - Una cuenta con proyectos activos no se puede quitar: archivá sus proyectos antes. La de siempre no se quita.
 
 ## Herramientas: skills, plugins y MCP
@@ -408,6 +444,68 @@ Selector de cuenta → **Configuración de Claude Code** muestra las opciones de
 - Claude Code relee `settings.json` solo, así que las sesiones abiertas toman el cambio sin reiniciarse (el modelo por defecto aplica a las sesiones nuevas). Lo de `.claude.json` aplica la próxima vez que abras Claude Code.
 - Las marcadas **en la terminal** solo se notan en la terminal (tema, vim, barra de progreso…).
 - Se cambia solo esa clave: el resto del archivo queda igual. Si el archivo no es JSON válido, no se toca y te avisa; si es un symlink (dotfiles), se escribe el archivo real.
+
+## Acceso remoto (Tailscale)
+
+Para usar el dashboard desde el celular (o desde otra compu) como si estuvieras frente a la máquina donde corre control-plane. Es **opcional y viene apagado**: sin prenderlo, el panel solo escucha en `127.0.0.1`, no se abre ningún otro puerto y no se ejecuta ningún comando de Tailscale. Cuando lo prendés, solo entran los dispositivos de **tu** tailnet que vincules a mano: no se abre a internet ni a tu red local.
+
+> Es una función nueva. Se probó con tests y con un Tailscale simulado; si con tu versión de Tailscale algo no anda, abrí un issue con el mensaje exacto que muestra el diálogo.
+
+### Qué necesitás
+
+1. **Tailscale** en la máquina que corre control-plane **y** en el celu (app de Tailscale en App Store o Google Play), con la **misma cuenta**. En la máquina, versión **1.52 o más** (`tailscale version`).
+2. En la [consola de administración de Tailscale](https://login.tailscale.com/admin/dns): **MagicDNS** prendido y, más abajo, **HTTPS Certificates** → *Enable HTTPS*. Sin HTTPS, `tailscale serve` no publica nada.
+3. **Linux**: permitir que tu usuario use `tailscale serve` sin sudo, una sola vez: `sudo tailscale set --operator=$USER`. control-plane nunca corre sudo por vos. En Windows y macOS no hace falta.
+
+### Paso a paso
+
+1. Fijate que Tailscale esté conectado en la máquina (`tailscale status`) y en el celu.
+2. En control-plane: **Ajustes → Acceso remoto → Permitir acceso desde tu tailnet**. Lee el aviso y confirmá. El diálogo muestra el estado de Tailscale y, si falta algo, qué es (ver [qué hacer si falla](#si-algo-falla)).
+3. Tocá **Crear enlace** (si querés, ponele un nombre, por ejemplo "Celu") y **Copiar enlace**. El enlace es de **un solo uso** y vence a los **5 minutos**.
+4. Pasalo al celu (un mensaje a vos mismo, AirDrop, un correo) y abrilo en el navegador del celu, **con Tailscale conectado**. Tocá **Vincular**.
+5. Listo: el celu queda vinculado. Desde ahí entrás siempre por la misma dirección, que podés guardar en favoritos o agregar a la pantalla de inicio: `https://<tu-equipo>.<tu-tailnet>.ts.net:8443/` (el diálogo te la muestra mientras está prendido).
+
+Si el celu no abre el enlace, es casi siempre porque Tailscale no está conectado en el celu o porque HTTPS no está habilitado en tu tailnet.
+
+### Qué se puede hacer desde el otro dispositivo
+
+Hay un nivel para todo el acceso (el techo) y cada dispositivo puede tener el suyo; **vale el menor**. Arrancás en **Ver** y subís solo lo que necesitás.
+
+| Nivel | Qué permite |
+| --- | --- |
+| **Ver** (el de fábrica) | Proyectos, sesiones y conversaciones, sin las rutas de tu máquina ni los comandos de las apps. |
+| **Ver y responder** | Además: mandar mensajes (sin adjuntos), contestar preguntas, rechazar permisos, interrumpir, editar el título y el prompt de un borrador y enviarlo o descartarlo, cancelar lo programado, pausar o cancelar un plan y salir de AFK. |
+| **Control** | Además: iniciar y detener sesiones, aprobar permisos, ponerse AFK y reanudar planes. Subir a Control pide una confirmación en la máquina. |
+
+**Nunca** están disponibles desde otro dispositivo, en ningún nivel: la terminal, abrir archivos o el editor, las credenciales, las cuentas y la configuración de Claude Code, las herramientas (MCP, skills, CLIs), crear o borrar proyectos y apagar o reiniciar el server. Con **Pedir confirmación en esta máquina para comandos (Bash)** prendido (lo normal), aprobar Bash y PowerShell solo se puede desde la máquina del server.
+
+> **Responder o controlar equivale a ejecutar comandos.** Las sesiones corren con `--dangerously-skip-permissions` (junto con `--permission-prompt-tool stdio`; ver [Cómo funciona por dentro](#cómo-funciona-por-dentro)): cualquier mensaje que llegue a una sesión puede terminar ejecutando comandos en tu máquina sin pedir confirmación. Vinculá solo dispositivos tuyos y dales el nivel mínimo. La confirmación de Bash y PowerShell solo cubre los pocos pedidos de permiso que sí aparecen.
+
+### Seguridad y control
+
+- **Cómo se publica**: el server abre un puerto aparte, solo en `127.0.0.1` (por defecto el 4710, `CONTROL_PLANE_REMOTE_PORT`) y `tailscale serve` lo expone por HTTPS en el puerto 8443 (nunca el 443) dentro de tu tailnet. Un pedido es "remoto" por el puerto por el que llegó, no por lo que diga el encabezado `Host`. Nunca usa Funnel, nunca `serve reset` y nunca toca una publicación de Tailscale que no sea suya.
+- **Dispositivos**: cada uno recibe su propia cookie al vincularse. **Revocar** saca uno; **Revocar todos** saca todos. Desde el dispositivo, **Salir** cierra su sesión. Sin vincular no se ve nada.
+- **Cortarlo**: **Cortar acceso ahora** cierra todo al instante, sin esperar a Tailscale. Apagar el interruptor deja de publicar, pero los dispositivos quedan vinculados hasta que los revoques.
+- **Indicador**: mientras está prendido, la web muestra **Acceso remoto activo** y el ícono de la app de escritorio lo suma a su línea de estado. Si al salir de la app elegís **Dejarlo corriendo**, el acceso sigue activo mientras el server siga corriendo.
+- **Límites**: mensajes y envíos de borradores, 20 por minuto y 200 por hora por dispositivo; ediciones de borradores, 60 por minuto; respuestas a permisos, 30 por minuto; acciones de control, 10 por minuto; 60 escrituras por minuto en total. Pasados los límites, el server responde 429. Cinco intentos de vincular con un enlace inválido bloquean el vinculado de dispositivos por 10 minutos (el conteo es global, no por dispositivo).
+- **Auditoría**: la pestaña **Auditoría** (solo desde la máquina) muestra qué pasó, desde qué dispositivo y con qué resultado, durante 30 días o hasta 10.000 hechos. Nunca guarda mensajes, textos de borradores, comandos, cookies ni enlaces; de un permiso guarda la herramienta y una huella corta del pedido.
+
+### Si algo falla
+
+El diálogo **Acceso remoto** dice qué pasó. Los casos más comunes:
+
+| Mensaje | Qué hacer |
+| --- | --- |
+| No se encontró Tailscale | Instalalo, o poné la ruta completa en `CONTROL_PLANE_TAILSCALE_BIN` si está en un lugar poco común. |
+| Tailscale está detenido, o pide iniciar sesión | Abrí Tailscale y conectate / iniciá sesión. |
+| Tailscale es demasiado viejo | Actualizalo a 1.52 o más. |
+| HTTPS no está habilitado en tu tailnet | Activalo en la [consola](https://login.tailscale.com/admin/dns) (*HTTPS Certificates → Enable HTTPS*). |
+| No se pudo publicar (permiso denegado) | En Linux: `sudo tailscale set --operator=$USER` y probá de nuevo. |
+| El puerto ya lo usa otra publicación | Tenés otra publicación de `tailscale serve` en el 8443. control-plane no la toca: sacala vos o liberá el puerto. |
+| El enlace no vincula | Ya se usó o venció (5 minutos): creá otro. Con 5 intentos fallidos seguidos, esperá 10 minutos. |
+| El celu abre pero no se actualiza en vivo | Recargá la página; si sigue, revisá que Tailscale esté conectado en el celu. |
+
+Si control-plane quedó con una publicación propia colgada (por ejemplo, si la máquina se apagó en medio de prenderlo), se limpia sola al volver a arrancar el server. A mano: `tailscale serve --https=8443 off`. No uses `tailscale serve reset`: borra también tus otras publicaciones.
 
 ## Cómo funciona por dentro
 
@@ -454,6 +552,8 @@ Variables de entorno (opcionales):
 | `CONTROL_PLANE_HOST` | `127.0.0.1` | Interfaz donde escucha (dejalo en localhost) |
 | `CONTROL_PLANE_HOME` | `~/.control-plane` | Base de datos local y `run/` (archivos de lanzamiento de las sesiones) |
 | `CONTROL_PLANE_WEB_DIST` | `web/dist` | La web compilada que sirve el server (para probar otra build sin tocar la tuya) |
+| `CONTROL_PLANE_REMOTE_PORT` | `4710` | Puerto del [acceso remoto](#acceso-remoto-tailscale) (apagado por defecto). Solo existe mientras el acceso remoto está prendido y escucha únicamente en `127.0.0.1`; tiene que ser distinto de `CONTROL_PLANE_PORT` |
+| `CONTROL_PLANE_TAILSCALE_BIN` | el `tailscale` del PATH | Ruta completa del binario de Tailscale para el acceso remoto, si no lo encuentra solo (PATH y las carpetas habituales de cada sistema) |
 | `CLAUDE_BIN` | `claude` | Binario de Claude Code (para las cuentas sin comando propio) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directorio de la cuenta de siempre, si levantás el server con otro |
 | `CONTROL_PLANE_COMPACT_HOOK` | `server/src/claude/compact-hook.mjs` | Script del hook de compactación que corren las sesiones (uso interno de la app de escritorio) |

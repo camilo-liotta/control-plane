@@ -134,6 +134,7 @@ Todos los textos que ve el usuario siguen esto: la web, los avisos que arma el s
 | **Detener** y **Reanudar** | El proceso de la sesión. Reanudar retoma la misma conversación. | "Sesión detenida", "Sesión reanudada" | detener una sesión, detener todas |
 | **Levantar**, **Bajar** y **Reiniciar** | Las apps del proyecto. | "web levantada", "No se pudo levantar api" | Apps |
 | **Hecha** y **No hace falta** | Cerrar una tarea para vos. | "Tarea hecha", "Tarea cerrada: no hace falta" | Tareas para vos |
+| **Revocar** | Cortar el acceso de un dispositivo vinculado al acceso remoto. Deja de entrar al instante y para volver hay que vincularlo de nuevo. Siempre con `ConfirmAction`. | "Acceso revocado: <dispositivo>" | dispositivos del Acceso remoto |
 
 No se usan: **Eliminar** (es Borrar), **Iniciar** para sesiones (es Reanudar) ni **Cancelar** como acción. Cancelar es solo el botón que cierra un diálogo sin hacer nada; lo programado se cancela con "Cancelar lo programado".
 
@@ -148,6 +149,7 @@ No se usan: **Eliminar** (es Borrar), **Iniciar** para sesiones (es Reanudar) ni
 - **Ajustes** y **Ajustes del proyecto**: "Ajustes" son los del dashboard entero (el engranaje de la barra lateral: el editor); "Ajustes del proyecto" son los de un proyecto (modelos, orquestación). Se llega desde el menú ⋯ de la fila del proyecto, el del tablero, el engranaje y la paleta. No se usa "Configuración" para esto (la "Configuración de Claude Code" es otra cosa).
 - **AFK**: un proyecto en el que la orquestadora envía sus propuestas sin esperar tu aprobación, hasta una hora o un tope de gasto. No es una alarma: va neutro (nunca ámbar), con la palabra "AFK" y, en el `title`, hasta cuándo. Se entra con "Ponerse AFK…" (menú ⋯ de la fila, ajustes del proyecto, paleta) y se sale con "Volver".
 - **Herramientas, Entornos, Apps, Programado**: con mayúscula, porque son nombres de secciones.
+- **Acceso remoto**: entrar al dashboard desde otro dispositivo de la tailnet de Tailscale. Está apagado por defecto. Un **dispositivo** se **vincula** con un enlace de un solo uso (**Copiar enlace**), tiene un **nivel** (**Ver**, **Ver y responder**, **Control**) y se **revoca**. **Cortar acceso ahora** cierra todo al instante y deja los dispositivos vinculados.
 
 ### "Te necesita" y "te espera"
 Una sola regla en toda la app. Los predicados están en `@shared/inbox-count`:
@@ -174,6 +176,17 @@ Una sola regla en toda la app. Los predicados están en `@shared/inbox-count`:
   - en los lugares de lectura (tarjetas, encabezados, filas, el título de un panel) va **el nombre de la carpeta**, en la voz de la UI (`basename()` de `lib/format`);
   - la ruta completa va en el `title` y en el detalle;
   - la ruta en `font-mono` solo cuando es el dato en sí: un comando, el archivo que tocó una herramienta, el campo donde se escribe.
+
+## Acceso remoto
+
+Lo que ve y puede hacer la web depende de desde dónde se entra (`lib/access.ts`): desde esta máquina, todo; desde otro dispositivo, lo que permita su nivel.
+
+- **`useCan("view" | "respond" | "control" | "manage")`** decide qué controles se muestran. `manage` es solo de esta máquina (terminal, editor, credenciales, cuentas, herramientas, apps, crear o borrar proyectos y sesiones, Acceso remoto). Ocultar un control es una ayuda de uso: **el server siempre decide**, así que nunca hace falta chequear en la web "por seguridad".
+- **Se esconde, no se deshabilita**, lo que desde ese dispositivo no existe (un botón gris que nunca se va a poder usar es ruido). Lo que existe pero pide más nivel se explica en su lugar, por ejemplo "Se aprueba desde la máquina del server".
+- **El aviso permanente** va en una franja neutra (tono `idle`, nunca ámbar: no es una alarma) arriba de la hoja, con `<Banner>`. Desde esta máquina: "Acceso remoto activo · 2 dispositivos" y **Administrar**. Desde otro dispositivo: "Desde Celu de Ana · Ver".
+- **Errores del acceso remoto**: `request()` (`lib/api.ts`) los traduce de sus códigos `remote_*` a un aviso en castellano ("No se pudo: este dispositivo no tiene permiso para esa acción."). Un 401 lleva a la pantalla de vinculación (`pair-device.tsx`).
+- **Pantalla de vinculación**: una tarjeta centrada con un solo botón, **Vincular**. No canjea el enlace sola al abrir: así un adelanto de enlace no lo gasta.
+- **El diálogo "Acceso remoto"** sigue a `afk-dialog.tsx`: filas con `Switch`, un título y su detalle en `text-2xs`. Prender pide confirmación con `ConfirmAction` (`destructive={false}`) y deja dicho que las sesiones corren sin pedir permisos. El nivel (**Ver**, **Ver y responder**, **Control**) se elige con un `Select` para todo el acceso y otro por dispositivo; subir a **Control** pide otra confirmación con `ConfirmAction` (el texto está en `CONTROL_CONFIRM_COPY`, `@shared/remote-access`). La pestaña **Auditoría** lista lo que pasó sin ningún contenido, y **Revocar todos…** pide confirmación. **Cortar acceso ahora** va en `outline` y sin confirmación: es la salida de emergencia y no tiene que costar un clic de más. Del enlace de vinculación se ve el texto y se copia con **Copiar enlace**; no hay código QR.
 
 ## Acciones que pegan al server
 
