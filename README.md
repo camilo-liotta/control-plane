@@ -94,7 +94,7 @@ Para sacar todo, con la app cerrada: `rm -rf ~/.config/autostart/control-plane.d
 
 ### Compilar en Windows
 
-Windows 10 u 11 (la ventana usa WebView2, que ya viene con Windows 11 y con Edge). No hay instalador en Releases: se compila el `.exe` y se abre desde su carpeta.
+Windows 10 u 11 (la ventana usa WebView2, que ya viene con Windows 11 y con Edge). Todavía no hay instalador en Releases: cada uno compila el `.exe` en su máquina y lo abre desde su carpeta. Es un solo comando, `npm run app:build`.
 
 Hace falta, además de Node 24 y Claude Code:
 
@@ -104,18 +104,32 @@ Hace falta, además de Node 24 y Claude Code:
 git clone <url de este repo> control-plane
 cd control-plane
 npm install
-cd desktop
-npx tauri build --no-bundle
-.\src-tauri\target\release\control-plane-desktop.exe
+npm run app:build
+.\desktop\src-tauri\target\release\control-plane-desktop.exe
 ```
+
+La primera vez tarda varios minutos (compila Tauri y todas sus dependencias); las siguientes, bastante menos.
+
+#### Recompilar después de actualizar
+
+Cada vez que traés cambios (o cambiás código), la app no se actualiza sola: hay que volver a compilarla.
+
+```powershell
+git pull
+npm install
+# Cerrá la app antes (ícono de la barra → Salir): Windows no deja reemplazar un .exe abierto.
+npm run app:build
+```
+
+Si `app:build` falla al final con "acceso denegado" o "el proceso no puede obtener acceso al archivo", es casi siempre porque la app seguía abierta. Si querés ver los logs en una consola, usá `npm run app:build:debug`: el `.exe` queda en `desktop\src-tauri\target\debug\` y abre una consola.
 
 - Abrilo desde esa carpeta: junto al `.exe` queda `app\` con el server y la web, que es donde la app los busca. Para tenerlo a mano, creá un acceso directo al `.exe` (no lo copies solo).
 - Encuentra `node.exe` y `claude` en el PATH de la app (también `claude.cmd`, el de `npm`). Si algo no lo encuentra, elegilo en los ajustes de la app, o definí `CONTROL_PLANE_NODE` / `CLAUDE_BIN` con la ruta completa. Ver [El entorno de tu shell](#el-entorno-de-tu-shell).
-- No uses `npm run dev` en `desktop/`: en ese modo la pantalla local de carga y de errores no se encuentra ("asset not found"). Para probar cambios, volvé a compilar con el comando de arriba. Si querés ver los logs en una consola, compilá con `npx tauri build --debug --no-bundle`: el `.exe` queda en `src-tauri\target\debug\` y abre una consola.
+- No uses `npm run dev` en `desktop/`: en ese modo la pantalla local de carga y de errores no se encuentra ("asset not found"). Para probar cambios, [volvé a compilar](#recompilar-después-de-actualizar).
 
 Lo que sí anda en Windows, además de la ventana y el ícono de la barra:
 
-- **Avisos propios**: con la ventana escondida o sin foco, cada aviso del server sale como una tarjeta chica abajo a la derecha del área de trabajo (la barra de tareas queda afuera, esté donde esté). Como mucho tres a la vez, la más nueva contra la esquina; los de la misma sesión o proyecto se reemplazan entre sí. Se van solos a los 8 s (10 s si apuntan a una sesión; 15 s las advertencias, los errores y los que piden abrir algo). Con el puntero encima se pausan. Tocar la tarjeta trae la ventana y abre la sesión; la "x" la cierra sin más. No suenan (el sonido sigue siendo el de la página), no te sacan el foco ni aparecen en la barra de tareas o en Alt-Tab, y no se llegan con el teclado: lo que decían queda en la **Bandeja** de la web. Son ventanas nativas de Windows, sin navegador adentro: sin avisos a la vista no gastan nada (ni ventana, ni hilo, ni timer), y al irse la última se suelta todo. Para verlas sin esperar un aviso de verdad, abrí la app con la variable `CONTROL_PLANE_TEST_TOAST=1` (una tarjeta) o `=3` (tres, de distinto nivel); sin la variable no pasa nada. Ejemplo en PowerShell: `$env:CONTROL_PLANE_TEST_TOAST = "1"; .\src-tauri\target\release\control-plane-desktop.exe`.
+- **Avisos propios**: con la ventana escondida o sin foco, cada aviso del server sale como una tarjeta chica abajo a la derecha del área de trabajo (la barra de tareas queda afuera, esté donde esté). Como mucho tres a la vez, la más nueva contra la esquina; los de la misma sesión o proyecto se reemplazan entre sí. Se van solos a los 8 s (10 s si apuntan a una sesión; 15 s las advertencias, los errores y los que piden abrir algo). Con el puntero encima se pausan. Tocar la tarjeta trae la ventana y abre la sesión; la "x" la cierra sin más. No suenan (el sonido sigue siendo el de la página), no te sacan el foco ni aparecen en la barra de tareas o en Alt-Tab, y no se llegan con el teclado: lo que decían queda en la **Bandeja** de la web. Son ventanas nativas de Windows, sin navegador adentro: sin avisos a la vista no gastan nada (ni ventana, ni hilo, ni timer), y al irse la última se suelta todo. Para verlas sin esperar un aviso de verdad, abrí la app con la variable `CONTROL_PLANE_TEST_TOAST=1` (una tarjeta) o `=3` (tres, de distinto nivel); sin la variable no pasa nada. Ejemplo en PowerShell, desde la raíz del repo: `$env:CONTROL_PLANE_TEST_TOAST = "1"; .\desktop\src-tauri\target\release\control-plane-desktop.exe`.
 - **Abrir al iniciar sesión**: está en el menú del ícono → **Abrir al iniciar sesión**. Prendido, escribe un valor propio en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (`control-plane`, o `control-plane-dev` en una compilación de desarrollo) con la ruta del `.exe` entre comillas y `--hidden`, y arranca escondida: solo el ícono. No toca ningún otro valor. Si lo apagás en **Configuración → Aplicaciones → Inicio** (o en la pestaña Inicio del Administrador de tareas), la app lo respeta y el menú lo muestra apagado; volver a prenderlo desde la app lo vuelve a habilitar. Si movés el `.exe`, la ruta del valor queda vieja: apagá y prendé de nuevo desde el nuevo lugar. Para sacarlo a mano: `reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v control-plane /f`.
 - **Sonido con la ventana escondida**: la ventana de la app deja sonar sin que toques la página antes (`--autoplay-policy=no-user-gesture-required`), así el sonido de un aviso suena también tras un arranque con `--hidden`. Si en tu equipo no sonara con la ventana escondida, avisá: es un caso que hoy solo se verifica a mano.
 
@@ -123,7 +137,7 @@ Lo que verificar a mano en Windows (no hay prueba automática de cómo se ve o s
 
 Lo que todavía no anda en Windows:
 
-- **Actualizar desde la app**: el instalador es un script de `bash`. Para actualizar, `git pull` y volver a compilar.
+- **Actualizar desde la app**: el instalador es un script de `bash`. Para actualizar, [recompilá](#recompilar-después-de-actualizar).
 - **"Recordar mi elección"** al salir: el diálogo de Windows tiene Sí / No / Cancelar, sin casilla.
 - **Entorno de la shell de login**: en Windows no se lee ninguna shell; el server hereda el entorno de la app.
 
