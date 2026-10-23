@@ -125,6 +125,10 @@ pub(crate) fn request(
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
         Ok(s) => s,
+        // En Windows, conectar a un puerto de loopback sin nadie no da ConnectionRefused al instante:
+        // reintenta y vence el plazo. Un server que escucha pero no contesta sí conecta y vence al leer.
+        #[cfg(windows)]
+        Err(e) if e.kind() == ErrorKind::TimedOut => return Get::Refused,
         Err(e) if e.kind() == ErrorKind::TimedOut => return Get::Timeout,
         Err(_) => return Get::Refused,
     };

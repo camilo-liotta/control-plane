@@ -1,4 +1,4 @@
-import { ChevronRight, Settings, Settings2 } from "lucide-react"
+import { ChevronRight, Globe, Settings, Settings2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { useLocation } from "wouter"
@@ -127,6 +127,23 @@ export function SettingsMenu() {
             </span>
             <Switch checked={resume} onCheckedChange={(v) => void setResume(v)} aria-label="Retomar las sesiones cuando se renueva el uso" />
           </label>
+        </div>
+        <div className="space-y-1.5 border-t pt-3">
+          <p className="eyebrow">Acceso remoto</p>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              setUi({ remoteDialog: true })
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Globe className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">Acceso remoto</span>
+              <span className="block text-2xs text-muted-foreground">Estado de Tailscale y dispositivos</span>
+            </span>
+          </button>
         </div>
         <div className="space-y-1.5 border-t pt-3">
           <p className="eyebrow">Ajustes del proyecto</p>

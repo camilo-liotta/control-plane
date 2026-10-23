@@ -39,6 +39,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::desktop_ws::{Local, Toast};
 use crate::launch_env::LaunchEnv;
 use crate::policy::{self, UpdateStart};
+use crate::sys;
 use crate::AppState;
 
 /// De dónde salen las versiones. Un fork lo cambia acá.
@@ -828,28 +829,20 @@ fn spawn_installer<R: Runtime>(
     if let Some((k, v)) = installer_locale() {
         cmd.env(k, v);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // Sesión propia: no se corta cuando la app sale (get.sh la cierra y la vuelve a abrir).
-        // SAFETY: setsid es async-signal-safe y no toca memoria del padre.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-    }
-    cmd.spawn()
-        .map_err(|e| format!("No se pudo lanzar el instalador: {e}"))
+    // Sesión propia: no se corta cuando la app sale (get.sh la cierra y la vuelve a abrir).
+    sys::detach(&mut cmd);
+    sys::spawn_detached(&mut cmd).map_err(|e| format!("No se pudo lanzar el instalador: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::io::{Read, Write};
+    #[cfg(unix)]
     use std::net::TcpListener;
 
+    #[cfg(unix)]
     #[test]
     fn installer_env_has_the_login_path_and_the_node_and_nothing_internal() {
         use crate::login_env::{server_env, LoginEnv};
@@ -1142,6 +1135,7 @@ mod tests {
     }
 
     /// Contra un server HTTP falso local (nunca contra GitHub): curl real, parseo y comparación.
+    #[cfg(unix)]
     #[test]
     fn asks_a_local_fake_server() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

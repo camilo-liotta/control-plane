@@ -17,6 +17,7 @@ import { ChangesSection } from "@/components/session-changes"
 import { Button } from "@/components/ui/button"
 import { LoadError } from "@/components/ui/load-error"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 import { basename, timeAgo, tokens, tokensFull, usd } from "@/lib/format"
 import { costsByModel, effortName, modelLabel, projectDefaults } from "@/lib/models"
@@ -63,6 +64,7 @@ const TASK_STATE: Record<Session["taskState"], string> = {
 }
 
 export function SessionPanel({ session, project }: { session: Session; project: Project }) {
+  const manage = useCan("manage")
   const allDrafts = useStore((s) => s.drafts)
   const allReports = useStore((s) => s.reports)
   const events = useStore((s) => s.events[session.id])
@@ -221,13 +223,15 @@ export function SessionPanel({ session, project }: { session: Session; project: 
           </div>
         </Section>
       )}
-      <Section id="tools" title="Herramientas" summary="MCP, skills y plugins">
-        <Button size="sm" variant="secondary" className="w-full justify-start" onClick={() => useUi.getState().set({ toolsFor: session.id })}>
-          <Blocks className="text-muted-foreground" />
-          <span className="flex-1 text-left">Ver lo que tiene cargado</span>
-          <ChevronRight className="text-muted-foreground" />
-        </Button>
-      </Section>
+      {manage && (
+        <Section id="tools" title="Herramientas" summary="MCP, skills y plugins">
+          <Button size="sm" variant="secondary" className="w-full justify-start" onClick={() => useUi.getState().set({ toolsFor: session.id })}>
+            <Blocks className="text-muted-foreground" />
+            <span className="flex-1 text-left">Ver lo que tiene cargado</span>
+            <ChevronRight className="text-muted-foreground" />
+          </Button>
+        </Section>
+      )}
       <Section id="details" title="Detalles" summary={modelText}>
         <dl>
           {session.role && <Detail label="Rol">{session.role}</Detail>}
@@ -280,13 +284,15 @@ export function SessionPanel({ session, project }: { session: Session; project: 
             {timeAgo(session.createdAt)}
           </Detail>
         </dl>
-        <div className="mt-3 space-y-1.5">
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <TerminalSquare className="size-3.5 shrink-0" />
-            Para seguirla en una terminal, detenela acá primero:
-          </p>
-          <CopyLine label="Copiar comando" value={resume} />
-        </div>
+        {manage && (
+          <div className="mt-3 space-y-1.5">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <TerminalSquare className="size-3.5 shrink-0" />
+              Para seguirla en una terminal, detenela acá primero:
+            </p>
+            <CopyLine label="Copiar comando" value={resume} />
+          </div>
+        )}
       </Section>
     </div>
   )

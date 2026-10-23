@@ -2,7 +2,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import type { FastifyInstance, FastifyReply } from "fastify"
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 
 import type { Accounts } from "./accounts.ts"
 import type { Apps } from "./apps.ts"
@@ -27,11 +27,12 @@ import type { Clis } from "./clis.ts"
 import type { UserTasks } from "./user-tasks.ts"
 import type { Environments } from "./environments.ts"
 import type { SkillMarket } from "./skill-market.ts"
+import { redactSnapshot } from "./remote/redact.ts"
 import { checkModelChoice } from "./shared/models.ts"
 import type { AppInput, AppSettings, ClaudeSettingValue, EditorSettings, ProjectSettings, SkillState, Snapshot } from "./shared/types.ts"
 import { errorMessage, now, sanitizeSessionName, shortId, slug } from "./util.ts"
 
-interface Deps {
+export interface Deps {
   db: Db
   hub: Hub
   sessions: SessionManager
@@ -48,6 +49,8 @@ interface Deps {
   environments: Environments
   editor: Editor
   apps: Apps
+  /** Si el pedido entró por el listener remoto: ahí el snapshot sale redactado (ver remote/redact.ts). */
+  isRemote?: (req: FastifyRequest) => boolean
 }
 
 /** Tipos que se pueden mostrar en el navegador sin riesgo; el resto se descarga o se ve como texto. */
@@ -295,7 +298,7 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
     return p
   }
 
-  app.get("/api/snapshot", async () => snapshot(deps))
+  app.get("/api/snapshot", async (req) => (deps.isRemote?.(req) ? redactSnapshot(snapshot(deps)) : snapshot(deps)))
 
   // Autocompletado de carpetas para elegir el repo.
   app.get<{ Querystring: { path?: string } }>("/api/fs/suggest", async (req) => {
@@ -801,6 +804,13 @@ export function registerApi(app: FastifyInstance, deps: Deps) {
         })
       })
   )
+
+  app.post<AccountParams>("/api/accounts/:id/engram/install", async (req, reply) => {
+    if (!accounts.get(req.params.id)) return reply.code(404).send({ error: "La cuenta no existe" })
+    const result = await guard(reply, () => tools.installEngram(req.params.id))
+    broadcastAccount(req.params.id)
+    return result
+  })
 
   app.get<AccountParams>("/api/accounts/:id/marketplaces", (req, reply) =>
     guard(reply, () => tools.marketplaces(requireAccount(req.params.id).id))

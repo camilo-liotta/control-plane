@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import fs from "node:fs"
+import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -9,30 +10,28 @@ import fastifyWebsocket from "@fastify/websocket"
 import Fastify from "fastify"
 
 import { Accounts } from "./accounts.ts"
-import { registerApi, snapshot } from "./api.ts"
+import { snapshot } from "./api.ts"
 import { AttachmentStore } from "./attachments.ts"
 import { Compaction } from "./compaction.ts"
 import { config, repoUrl, version } from "./config.ts"
+import { missingClaudeMessage } from "./claude/bin.ts"
 import { listLiveSessions, transcriptDir, type LiveSession } from "./claude/local.ts"
 import { cleanRunRoot, runRootOf } from "./claude/run-files.ts"
 import { Db, type SessionRecord } from "./db.ts"
 import { desktopSummary } from "./desktop.ts"
 import { Apps } from "./apps.ts"
 import { Editor } from "./editor.ts"
-import { localOnly, registerHealth, registerWs } from "./http.ts"
+import { localOnly } from "./http.ts"
 import { acquireLock, LockError } from "./lock.ts"
-import { registerRestart, Restart, resumeSummary } from "./restart.ts"
+import { Restart, resumeSummary } from "./restart.ts"
 import { sessionChoice } from "./shared/models.ts"
 import type { ExternalSession, Meta } from "./shared/types.ts"
 import { Hub } from "./hub.ts"
-import { registerMcp } from "./mcp.ts"
 import { Terminals } from "./terminal/manager.ts"
-import { registerTerminal } from "./terminal/routes.ts"
 import { Afk } from "./afk.ts"
 import { UsageLimits } from "./limit.ts"
 import { Orchestration } from "./orchestration.ts"
 import { orchestratorProtocol, workerProtocol } from "./prompts.ts"
-import { decideSend, SEND_DENIED, withRecipient, type SendDecision, type SendGuardDeps } from "./send-guard.ts"
 import { SessionManager } from "./sessions.ts"
 import { Overview } from "./overview.ts"
 import { CliUsage } from "./cli-usage.ts"
@@ -41,6 +40,11 @@ import { UserTasks } from "./user-tasks.ts"
 import { Environments } from "./environments.ts"
 import { SkillMarket } from "./skill-market.ts"
 import { Tools } from "./tools.ts"
+import { registerRemoteHeaders } from "./remote/gate.ts"
+import { applyPolicy } from "./remote/policy.ts"
+import { createRemote } from "./remote/setup.ts"
+import { registerRoutes } from "./routes.ts"
+import { defaultRunner, locateTailscale, Tailscale } from "./tailscale.ts"
 
 async function claudeVersion(): Promise<string | null> {
   try {
@@ -54,7 +58,7 @@ async function claudeVersion(): Promise<string | null> {
 async function main() {
   const cliVersion = await claudeVersion()
   if (!cliVersion) {
-    console.error(`No encontré el binario de Claude Code ("${config.claudeBin}"). Instalalo o definí CLAUDE_BIN.`)
+    console.error(missingClaudeMessage(config.claudeBin))
     process.exit(1)
   }
 
@@ -250,72 +254,58 @@ async function main() {
   }
   const environments = new Environments({ db, hub, sessions, app: appView })
   const deps = { db, hub, sessions, orchestration, afk, attachments, accounts, compaction, tools, overview: new Overview(db), skillMarket, clis, tasks, environments, editor: new Editor({ home: config.home }), apps }
-  hub.setSummary(() => desktopSummary(deps))
+  // `remote` se crea más abajo: se lee recién al armar cada resumen.
+  hub.setSummary(() => desktopSummary({ ...deps, remote: () => remote.control.active }))
 
-  // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
-  const app = Fastify({ logger: false, bodyLimit: 45 * 1024 * 1024 })
-
-  localOnly(app, config.port, config.devOrigins)
-
-  await app.register(fastifyWebsocket)
-  registerWs(app, hub, () => ({ type: "hello", snapshot: snapshot(deps) }))
-  const restart = new Restart({ home: config.home, version, sessions, hub, apps })
-  registerHealth(app, { version, port: config.port, startedAt, launchId: config.launchId }, () => restart.resuming)
-  registerRestart(app, restart)
-
-  registerApi(app, deps)
-  registerMcp(app, deps)
-  // La terminal de cada sesión (ver terminal/routes.ts: solo desde el dashboard, con token).
-  const terminals = new Terminals({ sessionAlive: (id) => !!db.getSession(id) && !db.getSession(id)!.archivedAt })
-  registerTerminal(app, { db, terminals, port: config.port, extraOrigins: config.production ? [] : config.devOrigins })
-
-  // Hooks de compactación de las sesiones (los llama compact-hook.mjs, desde esta máquina).
-  app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/compact", async (req, reply) => {
-    const onClose = (cb: () => void) => reply.raw.on("close", () => !reply.raw.writableFinished && cb())
-    const text = await compaction
-      .hook(req.params.token, req.body && typeof req.body === "object" ? req.body : {}, onClose)
-      .catch(() => "")
-    return reply.type("text/plain; charset=utf-8").send(text)
+  // El listener remoto (solo mientras el acceso remoto está activo) reusa el handler de este Fastify.
+  let requestHandler: http.RequestListener | null = null
+  const app = Fastify({
+    logger: false,
+    // Los adjuntos viajan en base64 dentro del JSON: el límite cubre archivos de hasta 30 MB.
+    bodyLimit: 45 * 1024 * 1024,
+    serverFactory: (handler) => {
+      requestHandler = handler as http.RequestListener
+      return http.createServer(handler as http.RequestListener)
+    },
+  })
+  const tailscale = new Tailscale({ run: defaultRunner, locate: () => locateTailscale(), mainPort: config.port })
+  const remote = createRemote({
+    app,
+    handler: () => requestHandler!,
+    db,
+    hub,
+    tailscale,
+    mainPort: config.port,
+    localPort: config.remotePort,
+    snapshot: () => snapshot(deps),
+    pendingPermission: (sid, rid) => sessions.pendingPermission(sid, rid),
   })
 
-  // El cerrojo de SendMessage (PreToolUse): solo deja escribirle a sesiones del propio proyecto.
-  // Responde 200 vacío para dejar pasar, o el JSON con el deny; ante cualquier error, deniega.
-  const sendGuard: SendGuardDeps = {
-    sessions: () => db.listSessions(),
-    pids: () => sessions.pids(),
-    agentNames: (id) => sessions.agentNames(id),
-    live: async (s) => {
-      const a = accounts.forProject(s.projectId)
-      return listLiveSessions({ bin: accounts.bin(a), env: accounts.env(a), configDir: accounts.dir(a) }, { all: true })
-    },
-    socketOf: (s, pid) => {
-      try {
-        const file = path.join(accounts.dir(accounts.forProject(s.projectId)), "sessions", `${pid}.json`)
-        const reg = JSON.parse(fs.readFileSync(file, "utf8")) as { messagingSocketPath?: unknown }
-        return typeof reg.messagingSocketPath === "string" ? reg.messagingSocketPath : null
-      } catch {
-        return null
-      }
-    },
-  }
-  app.post<{ Params: { token: string }; Body: Record<string, unknown> }>("/hooks/:token/send-message", async (req, reply) => {
-    const body = req.body && typeof req.body === "object" ? req.body : {}
-    const input = body.tool_input && typeof body.tool_input === "object" ? (body.tool_input as Record<string, unknown>) : {}
-    let decision: SendDecision
-    try {
-      decision = await decideSend(sendGuard, db.getSessionByToken(req.params.token) ?? null, input)
-    } catch {
-      decision = { allow: false, reason: SEND_DENIED.unresolved(String(input.to ?? "")) }
-    }
-    if (decision.allow && decision.rewriteTo) {
-      return reply.type("application/json").send({
-        hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: withRecipient(input, decision.rewriteTo) },
-      })
-    }
-    if (decision.allow) return reply.type("text/plain; charset=utf-8").send("")
-    return reply.type("application/json").send({
-      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: decision.reason },
-    })
+  // Lo que entra por el listener remoto pasa por la puerta de remote/gate.ts; el resto, por el chequeo local de siempre.
+  localOnly(app, config.port, config.devOrigins, { isRemote: remote.isRemote, gate: remote.gate })
+  registerRemoteHeaders(app, remote.isRemote)
+  // Antes de registrar las rutas: cada una lleva su nivel de acceso remoto en config.remote.
+  applyPolicy(app)
+
+  await app.register(fastifyWebsocket)
+  const terminals = new Terminals({ sessionAlive: (id) => !!db.getSession(id) && !db.getSession(id)!.archivedAt })
+  const restart = new Restart({ home: config.home, version, sessions, hub, apps })
+  // Cada ruta del server, en un solo lugar (routes.ts): así se pueden enumerar y clasificar (remote/policy.ts).
+  registerRoutes(app, {
+    ...deps,
+    isRemote: remote.isRemote,
+    health: { version, port: config.port, startedAt, launchId: config.launchId },
+    resuming: () => restart.resuming,
+    restart,
+    shutdownToken: config.shutdownToken,
+    onShutdown: () => void shutdown("desktop"),
+    terminals,
+    port: config.port,
+    devOrigins: config.devOrigins,
+    production: config.production,
+    hello: () => ({ type: "hello", snapshot: snapshot(deps) }),
+    remote: remote.routes,
+    ws: remote.ws,
   })
 
   if (fs.existsSync(config.webDist)) {
@@ -330,25 +320,7 @@ async function main() {
     console.warn("No encontré web/dist: corré `npm run build` para servir el dashboard.")
   }
 
-  await app.listen({ host: config.host, port: config.port })
-  const ui = config.production || fs.existsSync(config.webDist) ? baseUrl : "http://localhost:4701"
-  console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
-  console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
-  console.log(`Datos: ${config.home}`)
-  // Las que un /clear de antes de 0.4.3 dejó apuntando a una conversación que no existe.
-  for (const r of sessions.repairConversations()) console.log(`Recuperé la conversación de ${r.name}: ${r.from} → ${r.to}.`)
-  // Las sesiones que estaban vivas antes de reiniciar para actualizar.
-  void restart
-    .resumePending()
-    .then((outcome) => {
-      const line = resumeSummary(outcome)
-      if (line) console.log(line)
-    })
-    // Después de retomar las sesiones: los planes que se cortaron entre un paso y el siguiente siguen.
-    .finally(() => orchestration.plans.recover())
-  // Lo que esperaba el uso se retoma si ya se renovó (la app pudo estar cerrada), sin esperar a que termine el reinicio de arriba.
-  limits.start()
-
+  // El apagado va antes de escuchar: la ruta de escritorio y las señales lo comparten.
   let closing = false
   const shutdown = async (signal: string) => {
     if (closing) return
@@ -366,6 +338,8 @@ async function main() {
     clis.dispose()
     tasks.dispose()
     hub.dispose()
+    // El acceso remoto primero: nadie entra mientras se cierra lo demás (y `enabled` queda guardado para el próximo arranque).
+    await remote.control.shutdown().catch(() => {})
     await terminals.closeAll().catch(() => {})
     await sessions.shutdown().catch(() => {})
     await app.close().catch(() => {})
@@ -375,6 +349,29 @@ async function main() {
   }
   process.on("SIGINT", () => void shutdown("SIGINT"))
   process.on("SIGTERM", () => void shutdown("SIGTERM"))
+  // Ctrl+Break es lo más parecido a SIGTERM que hay en Windows.
+  if (process.platform === "win32") process.on("SIGBREAK", () => void shutdown("SIGBREAK"))
+
+  await app.listen({ host: config.host, port: config.port })
+  // Si el acceso remoto quedó prendido, se retoma ahora (un problema con Tailscale no frena el arranque).
+  void remote.control.reconcile()
+  const ui = config.production || fs.existsSync(config.webDist) ? baseUrl : "http://localhost:4701"
+  console.log(`control-plane ${version} · Claude Code ${cliVersion}`)
+  console.log(`Dashboard: ${config.production ? baseUrl : ui}`)
+  console.log(`Datos: ${config.home}`)
+  // Las que un /clear de antes de 0.4.3 dejó apuntando a una conversación que no existe.
+  for (const r of sessions.repairConversations()) console.log(`Recuperé la conversación de ${r.name}: ${r.from} → ${r.to}.`)
+  // Las sesiones que estaban vivas antes de reiniciar para actualizar.
+  void restart
+    .resumePending()
+    .then((outcome) => {
+      const line = resumeSummary(outcome)
+      if (line) console.log(line)
+    })
+    // Después de retomar las sesiones: los planes que se cortaron entre un paso y el siguiente siguen.
+    .finally(() => orchestration.plans.recover())
+  // Lo que esperaba el uso se retoma si ya se renovó (la app pudo estar cerrada), sin esperar a que termine el reinicio de arriba.
+  limits.start()
 }
 
 main().catch((err) => {

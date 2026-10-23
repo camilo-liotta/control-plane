@@ -1,13 +1,26 @@
-import type { FastifyInstance } from "fastify"
+import { createHash, timingSafeEqual } from "node:crypto"
+
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 
 import type { ClientKind, Hub } from "./hub.ts"
+import type { WebSocket } from "ws"
 import type { Health, ServerMessage } from "./shared/types.ts"
 
-/** Solo para esta máquina: rechaza otros hosts (DNS rebinding) y orígenes ajenos. Cubre todo, health y /ws incluidos. */
-export function localOnly(app: FastifyInstance, port: number, extraOrigins: string[] = []) {
+/** El despacho de lo que entra por el listener remoto (ver remote/): lo decide el socket, nunca el Host. */
+export interface RemoteDispatch {
+  isRemote: (req: FastifyRequest) => boolean
+  gate: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>
+}
+
+/**
+ * Solo para esta máquina: rechaza otros hosts (DNS rebinding) y orígenes ajenos. Cubre todo, health y /ws incluidos.
+ * Si se pasa un despacho remoto, lo que entra por el listener remoto va a su puerta y no pasa por estos chequeos (que son del puerto principal).
+ */
+export function localOnly(app: FastifyInstance, port: number, extraOrigins: string[] = [], remote?: RemoteDispatch) {
   const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`])
   const allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...extraOrigins])
   app.addHook("onRequest", async (req, reply) => {
+    if (remote?.isRemote(req)) return remote.gate(req, reply)
     if (!allowedHosts.has(String(req.headers.host ?? ""))) {
       return reply.code(403).send({ error: "host no permitido" })
     }
@@ -24,9 +37,56 @@ export function registerHealth(app: FastifyInstance, info: Omit<Health, "app" | 
   app.get("/api/health", async (): Promise<Health> => ({ ...body, resuming: resuming() }))
 }
 
+const MIN_SHUTDOWN_TOKEN = 32
+
+const sha256 = (s: string) => createHash("sha256").update(s).digest()
+
+/**
+ * POST /api/desktop/shutdown: la app de escritorio apaga el server con el token que le pasó al lanzarlo.
+ * Solo existe si hay un token de al menos 32 caracteres; devuelve si registró la ruta.
+ * El launchId no sirve: /api/health lo publica. Con Origin siempre 403 (no es un pedido de un navegador).
+ */
+export function registerDesktopShutdown(app: FastifyInstance, token: string | null, onShutdown: () => void): boolean {
+  if (!token || token.length < MIN_SHUTDOWN_TOKEN) return false
+  const expected = sha256(token)
+  let requested = false
+  app.post("/api/desktop/shutdown", async (req, reply) => {
+    if (req.headers.origin) return reply.code(403).send({ error: "origen no permitido" })
+    const given = req.headers["x-control-plane-token"]
+    if (typeof given !== "string" || !timingSafeEqual(sha256(given), expected)) {
+      return reply.code(401).send({ error: "token inválido" })
+    }
+    if (!requested) {
+      requested = true
+      // Primero sale la respuesta: el apagado cierra el server y no puede cortarla.
+      reply.raw.once("finish", () => setImmediate(onShutdown))
+    }
+    return reply.code(202).send({ ok: true })
+  })
+  return true
+}
+
+export interface WsOptions {
+  /** Si el pedido entró por el listener remoto: ahí nunca es de escritorio, pida lo que pida. */
+  isRemote?: (req: FastifyRequest) => boolean
+  /** El hello para los remotos (con el snapshot redactado). Sin él, un websocket remoto se cierra. */
+  helloRemote?: () => ServerMessage
+  /** Para llevar la cuenta de los websockets remotos (revocar y cortar los cierran). */
+  onSocket?: (socket: WebSocket, req: FastifyRequest) => void
+}
+
 /** /ws para la web y /ws?client=desktop para la app de escritorio. */
-export function registerWs(app: FastifyInstance, hub: Hub, hello: () => ServerMessage) {
+export function registerWs(app: FastifyInstance, hub: Hub, hello: () => ServerMessage, opts: WsOptions = {}) {
   app.get<{ Querystring: { client?: string } }>("/ws", { websocket: true }, (socket, req) => {
+    const remote = opts.isRemote?.(req) ?? false
+    if (remote) {
+      // Falla cerrado: sin un hello redactado no se manda el snapshot completo a nadie de afuera.
+      if (!opts.helloRemote) return void socket.close(1011, "sin hello remoto")
+      // onSocket lo anota (y puede cerrarlo, si pasó el tope del dispositivo).
+      opts.onSocket?.(socket, req)
+      if (socket.readyState === socket.OPEN) hub.add(socket, opts.helloRemote, "remote")
+      return
+    }
     const kind: ClientKind = req.query.client === "desktop" ? "desktop" : "web"
     hub.add(socket, hello, kind)
   })

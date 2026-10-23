@@ -8,7 +8,8 @@ import { Markdown } from "@/components/timeline/markdown"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { api } from "@/lib/api"
+import { useCan } from "@/lib/access"
+import { ApiError, api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { failed } from "@/lib/errors"
 
@@ -20,6 +21,8 @@ export function QuestionCard({ sessionId, event }: { sessionId: string; event: Q
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [other, setOther] = useState<Record<string, string>>({})
   const [sending, setSending] = useState(false)
+  // Responder pide el nivel "responder" cuando se entra desde otro dispositivo.
+  const respond = useCan("respond")
   const pending = event.state === "pending"
 
   const toggle = (q: string, label: string, multi: boolean) =>
@@ -70,7 +73,7 @@ export function QuestionCard({ sessionId, event }: { sessionId: string; event: Q
                 {q.header && <span className="eyebrow">{q.header}</span>}
                 <p className="text-sm">{q.question}</p>
               </div>
-              {pending ? (
+              {pending && respond ? (
                 <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
                   {q.options.map((o) => {
                     const on = picked[q.question]?.includes(o.label)
@@ -108,7 +111,7 @@ export function QuestionCard({ sessionId, event }: { sessionId: string; event: Q
           )
         })}
       </div>
-      {pending && (
+      {pending && respond && (
         <div className="mt-4 flex justify-end">
           <Button size="sm" onClick={submit} disabled={!complete || sending}>
             {sending && <Spinner />}
@@ -116,6 +119,7 @@ export function QuestionCard({ sessionId, event }: { sessionId: string; event: Q
           </Button>
         </div>
       )}
+      {pending && !respond && <p className="mt-3 text-xs text-muted-foreground">Esta pregunta se responde desde la máquina del server o desde un dispositivo con permiso para responder.</p>}
     </div>
   )
 }
@@ -123,6 +127,10 @@ export function QuestionCard({ sessionId, event }: { sessionId: string; event: Q
 /** Pedido de aprobación de una herramienta (por ejemplo, salir del modo plan). */
 export function PermissionCard({ sessionId, event }: { sessionId: string; event: PermissionEvent }) {
   const [sending, setSending] = useState<null | boolean>(null)
+  // Desde otro dispositivo: rechazar pide "responder" y aprobar pide "control" (y las herramientas peligrosas, la máquina del server).
+  const respond = useCan("respond")
+  const control = useCan("control")
+  const [needsLocal, setNeedsLocal] = useState(false)
   const pending = event.state === "pending"
   const input = (event.input ?? {}) as Record<string, unknown>
   const plan = typeof input.plan === "string" ? input.plan : null
@@ -132,7 +140,8 @@ export function PermissionCard({ sessionId, event }: { sessionId: string; event:
     try {
       await api.permission(sessionId, event.requestId, allow)
     } catch (err) {
-      failed(allow ? "aprobar" : "rechazar")(err)
+      if (err instanceof ApiError && err.code === "remote_needs_local") setNeedsLocal(true)
+      else failed(allow ? "aprobar" : "rechazar")(err)
     } finally {
       setSending(null)
     }
@@ -162,15 +171,20 @@ export function PermissionCard({ sessionId, event }: { sessionId: string; event:
       <WaitingHead icon={ShieldQuestion}>{title}</WaitingHead>
       {body}
       {pending && (
-        <div className="mt-3 flex justify-end gap-2">
-          <Button size="sm" variant="outline" onClick={() => decide(false)} disabled={sending !== null}>
-            {sending === false && <Spinner />}
-            Rechazar
-          </Button>
-          <Button size="sm" onClick={() => decide(true)} disabled={sending !== null}>
-            {sending === true && <Spinner />}
-            Aprobar
-          </Button>
+        <div className="mt-3 flex items-center justify-end gap-2">
+          {needsLocal || !control ? <p className="mr-auto text-xs text-muted-foreground">Se aprueba desde la máquina del server.</p> : null}
+          {respond && (
+            <Button size="sm" variant="outline" onClick={() => decide(false)} disabled={sending !== null}>
+              {sending === false && <Spinner />}
+              Rechazar
+            </Button>
+          )}
+          {control && !needsLocal && (
+            <Button size="sm" onClick={() => decide(true)} disabled={sending !== null}>
+              {sending === true && <Spinner />}
+              Aprobar
+            </Button>
+          )}
         </div>
       )}
     </div>

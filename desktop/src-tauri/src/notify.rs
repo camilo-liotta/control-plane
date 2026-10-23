@@ -11,11 +11,17 @@
 //! - macOS: `mac-notification-sys` (`NSUserNotification`). Está deprecada, pero anda sin firma ni
 //!   bundle (también en `tauri dev`) y avisa del clic. `UNUserNotificationCenter` exige un `.app`
 //!   firmado con bundle id. No reemplaza avisos: cada uno queda por separado.
+//! - Windows: tarjetas nativas propias (`toast`), una ventana Win32 liviana por aviso, sin sonido
+//!   (el sonido lo pone la página) y sin costo mientras no hay ninguna a la vista. Los del mismo
+//!   grupo se reemplazan entre sí, como en Linux. `CONTROL_PLANE_TEST_TOAST=1` muestra una al
+//!   arrancar (a los 3 s), para verla sin esperar un aviso de verdad.
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::desktop_ws::{Local, Toast};
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+use crate::desktop_ws::Local;
+use crate::desktop_ws::Toast;
 use crate::window;
 use crate::AppState;
 
@@ -81,6 +87,7 @@ pub fn desktop_id() -> &'static str {
 /// El clic en un aviso: ventana al frente (con el token de activación, si vino) y a lo que avisaba.
 /// Después se cierran los avisos que quedaron: ya se vieron (y el dock deja de contarlos). El token
 /// se usa antes, en el mismo turno del hilo principal.
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn on_click<R: Runtime>(app: &AppHandle<R>, toast: Toast, token: Option<String>) {
     eprintln!(
         "Clic en un aviso ({} token de activación).",
@@ -127,6 +134,9 @@ pub fn dismiss_all<R: Runtime>(_app: &AppHandle<R>) {
             }
         });
     }
+    // Windows: las tarjetas son ventanas del hilo principal. Sin ninguna a la vista no hace nada.
+    #[cfg(windows)]
+    let _ = _app.run_on_main_thread(crate::toast::win32::clear);
 }
 
 /// Estado de Tauri: el canal a las notificaciones del sistema.
@@ -162,8 +172,78 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     app.manage(Notifier { inner });
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    show_dev_toasts(app);
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     let _ = app;
+}
+
+/// Los avisos de prueba que pide `CONTROL_PLANE_TEST_TOAST` (nada si no está, o es otra cosa):
+/// `1` es un aviso común y `3` es un apilado de tres, de distinto nivel, para ver los colores y el
+/// orden. Es para desarrollo y para verificar a mano; con la variable ausente no cambia nada.
+#[cfg(any(windows, test))]
+fn dev_toasts(var: Option<&str>) -> Vec<Toast> {
+    let toast = |level: &str, title: &str, body: &str| Toast {
+        level: level.into(),
+        title: title.into(),
+        body: Some(body.into()),
+        ..Toast::default()
+    };
+    match var {
+        Some("1") => vec![toast(
+            "info",
+            "control-plane",
+            "Aviso de prueba: así se ven las tarjetas en Windows.",
+        )],
+        Some("3") => {
+            let mut stack = vec![
+                toast("info", "Aviso común", "Se va solo a los pocos segundos."),
+                toast("warn", "Una advertencia", "Dura más: pide que la mires."),
+                toast("error", "Un error", "Tocá la tarjeta para cerrarla."),
+            ];
+            // Otro grupo cada uno: si no, la segunda reemplazaría a la primera.
+            stack[1].project_id = Some("cp-test".into());
+            stack[2].session_id = Some("cp-test".into());
+            stack
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Cuánto se espera para mostrar los avisos de prueba: la ventana gana el foco al abrir y eso
+/// cierra los avisos (como en Linux), así que se muestran cuando ya pasó.
+#[cfg(windows)]
+const DEV_TOAST_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Windows: muestra los avisos de prueba si se pidieron. Un solo `env::var` por arranque; sin la
+/// variable no se crea ni un hilo.
+#[cfg(windows)]
+fn show_dev_toasts<R: Runtime>(app: &AppHandle<R>) {
+    let var = std::env::var("CONTROL_PLANE_TEST_TOAST").ok();
+    let toasts = dev_toasts(var.as_deref());
+    if toasts.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(DEV_TOAST_DELAY);
+        for toast in toasts {
+            show_windows(&app, toast);
+        }
+    });
+}
+
+/// Windows: una tarjeta, en el hilo principal. El clic hace lo mismo que en Linux y macOS.
+#[cfg(windows)]
+fn show_windows<R: Runtime>(app: &AppHandle<R>, toast: Toast) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let click = handle.clone();
+        crate::toast::win32::show(
+            toast,
+            std::sync::Arc::new(move |toast| on_click(&click, toast, None)),
+        );
+    });
 }
 
 /// Un toast del server: aviso del sistema si corresponde.
@@ -186,7 +266,9 @@ pub fn handle<R: Runtime>(app: &AppHandle<R>, toast: Toast) {
         #[cfg(target_os = "macos")]
         n.inner.show(toast);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    show_windows(app, toast);
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     let _ = toast;
 }
 
@@ -507,6 +589,31 @@ mod tests {
         let h = linux::hints();
         assert_eq!(h.get("suppress-sound"), Some(&Value::Bool(true)));
         assert_eq!(h.get("desktop-entry"), Some(&Value::from(desktop_id())));
+    }
+
+    #[test]
+    fn the_developer_toast_switch_is_off_unless_asked_for() {
+        // Sin la variable (lo de siempre), o con cualquier otra cosa: ningún aviso de prueba.
+        for off in [None, Some(""), Some("0"), Some("si"), Some("2"), Some("-1")] {
+            assert!(dev_toasts(off).is_empty(), "{off:?}");
+        }
+        let one = dev_toasts(Some("1"));
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].level, "info");
+        assert!(!one[0].title.is_empty());
+        // Es un aviso común: se agrupa y se toca como cualquiera, sin sesión a la que ir.
+        assert_eq!(open_script(&one[0]), None);
+    }
+
+    #[test]
+    fn the_developer_toast_can_show_a_whole_stack() {
+        let three = dev_toasts(Some("3"));
+        assert_eq!(three.len(), 3);
+        // Cada uno de otro grupo (si no, se reemplazarían) y de otro nivel (otros colores).
+        let keys: std::collections::HashSet<String> = three.iter().map(group_key).collect();
+        assert_eq!(keys.len(), 3);
+        let levels: Vec<&str> = three.iter().map(|t| t.level.as_str()).collect();
+        assert_eq!(levels, ["info", "warn", "error"]);
     }
 
     #[test]

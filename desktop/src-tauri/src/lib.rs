@@ -22,8 +22,11 @@ pub mod server_state;
 pub mod settings;
 pub mod sidecar;
 pub mod startup;
-#[cfg(test)]
+pub mod sys;
+#[cfg(all(test, unix))]
 mod test_exe;
+#[cfg(any(windows, test))]
+mod toast;
 pub mod tray;
 pub mod update;
 pub mod window;

@@ -43,6 +43,7 @@ import { inDesktop, requestNotifications, setOsNotificationsEnabled, systemNotif
 import { openDrafts, projectSessions, useProjects, useStore } from "@/lib/store"
 import { afkOf, afkSummary } from "@/lib/afk"
 import { useNav } from "@/lib/nav"
+import { useCan } from "@/lib/access"
 import { useUi } from "@/lib/ui"
 import { Shortcut } from "@/components/ui/kbd"
 import { sessionNeedsYou, toneSoft } from "@/lib/status"
@@ -97,6 +98,9 @@ function SessionLink({ session, active }: { session: Session; active: boolean })
 
 function ProjectMenu({ project }: { project: Project }) {
   const [location, navigate] = useLocation()
+  const manage = useCan("manage")
+  const respond = useCan("respond")
+  const control = useCan("control")
   const sessions = useStore((s) => s.sessions)
   const drafts = useStore((s) => s.drafts)
   const setUi = useUi((s) => s.set)
@@ -108,6 +112,8 @@ function ProjectMenu({ project }: { project: Project }) {
   const needs = [orchestrator, ...workers].filter((s) => s !== null && sessionNeedsYou(s)).length
   const base = `/p/${project.id}`
   const afk = afkOf(project)
+  // Volver de AFK se puede con "responder"; ponerse AFK pide "control"; el resto lo gestiona la máquina.
+  const canAfk = afk ? respond : control
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
@@ -142,6 +148,7 @@ function ProjectMenu({ project }: { project: Project }) {
             <span className="sr-only">{ready === 1 ? " propuesta lista" : " propuestas listas"}</span>
           </SidebarMenuBadge>
         )}
+        {(manage || canAfk) && (
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -154,32 +161,40 @@ function ProjectMenu({ project }: { project: Project }) {
             <TooltipContent side="right">Más acciones</TooltipContent>
           </Tooltip>
           <DropdownMenuContent side="right" align="start" className="w-56">
-            <DropdownMenuItem onClick={() => setUi({ newSessionFor: project.id })}>
-              <Plus />
-              Nueva sesión
-            </DropdownMenuItem>
-            {afk ? (
-              <DropdownMenuItem onClick={() => void comeBackFromAfk(project)}>
-                <Undo2 />
-                Volver de AFK
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem onClick={() => setUi({ afkFor: project.id })}>
-                <UserRoundX />
-                Ponerse AFK…
+            {manage && (
+              <DropdownMenuItem onClick={() => setUi({ newSessionFor: project.id })}>
+                <Plus />
+                Nueva sesión
               </DropdownMenuItem>
             )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate(`${base}/tools`)}>
-              <Blocks />
-              Herramientas del proyecto
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
-              <Settings2 />
-              Ajustes del proyecto
-            </DropdownMenuItem>
+            {canAfk &&
+              (afk ? (
+                <DropdownMenuItem onClick={() => void comeBackFromAfk(project)}>
+                  <Undo2 />
+                  Volver de AFK
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onClick={() => setUi({ afkFor: project.id })}>
+                  <UserRoundX />
+                  Ponerse AFK…
+                </DropdownMenuItem>
+              ))}
+            {manage && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate(`${base}/tools`)}>
+                  <Blocks />
+                  Herramientas del proyecto
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
+                  <Settings2 />
+                  Ajustes del proyecto
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
         <CollapsibleContent>
           <SidebarMenuSub className="mr-0 ml-3.5 gap-0.5 pr-0 pl-2">
             {orchestrator && <SessionLink session={orchestrator} active={location === `${base}/s/${orchestrator.id}`} />}
@@ -406,6 +421,7 @@ function NavLink({ icon: Icon, label, active, onClick, href, children }: {
 
 export function AppSidebar() {
   const projects = useProjects()
+  const manage = useCan("manage")
   const connected = useStore((s) => s.connected)
   const claudeVersion = useStore((s) => s.meta?.claudeVersion)
   const version = useStore((s) => s.meta?.version)
@@ -466,7 +482,7 @@ export function AppSidebar() {
               </span>
             )}
           </NavLink>
-          <NavLink icon={Blocks} label="Herramientas" href="/tools" active={location.endsWith("/tools")} />
+          {manage && <NavLink icon={Blocks} label="Herramientas" href="/tools" active={location.endsWith("/tools")} />}
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
@@ -491,19 +507,21 @@ export function AppSidebar() {
               <TooltipContent side="right">{foldLabel}</TooltipContent>
             </Tooltip>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarGroupAction aria-label="Nuevo proyecto" onClick={() => setUi({ newProject: true })}>
-                <Plus />
-              </SidebarGroupAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">Nuevo proyecto</TooltipContent>
-          </Tooltip>
+          {manage && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SidebarGroupAction aria-label="Nuevo proyecto" onClick={() => setUi({ newProject: true })}>
+                  <Plus />
+                </SidebarGroupAction>
+              </TooltipTrigger>
+              <TooltipContent side="right">Nuevo proyecto</TooltipContent>
+            </Tooltip>
+          )}
           <SidebarMenu className="gap-0.5">
             {projects.map((p) => (
               <ProjectMenu key={p.id} project={p} />
             ))}
-            {projects.length === 0 && (
+            {projects.length === 0 && manage && (
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => setUi({ newProject: true })} className="text-ui text-muted-foreground">
                   <Plus />
@@ -520,7 +538,7 @@ export function AppSidebar() {
           <ThemeToggle />
           <NotificationsMenu />
           <SoundsMenu />
-          <SettingsMenu />
+          {manage && <SettingsMenu />}
           {repoUrl && (
             <Tooltip>
               <TooltipTrigger asChild>

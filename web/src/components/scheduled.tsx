@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useNow } from "@/hooks/use-now"
+import { useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { usePanelSections, useSectionOpen } from "@/lib/panel-sections"
@@ -177,6 +178,7 @@ function CancelControl({ item, session, state }: { item: ScheduledItem; session:
 /** Una tarea programada: cuándo, si se repite, el prompt (entero al expandir) y su estado. */
 function ScheduledRow({ item, now, session, showSession }: { item: ScheduledItem; now: number; session: Session; showSession?: boolean }) {
   const [open, setOpen] = useState(false)
+  const respond = useCan("respond")
   const cancel = cancelState(item.cancelRequest, item, session.status, now)
   const done = item.status !== "active"
   const facts = [
@@ -214,7 +216,7 @@ function ScheduledRow({ item, now, session, showSession }: { item: ScheduledItem
             </button>
           )}
           {facts.length > 0 && <p className="text-2xs text-muted-foreground">{facts.join(" · ")}</p>}
-          {item.status === "active" && <CancelControl item={item} session={session} state={cancel} />}
+          {item.status === "active" && respond && <CancelControl item={item} session={session} state={cancel} />}
         </div>
       </div>
     </li>

@@ -21,6 +21,8 @@
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "test": "node scripts/version.mjs --check && node scripts/sh-check.mjs && npm test -w server",
     "app:install": "bash desktop/scripts/install.sh",
+    "app:build": "npm run build:exe -w desktop",
+    "app:build:debug": "npm run build:exe:debug -w desktop",
     "version:set": "node scripts/version.mjs",
     "version:check": "node scripts/version.mjs --check"
   },

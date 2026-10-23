@@ -5,6 +5,8 @@ import type { DesktopSummary, Session } from "./shared/types.ts"
 export interface SummaryDeps {
   db: Pick<Db, "listProjects" | "listDrafts" | "listTasks">
   sessions: { list(): Session[]; isRunning(id: string): boolean }
+  /** Si el acceso remoto está activo (prendido y con el listener abierto). Sin esto, se lo da por apagado. */
+  remote?: () => boolean
 }
 
 const HOUR = new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })
@@ -22,7 +24,7 @@ const isWorking = (s: Session) => s.status === "working" || s.status === "starti
  * Resumen para el ícono de la app de escritorio. `needs` es el mismo número que el de la Bandeja
  * de la web: los dos salen de inboxCounts.
  */
-export function desktopSummary({ db, sessions }: SummaryDeps): DesktopSummary {
+export function desktopSummary({ db, sessions, remote }: SummaryDeps): DesktopSummary {
   const all = sessions.list()
   const counts = inboxCounts({ sessions: all, drafts: db.listDrafts({ states: ["ready", "sent"] }).filter((d) => d.state === "ready" || d.planState === "paused"), tasks: db.listTasks() })
   const projects = db.listProjects().map((p) => ({
@@ -41,5 +43,7 @@ export function desktopSummary({ db, sessions }: SummaryDeps): DesktopSummary {
     // El proceso real, no el status: es lo que corta detener el server.
     running: all.filter((s) => sessions.isRunning(s.id)).length,
     projects,
+    // Solo cuando hay exposición: apagado el resumen queda igual que siempre (la app lo toma como false si falta).
+    ...(remote?.() ? { remote: true } : {}),
   }
 }

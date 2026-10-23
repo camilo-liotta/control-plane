@@ -514,6 +514,7 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "futures-util",
+ "getrandom 0.3.4",
  "gtk",
  "libc",
  "mac-notification-sys",
@@ -530,6 +531,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "windows-sys 0.61.2",
  "zbus",
 ]
 

@@ -403,7 +403,22 @@ export interface Account {
   /** Sin uso hasta que se renueve (null = anda). */
   limit: AccountLimit | null
   projects: number
+  engram: EngramStatus
 }
+
+/** ready = todo instalado; no-binary = plugin y MCP, pero falta el programa; partial = a medias; missing = nada. */
+export type EngramState = "ready" | "no-binary" | "partial" | "missing"
+
+export interface EngramStatus {
+  state: EngramState
+  plugin: "ok" | "disabled" | "missing"
+  mcp: boolean
+  binary: string | null
+  /** Cómo conseguir el programa, cuando no está. */
+  binaryHint?: { command: string; url: string }
+}
+
+export type EngramInstallResult = { ok: true; message: string } | { needsConfirm: { command: string; sha256: string } }
 
 export type ClaudeSettingValue = string | boolean | null
 
@@ -962,6 +977,8 @@ export interface DesktopSummary {
   running: number
   /** Proyectos sin archivar, con sus conteos. */
   projects: { id: string; name: string; needs: number; working: number }[]
+  /** El acceso remoto está activo (hay exposición por Tailscale). Solo viene cuando es true; la app lo toma como false si falta. */
+  remote?: boolean
   /** Sesiones sin uso (esperan que se renueve el límite): no cuentan en `needs`. */
   limited: number
   /** Hasta cuándo, ya formateado ("22:00", "lun 9:00"); el más lejano si hay varios. null si no hay. */
@@ -979,6 +996,89 @@ export interface Health {
   launchId: string | null
   /** Retomando las sesiones de un reinicio para actualizar (ver restart.ts). */
   resuming: boolean
+}
+
+// ------------------------------------------------------------------ acceso remoto (Tailscale)
+
+/** Cómo está Tailscale para el acceso remoto (los mismos nombres que server/src/tailscale.ts). */
+export type RemoteState =
+  | "not_installed"
+  | "timeout"
+  | "stopped"
+  | "needs_login"
+  | "needs_machine_auth"
+  | "https_disabled"
+  | "serve_denied"
+  | "port_in_use"
+  | "error"
+  | "outdated"
+  | "ready"
+
+/** Lo que responde GET /api/remote/capabilities: desde dónde se entra y qué nivel tiene el dispositivo. */
+export interface RemoteCapabilities {
+  mode: "local" | "remote-read" | "remote-respond" | "remote-control"
+  /** Solo en los modos remotos: si el dispositivo está vinculado (si no, la web muestra la pantalla de vinculación). */
+  paired?: boolean
+  device?: { name: string; tier: "read" | "respond" | "control" }
+}
+
+/** Un dispositivo vinculado, como lo lista GET /api/remote/devices (sin su cookie ni su hash). */
+export interface RemoteDevice {
+  id: string
+  name: string
+  tier: "read" | "respond" | "control"
+  tsLogin: string | null
+  createdAt: number
+  expiresAt: number
+  lastSeenAt: number | null
+}
+
+/** Los ajustes del acceso remoto (GET|PATCH /api/remote/config, solo desde esta máquina). */
+/** Una fila de la auditoría del acceso remoto (sin contenido: ver server/src/remote/audit.ts). */
+export interface RemoteAuditEntry {
+  id: number
+  at: number
+  deviceId: string | null
+  kind: string
+  method: string | null
+  route: string | null
+  targetId: string | null
+  toolName: string | null
+  inputHash: string | null
+  status: number | null
+  outcome: string
+  reason: string | null
+}
+
+export interface RemoteAuditView {
+  rows: RemoteAuditEntry[]
+  counters: { reads: number }
+}
+
+export interface RemoteConfigView {
+  enabled: boolean
+  tier: "read" | "respond" | "control"
+  requireLocalForDangerous: boolean
+  httpsPort: number
+  localPort: number
+}
+
+/** Lo que responde GET /api/remote/status (solo desde esta máquina). */
+export interface RemoteStatus {
+  state: RemoteState
+  /** Qué pasó y qué hacer, en castellano; null cuando está listo. */
+  message: string | null
+  enabled: boolean
+  tailnet: string | null
+  ips: string[]
+  host: string | null
+  version: string | null
+  /** El enlace para entrar desde otro dispositivo: solo si Tailscale está listo y el acceso está prendido. */
+  url: string | null
+  /** Prendido y con el listener abierto (prendido pero sin exposición: `enabled` true y `active` false). */
+  active: boolean
+  /** Por qué está prendido pero sin exposición, si lo hay. */
+  problem: { state: RemoteState; message: string } | null
 }
 
 export type ServerMessage =
@@ -1010,6 +1110,8 @@ export type ServerMessage =
   | { type: "turn"; sessionId: string; turn: TurnProgress | null }
   /** Cambió algo de los CLIs (un login o una instalación que avanzó o terminó). */
   | { type: "clis_changed" }
+  /** Cambió el acceso remoto (prendido, apagado, dispositivos): se vuelve a pedir su estado. */
+  | { type: "remote" }
   /** Solo a la app de escritorio: el resumen para la bandeja (al conectar y cuando cambia). */
   | { type: "desktop_summary"; summary: DesktopSummary }
   /** Solo a la web: si hay una app de escritorio conectada (al conectar y cuando cambia). */

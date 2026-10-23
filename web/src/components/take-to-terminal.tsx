@@ -21,6 +21,7 @@ import { TerminalPanel } from "@/components/terminal-panel"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useCan } from "@/lib/access"
 import { useStore } from "@/lib/store"
 import { rememberedValues, rememberValues, useTerminal } from "@/lib/terminal"
 import { cn } from "@/lib/utils"
@@ -54,7 +55,9 @@ export function TakeToTerminal({
   const [asking, setAsking] = useState<CommandValue[] | null>(null)
   const [sheet, setSheet] = useState(false)
   const session = useStore((s) => (target ? s.sessions[target.sessionId] : undefined))
-  if (!target) return null
+  // La terminal no existe desde otro dispositivo.
+  const manage = useCan("manage")
+  if (!target || !manage) return null
 
   const page = `/p/${target.projectId}/s/${target.sessionId}`
   // En la sesión, va a su terminal. Desde otro lado (el tablero), la terminal se abre en una hoja

@@ -8,6 +8,7 @@ import { FileRefScope, RefText } from "@/components/file-ref"
 import { Markdown } from "@/components/timeline/markdown"
 import { TonePill } from "@/components/status"
 import { Button } from "@/components/ui/button"
+import { useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { reportStateLabel, reportStatusView, toneText } from "@/lib/status"
@@ -17,6 +18,8 @@ import { cn } from "@/lib/utils"
 /** Un resultado que reportó un worker. */
 export function ReportCard({ report, showSession = true, className }: { report: Report; showSession?: boolean; className?: string }) {
   const [open, setOpen] = useState(false)
+  // Quitar de la cola es de esta máquina (el server no lo deja desde otro dispositivo).
+  const manage = useCan("manage")
   // Quitado de la cola: se esconde al toque y vuelve si se deshace o falla.
   const [hidden, setHidden] = useState(false)
   const status = reportStatusView[report.status]
@@ -73,7 +76,7 @@ export function ReportCard({ report, showSession = true, className }: { report: 
                 {open ? "Ocultar detalles" : "Ver detalles"}
               </button>
             )}
-            {report.state === "queued" && (
+            {manage && report.state === "queued" && (
               <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={dismiss}>
                 <X />
                 Quitar de la cola

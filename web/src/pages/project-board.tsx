@@ -33,6 +33,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useCan } from "@/lib/access"
 import { afkOf } from "@/lib/afk"
 import { api } from "@/lib/api"
 import { basename, tokens, totals, usd } from "@/lib/format"
@@ -118,6 +119,10 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const projectTasks = useMemo(() => Object.values(allTasks).filter((t) => t.projectId === projectId), [allTasks, projectId])
   const envs = useProjectEnvironments(projectId)
   const setUi = useUi((s) => s.set)
+  // Desde otro dispositivo no se crean sesiones ni se gestiona el proyecto, y Apps y Entornos no se ven.
+  const manage = useCan("manage")
+  const respond = useCan("respond")
+  const control = useCan("control")
   const [sendingAll, setSendingAll] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [allPast, setAllPast] = useState(false)
@@ -231,10 +236,13 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         actions={
           <>
             <AfkPill project={project} />
-            <Button size="sm" onClick={() => setUi({ newSessionFor: project.id })}>
-              <Plus />
-              Nueva sesión
-            </Button>
+            {manage && (
+              <Button size="sm" onClick={() => setUi({ newSessionFor: project.id })}>
+                <Plus />
+                Nueva sesión
+              </Button>
+            )}
+            {(manage || (afkOf(project) ? respond : control)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="icon-sm" variant="ghost" aria-label="Más acciones">
@@ -242,48 +250,59 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto min-w-56">
-                <DropdownMenuItem
-                  disabled={action.busy("all")}
-                  onClick={() => run("all", () => api.startAll(project.id), "Sesiones reanudadas", "No se pudieron reanudar las sesiones")}
-                >
-                  <Play />
-                  Reanudar todas las sesiones
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={action.busy("all")} onClick={() => setStopping(true)}>
-                  <Square />
-                  Detener todas las sesiones…
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setUi({ importFor: project.id })}>
-                  <History />
-                  Importar una sesión existente
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {afkOf(project) ? (
-                  <DropdownMenuItem onClick={() => void comeBackFromAfk(project)}>
-                    <Hourglass />
-                    Volver de AFK
-                  </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem onClick={() => setUi({ afkFor: project.id })}>
-                    <Hourglass />
-                    Ponerse AFK…
-                  </DropdownMenuItem>
+                {manage && (
+                  <>
+                    <DropdownMenuItem
+                      disabled={action.busy("all")}
+                      onClick={() => run("all", () => api.startAll(project.id), "Sesiones reanudadas", "No se pudieron reanudar las sesiones")}
+                    >
+                      <Play />
+                      Reanudar todas las sesiones
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={action.busy("all")} onClick={() => setStopping(true)}>
+                      <Square />
+                      Detener todas las sesiones…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setUi({ importFor: project.id })}>
+                      <History />
+                      Importar una sesión existente
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
                 )}
-                <DropdownMenuItem onClick={() => navigate(`/p/${project.id}/tools`)}>
-                  <Blocks />
-                  Herramientas del proyecto
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
-                  <Settings2 />
-                  Ajustes del proyecto
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onClick={() => setUi({ deleteFor: project.id })}>
-                  <Trash2 />
-                  Borrar proyecto…
-                </DropdownMenuItem>
+                {afkOf(project)
+                  ? respond && (
+                      <DropdownMenuItem onClick={() => void comeBackFromAfk(project)}>
+                        <Hourglass />
+                        Volver de AFK
+                      </DropdownMenuItem>
+                    )
+                  : control && (
+                      <DropdownMenuItem onClick={() => setUi({ afkFor: project.id })}>
+                        <Hourglass />
+                        Ponerse AFK…
+                      </DropdownMenuItem>
+                    )}
+                {manage && (
+                  <>
+                    <DropdownMenuItem onClick={() => navigate(`/p/${project.id}/tools`)}>
+                      <Blocks />
+                      Herramientas del proyecto
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setUi({ settingsFor: project.id })}>
+                      <Settings2 />
+                      Ajustes del proyecto
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onClick={() => setUi({ deleteFor: project.id })}>
+                      <Trash2 />
+                      Borrar proyecto…
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
             <ConfirmAction
               open={stopping}
               onOpenChange={setStopping}
@@ -314,10 +333,12 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                 <Lamp tone="pending" label="Commits sin subir" className="size-1.5" />
               ) : null}
             </TabsTrigger>
-            <TabsTrigger value="entornos" className="flex-none px-2">
-              Entornos
-              {envs.length > 0 && <span className="text-xs font-normal text-muted-foreground">{envs.length}</span>}
-            </TabsTrigger>
+            {manage && (
+              <TabsTrigger value="entornos" className="flex-none px-2">
+                Entornos
+                {envs.length > 0 && <span className="text-xs font-normal text-muted-foreground">{envs.length}</span>}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="mapa" className="flex-none px-2">
               Mapa
             </TabsTrigger>
@@ -329,7 +350,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
 
             {needs.length > 0 && <NeedsYou sessions={needs} />}
 
-            {hasTasks && <UserTasksCard project={project} />}
+            {manage && hasTasks && <UserTasksCard project={project} />}
 
             <div className="flex flex-col gap-4">
               {/* Las propuestas listas te esperan: van antes que la orquestadora. Las que están en preparación, después. */}
@@ -390,22 +411,24 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                       las apruebes.
                     </EmptyDescription>
                   </EmptyHeader>
-                  <EmptyContent className="flex-row justify-center">
-                    <Button size="sm" variant="outline" onClick={() => setUi({ newSessionFor: project.id })}>
-                      <Plus />
-                      Nueva sesión
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setUi({ importFor: project.id })}>
-                      <History />
-                      Importar una existente
-                    </Button>
-                  </EmptyContent>
+                  {manage && (
+                    <EmptyContent className="flex-row justify-center">
+                      <Button size="sm" variant="outline" onClick={() => setUi({ newSessionFor: project.id })}>
+                        <Plus />
+                        Nueva sesión
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setUi({ importFor: project.id })}>
+                        <History />
+                        Importar una existente
+                      </Button>
+                    </EmptyContent>
+                  )}
                 </Empty>
               )}
             </section>
 
             {/* Sin nada pendiente, Tareas para vos no ocupa el lugar de lo que te espera. */}
-            {!hasTasks && <UserTasksCard project={project} />}
+            {manage && !hasTasks && <UserTasksCard project={project} />}
 
             {/* Lo programado: plegado, con su línea (no aparece si no hay nada). */}
             <div className="surface-card overflow-hidden empty:hidden [&>*]:border-b-0">
@@ -428,17 +451,19 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               </section>
             )}
 
-            <ArchivedSessions projectId={project.id} />
+            {manage && <ArchivedSessions projectId={project.id} />}
           </TabsContent>
 
           <TabsContent value="repos" className="flex flex-col gap-6">
             <ProjectRepos project={project} data={overview.data} error={overview.error} onRetry={overview.reload} />
-            <ProjectApps project={project} />
+            {manage && <ProjectApps project={project} />}
           </TabsContent>
 
-          <TabsContent value="entornos">
-            <ProjectEnvironments project={project} />
-          </TabsContent>
+          {manage && (
+            <TabsContent value="entornos">
+              <ProjectEnvironments project={project} />
+            </TabsContent>
+          )}
 
           <TabsContent value="mapa">
             <section className="surface-card overflow-hidden">

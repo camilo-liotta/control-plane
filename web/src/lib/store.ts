@@ -19,6 +19,7 @@ import type {
   TurnProgress,
 } from "@shared/types"
 
+import { useAccess } from "./access"
 import { api } from "./api"
 import { notify } from "./notify"
 import { useUi } from "./ui"
@@ -281,6 +282,10 @@ export const useStore = create<State>((set, get) => ({
         break
       case "desktop_summary":
         // es para la app de escritorio: a la web no le llega
+        break
+      case "remote":
+        // cambió el acceso remoto (prendido, apagado, dispositivos): el aviso y el diálogo se vuelven a leer
+        useAccess.getState().changed()
         break
       case "toast":
         notify(msg)

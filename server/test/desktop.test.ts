@@ -110,6 +110,27 @@ describe("resumen de escritorio", () => {
   })
 })
 
+describe("resumen de escritorio: acceso remoto", () => {
+  const deps = {
+    db: { listProjects: () => [], listDrafts: () => [], listTasks: () => [] },
+    sessions: { list: () => [], isRunning: () => false },
+  }
+  it("lleva `remote: true` mientras el acceso remoto está activo", () => {
+    assert.equal(desktopSummary({ ...deps, remote: () => true }).remote, true)
+  })
+  it("sin acceso remoto activo (o sin saberlo) no agrega nada: el resumen queda como siempre", () => {
+    assert.equal("remote" in desktopSummary({ ...deps, remote: () => false }), false)
+    assert.equal("remote" in desktopSummary(deps), false)
+  })
+  it("lee el estado en cada resumen, no una vez", () => {
+    let on = false
+    const summary = () => desktopSummary({ ...deps, remote: () => on })
+    assert.equal(summary().remote, undefined)
+    on = true
+    assert.equal(summary().remote, true)
+  })
+})
+
 /** Cliente de WS que junta lo que le llega. */
 function client(url: string) {
   const ws = new WebSocket(url)

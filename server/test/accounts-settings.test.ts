@@ -126,3 +126,39 @@ describe("cuentas", () => {
     assert.throws(() => accounts.create({ name: "Otra", configDir: path.join(home, ".claude-personal") }), /Ya hay una cuenta/)
   })
 })
+
+describe("estado de Engram en la vista de la cuenta", () => {
+  let dir: string
+  let db: Db
+  // Deps con el fs real pero un "programa" siempre presente: no depende de HOME ni de la máquina.
+  const engramDeps = { env: { PATH: "/bin", PATHEXT: ".EXE" }, exists: (f: string) => path.basename(f).startsWith("engram") }
+  const rec = (id: string, configDir: string) => ({ id, name: id, configDir, bin: null, createdAt: 1 })
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-engram-"))
+    db = new Db(path.join(dir, "cp.db"))
+    const a = path.join(dir, "a")
+    fs.mkdirSync(path.join(a, "plugins"), { recursive: true })
+    fs.mkdirSync(path.join(a, "mcp"))
+    fs.writeFileSync(path.join(a, "plugins", "installed_plugins.json"), JSON.stringify({ plugins: { "engram@engram": [{}] } }))
+    fs.writeFileSync(path.join(a, "mcp", "engram.json"), "{}")
+    fs.mkdirSync(path.join(dir, "b"))
+  })
+  after(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("la vista trae el estado de esa cuenta", () => {
+    const accounts = new Accounts(db, { engramDeps })
+    assert.equal(accounts.view(rec("a", path.join(dir, "a")), null).engram.state, "ready")
+  })
+
+  it("dos cuentas distintas tienen estados distintos", () => {
+    const accounts = new Accounts(db, { engramDeps })
+    const a = accounts.view(rec("a", path.join(dir, "a")), null).engram
+    const b = accounts.view(rec("b", path.join(dir, "b")), null).engram
+    assert.equal(b.state, "missing")
+    assert.notDeepEqual(a, b)
+  })
+})

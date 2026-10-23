@@ -2,8 +2,10 @@ import { Check, ChevronsUpDown, Copy, FolderCog, LogIn, RefreshCw, Settings2, Tr
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 
+import { loginCommands } from "@shared/account-login"
 import type { Account, AccountAuth } from "@shared/types"
 
+import { EngramLine } from "@/components/engram"
 import { Button } from "@/components/ui/button"
 import { ConfirmAction } from "@/components/ui/confirm-action"
 import {
@@ -31,6 +33,7 @@ import { api } from "@/lib/api"
 import { toneSoft } from "@/lib/status"
 import { shortPath } from "@/lib/format"
 import { useAccounts, useCurrentAccount } from "@/lib/store"
+import { useCan } from "@/lib/access"
 import { useUi } from "@/lib/ui"
 import { cn } from "@/lib/utils"
 
@@ -53,9 +56,31 @@ export function authLine(auth: AccountAuth | null): string {
   return [auth.email, auth.subscription].filter(Boolean).join(" · ") || "Logueada"
 }
 
-/** Comando para loguear una cuenta desde una terminal. */
-function loginCommand(a: { configDir: string; isDefault: boolean }) {
-  return a.isDefault ? "claude" : `CLAUDE_CONFIG_DIR=${shortPath(a.configDir)} claude`
+/** Los comandos para loguear una cuenta desde una terminal (en Windows, uno por terminal). */
+function LoginCommands({ account }: { account: { configDir: string; isDefault: boolean } }) {
+  const commands = loginCommands(account.configDir, account.isDefault)
+  if (!commands.length) return <>claude</>
+  return (
+    <>
+      {commands.length > 1 ? " uno de estos, según tu terminal:" : null}
+      {commands.map((c) => (
+        <span key={c.label ?? "cmd"} className="mt-1 flex items-start gap-1">
+          {c.label && <span className="w-20 shrink-0 pt-0.5 text-2xs">{c.label}</span>}
+          <code className="rounded-md bg-muted px-1 py-0.5 font-mono break-words text-foreground">{c.command}</code>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="shrink-0"
+            aria-label={c.label ? `Copiar el comando de ${c.label}` : "Copiar el comando"}
+            title="Copiar el comando"
+            onClick={() => copy(c.command)}
+          >
+            <Copy />
+          </Button>
+        </span>
+      ))}
+    </>
+  )
 }
 
 /** Selector de cuenta de Claude Code, como el de organizaciones. Filtra los proyectos por cuenta. */
@@ -63,6 +88,7 @@ export function AccountSwitcher() {
   const accounts = useAccounts()
   const current = useCurrentAccount()
   const ui = useUi()
+  const manage = useCan("manage")
   if (!current) return null
   const needsLogin = Boolean(current.auth && !current.auth.loggedIn)
   return (
@@ -98,19 +124,23 @@ export function AccountSwitcher() {
             {a.id === current.id && <Check className="size-4" />}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => ui.set({ settingsForAccount: current.id })}>
-          <Settings2 />
-          Configuración de Claude Code
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => ui.set({ accountsDialog: true })}>
-          <Users />
-          Administrar cuentas…
-        </DropdownMenuItem>
+        {manage && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => ui.set({ settingsForAccount: current.id })}>
+              <Settings2 />
+              Configuración de Claude Code
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => ui.set({ accountsDialog: true })}>
+              <Users />
+              Administrar cuentas…
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
     {/* Sin login, las sesiones de esta cuenta no arrancan: te espera y frena, por eso va en ámbar. */}
-    {needsLogin && (
+    {needsLogin && manage && (
       <button
         type="button"
         onClick={() => ui.set({ accountsDialog: true })}
@@ -185,18 +215,9 @@ function AccountRow({ account }: { account: Account }) {
               {account.auth && !account.auth.loggedIn && (
                 <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
                   <li>
-                    En una terminal, corré{" "}
-                    <code className="rounded-md bg-muted px-1 py-0.5 font-mono break-words text-foreground">{loginCommand(account)}</code>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      className="ml-1 align-middle"
-                      aria-label="Copiar el comando"
-                      title="Copiar el comando"
-                      onClick={() => copy(loginCommand(account))}
-                    >
-                      <Copy />
-                    </Button>
+                    En una terminal, corré
+                    {loginCommands(account.configDir, account.isDefault).length > 1 ? null : " "}
+                    <LoginCommands account={account} />
                   </li>
                   <li>
                     Adentro, escribí <code className="font-mono">/login</code> y seguí los pasos en el navegador.
@@ -204,6 +225,7 @@ function AccountRow({ account }: { account: Account }) {
                   <li>Volvé acá y tocá "Volver a verificar los logins".</li>
                 </ol>
               )}
+              <EngramLine account={account} />
             </>
           )}
         </div>

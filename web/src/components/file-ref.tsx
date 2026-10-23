@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, useState } from "react"
 
 import { textRefs } from "@shared/file-refs"
 
+import { useCan } from "@/lib/access"
 import { api } from "@/lib/api"
 import { EDITOR_NAMES, useEditor, useEditorStore } from "@/lib/editor"
 import { useResolvedRef, type RefScope } from "@/lib/file-refs"
@@ -14,7 +15,9 @@ const ScopeContext = createContext<RefScope | null>(null)
  * proyecto y, si hay, en la carpeta de esta sesión. Sin esto, no se linkea nada.
  */
 export function FileRefScope({ projectId, sessionId, children }: RefScope & { children: React.ReactNode }) {
-  const value = useMemo(() => ({ projectId, sessionId }), [projectId, sessionId])
+  // Sin gestión (desde otro dispositivo) no hay carpetas que abrir: sin alcance, nada se linkea ni se resuelve.
+  const manage = useCan("manage")
+  const value = useMemo(() => (manage ? { projectId, sessionId } : null), [manage, projectId, sessionId])
   useEditor() // para el nombre del editor en el tooltip, una vez por bloque
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>
 }

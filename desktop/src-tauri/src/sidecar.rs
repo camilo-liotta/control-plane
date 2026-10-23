@@ -13,7 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
@@ -35,6 +34,7 @@ use crate::screen::{self, Action, Request, Screen};
 use crate::server_log;
 use crate::server_state::{self, Expected, Owner, StateFile};
 use crate::settings::Settings;
+use crate::sys::{self, Target};
 use crate::window;
 use crate::AppState;
 
@@ -204,73 +204,6 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn pid_alive(pid: u32) -> bool {
-    // SAFETY: la señal 0 solo pregunta si el proceso existe.
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-}
-
-/// Señal a un hijo directo todavía sin cosechar (su pid no se puede reusar).
-fn signal_child(pid: u32, sig: libc::c_int) {
-    // SAFETY: solo se llama con el pid de un `Child` que try_wait todavía da vivo.
-    unsafe {
-        libc::kill(pid as libc::pid_t, sig);
-    }
-}
-
-fn signal_group(pgid: u32, sig: libc::c_int) {
-    // SAFETY: el grupo del server propio (lo lanzó la app con setsid); solo se llama con el líder
-    // sin cosechar o con un health recién pedido que confirma que el server sigue ahí.
-    unsafe {
-        libc::kill(-(pgid as libc::pid_t), sig);
-    }
-}
-
-/// Un proceso al que se le van a mandar señales. En Linux se abre un pidfd **antes** de
-/// verificarlo con el health: si el health confirma después que ese pid es el server, las
-/// señales van a ese proceso y no a otro que reuse el pid. En macOS, el pid.
-struct Target {
-    pid: u32,
-    #[cfg(target_os = "linux")]
-    fd: Option<std::os::fd::OwnedFd>,
-}
-
-impl Target {
-    fn open(pid: u32) -> Self {
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::fd::FromRawFd;
-            // SAFETY: pidfd_open devuelve un fd nuevo (o -1); si es válido pasa a ser nuestro.
-            let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
-            let fd = (raw >= 0).then(|| unsafe { std::os::fd::OwnedFd::from_raw_fd(raw as i32) });
-            Self { pid, fd }
-        }
-        #[cfg(not(target_os = "linux"))]
-        Self { pid }
-    }
-
-    fn signal(&self, sig: libc::c_int) {
-        #[cfg(target_os = "linux")]
-        if let Some(fd) = &self.fd {
-            use std::os::fd::AsRawFd;
-            // SAFETY: pidfd propio; si el proceso ya terminó falla con ESRCH y no le llega a nadie.
-            unsafe {
-                libc::syscall(
-                    libc::SYS_pidfd_send_signal,
-                    fd.as_raw_fd(),
-                    sig,
-                    std::ptr::null::<libc::siginfo_t>(),
-                    0u32,
-                );
-            }
-            return;
-        }
-        // SAFETY: sin pidfd (macOS o un kernel viejo): el pid recién verificado por el health.
-        unsafe {
-            libc::kill(self.pid as libc::pid_t, sig);
-        }
-    }
-}
-
 /// Dónde está el bundle del server: en release, entre los recursos de la app; en desarrollo,
 /// el que genera `npm run stage -w desktop` (lo corre `tauri dev` antes de compilar).
 fn bundle_dir(app: &AppHandle) -> PathBuf {
@@ -332,30 +265,6 @@ pub fn resolve_home(
 fn same_dir(a: &Path, b: &Path) -> bool {
     let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     canon(a) == canon(b) || a == b
-}
-
-/// Marca todos los fds de más de 2 como close-on-exec: el server no hereda nada de la app
-/// (sockets de la ventana, pipes de GTK) que pueda atarlo a ella.
-fn cloexec_all() {
-    #[cfg(target_os = "linux")]
-    // SAFETY: close_range con CLOSE_RANGE_CLOEXEC solo cambia flags; si el kernel no lo tiene,
-    // falla con ENOSYS y se cae al bucle.
-    unsafe {
-        const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
-        if libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, CLOSE_RANGE_CLOEXEC) == 0 {
-            return;
-        }
-    }
-    // SAFETY: fcntl sobre fds que pueden no existir: falla sin efecto.
-    unsafe {
-        let max = libc::sysconf(libc::_SC_OPEN_MAX).clamp(256, 65536) as libc::c_int;
-        for fd in 3..max {
-            let flags = libc::fcntl(fd, libc::F_GETFD);
-            if flags >= 0 {
-                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-            }
-        }
-    }
 }
 
 enum Phase {
@@ -815,7 +724,7 @@ impl Worker {
                 }
                 let since = down_since.unwrap_or_else(Instant::now);
                 if since.elapsed() >= FOREIGN_GRACE {
-                    if !pid_alive(expected.pid) {
+                    if !sys::pid_alive(expected.pid) {
                         return self.own_crashed(port, "sin avisar", started_ms, offset);
                     }
                     // Vivo pero sin responder: no se lo toca (no se puede verificar).
@@ -1218,7 +1127,12 @@ impl Worker {
     fn ask_exit(&mut self, without_tray: bool) -> Answer {
         let running = (self.hooks.running)(&self.app);
         let working = (self.hooks.working)(&self.app);
-        let mut message = policy::exit_question(running, working);
+        let remote = self
+            .app
+            .try_state::<crate::desktop_ws::DesktopWs>()
+            .and_then(|ws| ws.snapshot().summary)
+            .is_some_and(|s| s.remote);
+        let mut message = policy::with_remote_note(policy::exit_question(running, working), remote);
         if without_tray {
             message = format!("{}\n\n{message}", policy::NO_TRAY_NOTE);
         }
@@ -1273,7 +1187,7 @@ impl Worker {
         let health_ok = server_state::may_signal(&expected, fresh.as_ref(), false);
         let child_ok = child_alive(&mut child);
         if !health_ok && !child_ok {
-            if child.is_none() && !pid_alive(expected.pid) {
+            if child.is_none() && !sys::pid_alive(expected.pid) {
                 // Ya no estaba.
                 StateFile::remove(&self.state_file(port));
                 self.lost();
@@ -1289,8 +1203,8 @@ impl Worker {
             expected.pid
         );
         match (health_ok, child_pid) {
-            (true, _) => target.signal(libc::SIGTERM),
-            (false, Some(pid)) => signal_child(pid, libc::SIGTERM),
+            (true, _) => target.term(),
+            (false, Some(pid)) => sys::term_child(pid),
             (false, None) => unreachable!("sin health ni hijo no se llega acá"),
         }
         let gone = wait_gone(&mut child, expected.pid, STOP_GRACE);
@@ -1300,9 +1214,9 @@ impl Worker {
                 "No terminó en {} s: SIGKILL al grupo.",
                 STOP_GRACE.as_secs()
             );
-            signal_group(expected.pgid, libc::SIGKILL);
+            sys::kill_tree(expected.pgid);
             if child.is_none() {
-                target.signal(libc::SIGKILL);
+                target.kill();
             }
             wait_gone(&mut child, expected.pid, Duration::from_secs(2));
         }
@@ -1328,7 +1242,7 @@ fn wait_gone(child: &mut Option<Child>, pid: u32, max: Duration) -> bool {
     while Instant::now() < until {
         let gone = match child {
             Some(c) => !matches!(c.try_wait(), Ok(None)),
-            None => !pid_alive(pid),
+            None => !sys::pid_alive(pid),
         };
         if gone {
             return true;
@@ -1346,26 +1260,17 @@ fn spawn(
     cwd: Option<&Path>,
 ) -> std::io::Result<Child> {
     let err = log.try_clone()?;
+    let fallback = sys::fallback_cwd();
     let mut cmd = Command::new(program);
     cmd.args(args)
         .env_clear()
         .envs(env)
-        .current_dir(cwd.filter(|d| d.is_dir()).unwrap_or(Path::new("/")))
+        .current_dir(cwd.filter(|d| d.is_dir()).unwrap_or(&fallback))
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
-    // SAFETY: entre fork y exec solo setsid y fcntl, que son async-signal-safe.
-    unsafe {
-        cmd.pre_exec(|| {
-            // Sesión y grupo propios, sin terminal: cerrar la app no le manda nada.
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            cloexec_all();
-            Ok(())
-        });
-    }
-    cmd.spawn()
+    sys::detach(&mut cmd);
+    sys::spawn_detached(&mut cmd)
 }
 
 /// Para el health de "¿es el mismo?" fuera del hilo (tests y T4).
@@ -1429,6 +1334,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn spawned_server_is_in_its_own_session_without_tty_and_clean_env() {
         let dir = tempfile::tempdir().unwrap();

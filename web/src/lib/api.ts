@@ -1,3 +1,5 @@
+import { toast } from "sonner"
+
 import type {
   AfkLog,
   Account,
@@ -22,8 +24,14 @@ import type {
   Draft,
   PlanStep,
   EditorSettings,
+  EngramInstallResult,
   Marketplace,
   Project,
+  RemoteAuditView,
+  RemoteCapabilities,
+  RemoteConfigView,
+  RemoteDevice,
+  RemoteStatus,
   ProjectMessage,
   ProjectOverview,
   ProjectSettings,
@@ -39,6 +47,7 @@ import type {
   ToolsView,
 } from "@shared/types"
 import { NetworkError } from "@shared/deliver"
+import { remoteErrorMessage, toastsRemoteError } from "@shared/remote-access"
 import type { ResolvedRef } from "@shared/file-refs"
 
 export interface EnvironmentFields {
@@ -56,6 +65,24 @@ export interface CredentialFields {
   notes?: string | null
 }
 
+/** Un error del server: el mensaje ya viene en castellano; el código (`remote_*`, `invalid`…) y el estado, por si hace falta. */
+export class ApiError extends Error {
+  status: number
+  code: string | undefined
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+    this.code = code
+  }
+}
+
+/** Qué hacer cuando el server dice que este dispositivo no está vinculado (lo registra lib/access, sin importarlo acá). */
+let onUnpaired: (() => void) | null = null
+export const setUnpairedHandler = (fn: (() => void) | null) => {
+  onUnpaired = fn
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   let res: Response
   try {
@@ -68,8 +95,15 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     // Sin respuesta: el server puede haberlo recibido igual (ver deliver).
     throw new NetworkError(err)
   }
-  const data = (await res.json().catch(() => null)) as { error?: string } | null
-  if (!res.ok) throw new Error(data?.error ?? `Error ${res.status}`)
+  const data = (await res.json().catch(() => null)) as { error?: string; code?: string } | null
+  if (!res.ok) {
+    const code = data?.code
+    // Un 401 solo sale de la puerta remota: el dispositivo no está (o ya no está) vinculado.
+    if (res.status === 401 || code === "remote_unpaired") onUnpaired?.()
+    const message = remoteErrorMessage(code, data?.error ?? "", Number(res.headers.get("retry-after")) || undefined, res.status)
+    if (toastsRemoteError(code)) toast.error(message, { id: code })
+    throw new ApiError(message, res.status, code)
+  }
   return data as T
 }
 
@@ -142,6 +176,26 @@ export interface DraftEdits {
 export type PlanStepEdit = Pick<PlanStep, "title" | "prompt" | "model" | "effort" | "fresh" | "subagents">
 
 export const api = {
+  remoteStatus: () => request<RemoteStatus>("GET", "/api/remote/status"),
+  remoteCapabilities: () => request<RemoteCapabilities>("GET", "/api/remote/capabilities"),
+  remoteEnable: () => request<RemoteStatus>("POST", "/api/remote/enable", {}),
+  remoteDisable: () => request("POST", "/api/remote/disable", {}),
+  remoteKill: () => request("POST", "/api/remote/kill", {}),
+  remoteConfig: () => request<RemoteConfigView>("GET", "/api/remote/config"),
+  // `confirm` solo se manda después de que esta máquina confirmó el nivel Control en el diálogo (el server también lo exige).
+  setRemoteConfig: (patch: { tier?: RemoteConfigView["tier"]; requireLocalForDangerous?: boolean; confirm?: "control" }) =>
+    request<RemoteConfigView>("PATCH", "/api/remote/config", patch),
+  remoteDevices: () => request<RemoteDevice[]>("GET", "/api/remote/devices"),
+  revokeRemoteDevice: (id: string) => request("DELETE", `/api/remote/devices/${id}`),
+  revokeAllRemoteDevices: () => request<{ ok: true; revoked: number }>("POST", "/api/remote/devices/revoke-all", {}),
+  setRemoteDeviceTier: (id: string, tier: RemoteConfigView["tier"], confirm?: "control") =>
+    request<RemoteDevice>("PATCH", `/api/remote/devices/${id}`, confirm ? { tier, confirm } : { tier }),
+  remoteAudit: (limit = 200) => request<RemoteAuditView>("GET", `/api/remote/audit?limit=${limit}`),
+  remoteLogout: () => request("POST", "/api/remote/logout", {}),
+  createPairing: (name?: string, tier?: RemoteConfigView["tier"], confirm?: "control") =>
+    request<{ url: string; expiresAt: number }>("POST", "/api/remote/pairings", { ...(name ? { name } : {}), ...(tier ? { tier } : {}), ...(confirm ? { confirm } : {}) }),
+  /** Desde el dispositivo remoto: canjea el token del enlace por la cookie del dispositivo. */
+  pairDevice: (token: string, name?: string) => request<{ ok: true; name: string; tier: string }>("POST", "/api/remote/pair", name ? { token, name } : { token }),
   accounts: (refresh = false) => request<Account[]>("GET", `/api/accounts${refresh ? "?refresh=1" : ""}`),
   detectAccounts: () => request<{ configDir: string; name: string; auth: AccountAuth }[]>("GET", "/api/accounts/detect"),
   createAccount: (body: { name: string; configDir: string; bin?: string | null }) => request<Account>("POST", "/api/accounts", body),
@@ -290,6 +344,7 @@ export const api = {
   marketplaces: (accountId: string) => request<Marketplace[]>("GET", `/api/accounts/${accountId}/marketplaces`),
   marketplaceAction: (accountId: string, action: "add" | "remove" | "update", target?: string) =>
     request("POST", `/api/accounts/${accountId}/marketplaces`, { action, target }),
+  installEngram: (accountId: string) => request<EngramInstallResult>("POST", `/api/accounts/${accountId}/engram/install`),
   addMcp: (accountId: string, input: McpInput) => request("POST", `/api/accounts/${accountId}/mcp`, input),
   removeMcp: (accountId: string, name: string, scope: string, projectId: string | null) =>
     request("DELETE", `/api/accounts/${accountId}/mcp/${enc(name)}${qs({ scope, projectId })}`),

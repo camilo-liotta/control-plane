@@ -8,6 +8,7 @@
 //! registra comandos ni da permisos (capabilities vacías): ninguna página tiene IPC.
 
 use std::fmt::Write as _;
+#[cfg(not(windows))]
 use std::io::Read;
 
 use tauri::Url;
@@ -24,17 +25,29 @@ pub fn local_base() -> Url {
 }
 
 /// 16 bytes aleatorios en hexadecimal (para el token y el launchId).
+///
+/// Windows: el RNG del sistema (`getrandom`). Si falla no hay respaldo: un token predecible
+/// abre la pantalla local a cualquier página, así que mejor no seguir (nunca falla en la práctica).
 pub fn random_hex() -> String {
     let mut bytes = [0u8; 16];
-    let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes));
-    if ok.is_err() {
-        // Sin /dev/urandom (no pasa en Linux ni macOS): algo único igual, aunque predecible.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        bytes = (nanos ^ ((std::process::id() as u128) << 64)).to_le_bytes();
+    #[cfg(windows)]
+    getrandom::fill(&mut bytes).expect("el RNG del sistema no responde: no hay token seguro");
+    #[cfg(not(windows))]
+    {
+        let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes));
+        if ok.is_err() {
+            // Sin /dev/urandom (no pasa en Linux ni macOS): algo único igual, aunque predecible.
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            bytes = (nanos ^ ((std::process::id() as u128) << 64)).to_le_bytes();
+        }
     }
+    to_hex(&bytes)
+}
+
+fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::new(), |mut s, b| {
         let _ = write!(s, "{b:02x}");
         s
@@ -463,8 +476,11 @@ pub fn login_notice(shell: &str, err: &str) -> String {
 mod tests {
     use super::*;
 
+    // Las URLs de la app: tauri://localhost (en Windows, http://tauri.localhost).
     fn url(s: &str) -> Url {
-        Url::parse(s).unwrap()
+        let base = local_base();
+        let origin = format!("{}://{}", base.scheme(), base.host_str().unwrap());
+        Url::parse(&s.replace("tauri://localhost", &origin)).unwrap()
     }
 
     #[test]
@@ -623,5 +639,24 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, random_hex());
+    }
+
+    /// El respaldo viejo (tiempo + pid) dejaba los últimos 4 bytes siempre en cero: con el RNG
+    /// del sistema eso no puede pasar (probabilidad 2^-32 por llamada).
+    #[cfg(windows)]
+    #[test]
+    fn random_hex_uses_the_os_rng_on_windows() {
+        for _ in 0..4 {
+            let h = random_hex();
+            assert_ne!(&h[24..], "00000000", "{h}");
+        }
+        let all: std::collections::HashSet<String> = (0..64).map(|_| random_hex()).collect();
+        assert_eq!(all.len(), 64);
+    }
+
+    #[test]
+    fn hex_encodes_each_byte_in_two_lowercase_digits() {
+        assert_eq!(to_hex(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+        assert_eq!(to_hex(&[]), "");
     }
 }

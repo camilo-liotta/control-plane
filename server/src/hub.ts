@@ -2,11 +2,14 @@ import type { WebSocket } from "ws"
 
 import type { DesktopSummary, ServerMessage } from "./shared/types.ts"
 
-/** "web": las pestañas del dashboard. "desktop": la app de escritorio (bandeja y notificaciones). */
-export type ClientKind = "web" | "desktop"
+/**
+ * "web": las pestañas del dashboard. "desktop": la app de escritorio (bandeja y notificaciones).
+ * "remote": un dispositivo emparejado que entra por Tailscale: recibe los mensajes redactados (ver remote/redact.ts).
+ */
+export type ClientKind = "web" | "desktop" | "remote"
 
 /** Cambios que mueven el resumen de la bandeja. */
-const SUMMARY_TRIGGERS = new Set<ServerMessage["type"]>(["session", "draft", "project", "project_removed", "task"])
+const SUMMARY_TRIGGERS = new Set<ServerMessage["type"]>(["session", "draft", "project", "project_removed", "task", "remote"])
 /** Lo único que le llega a la app de escritorio de lo que se difunde. */
 const DESKTOP_TYPES = new Set<ServerMessage["type"]>(["toast"])
 const SUMMARY_DEBOUNCE_MS = 300
@@ -17,6 +20,12 @@ export class Hub {
   private summarize: (() => DesktopSummary) | null = null
   private summaryTimer: NodeJS.Timeout | null = null
   private desktopConnected = false
+  /** Cómo se redacta cada mensaje para los remotos (null = no les llega). Sin esto, a los remotos no les llega nada. */
+  private remoteFilter: ((msg: ServerMessage) => ServerMessage | null) | null = null
+
+  setRemoteFilter(fn: (msg: ServerMessage) => ServerMessage | null) {
+    this.remoteFilter = fn
+  }
 
   /** Cómo se calcula el resumen de la bandeja (se define después de armar las sesiones). */
   setSummary(fn: () => DesktopSummary) {
@@ -33,6 +42,9 @@ export class Hub {
     if (kind === "desktop") {
       const summary = this.summaryMessage()
       if (summary) ws.send(summary)
+    } else if (kind === "remote") {
+      // El hello ya viene redactado de quien lo arma; a un remoto no se le cuenta nada del escritorio.
+      ws.send(JSON.stringify(hello()))
     } else {
       ws.send(JSON.stringify(hello()))
       ws.send(JSON.stringify({ type: "desktop", connected: this.desktopConnected } satisfies ServerMessage))
@@ -45,9 +57,19 @@ export class Hub {
     if (!this.clients.size) return
     const data = JSON.stringify(msg)
     const toDesktop = DESKTOP_TYPES.has(msg.type)
+    let remoteData: string | null | undefined
     for (const [ws, kind] of this.clients) {
       if (kind === "desktop" && !toDesktop) continue
-      if (ws.readyState === ws.OPEN) ws.send(data)
+      if (ws.readyState !== ws.OPEN) continue
+      if (kind === "remote") {
+        if (remoteData === undefined) {
+          const redacted = this.remoteFilter?.(msg) ?? null
+          remoteData = redacted ? JSON.stringify(redacted) : null
+        }
+        if (remoteData) ws.send(remoteData)
+        continue
+      }
+      ws.send(data)
     }
   }
 

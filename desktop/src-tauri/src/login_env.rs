@@ -8,12 +8,13 @@
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
 use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{fmt, thread};
+
+use crate::sys;
 
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -91,6 +92,12 @@ pub fn detect_shell(env_shell: Option<&str>) -> PathBuf {
 }
 
 /// La shell de la cuenta (passwd en Linux, Open Directory en macOS: los dos vía getpwuid).
+#[cfg(windows)]
+fn account_shell() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(unix)]
 fn account_shell() -> Option<PathBuf> {
     // SAFETY: getpwuid devuelve un puntero a memoria estática o null; se copia enseguida.
     unsafe {
@@ -229,6 +236,63 @@ pub fn without_bundle_env(
         .collect()
 }
 
+/// Nombres de variables que se buscan por su nombre exacto (`PATH`, `HOME`…).
+const LOOKUP_NAMES: &[&str] = &["PATH", "HOME", "USERPROFILE", "SHELL"];
+
+/// En Windows los nombres de variables no distinguen mayúsculas (`Path`, `PATH`): lo que se busca
+/// por nombre exacto se pasa a mayúsculas para que lo encuentre igual. En el resto no cambia nada.
+pub fn canonical_env_names(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    let windows = cfg!(windows);
+    vars.into_iter()
+        .map(|(k, v)| {
+            let upper = k.to_ascii_uppercase();
+            let known = LOOKUP_NAMES.contains(&upper.as_str()) || allowed(&upper, &[]);
+            if windows && known {
+                (upper, v)
+            } else {
+                (k, v)
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod env_names_tests {
+    use super::*;
+
+    fn vars(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_and_home_names_are_found_in_uppercase() {
+        let env = canonical_env_names(vars(&[
+            ("Path", r"C:\a;C:\b"),
+            ("UserProfile", r"C:\Users\x"),
+            ("SystemRoot", r"C:\Windows"),
+        ]));
+        assert_eq!(env.get("PATH").map(String::as_str), Some(r"C:\a;C:\b"));
+        assert_eq!(
+            env.get("USERPROFILE").map(String::as_str),
+            Some(r"C:\Users\x")
+        );
+        // Lo que no se busca por nombre queda como estaba.
+        assert!(env.contains_key("SystemRoot"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn other_systems_keep_names_untouched() {
+        let env = canonical_env_names(vars(&[("Path", "/a"), ("PATH", "/b")]));
+        assert_eq!(env.len(), 2);
+    }
+}
+
 /// El resultado de leer la shell de login: las variables de la lista blanca, o por qué no se pudo.
 #[derive(Debug, Clone)]
 pub struct LoginEnv {
@@ -257,6 +321,21 @@ impl LoginEnv {
         base: Option<&BTreeMap<String, String>>,
     ) -> Self {
         let started = Instant::now();
+        // Windows no tiene shell de login que leer: el entorno de la app ya es el del usuario.
+        if cfg!(windows) {
+            let vars = base
+                .into_iter()
+                .flatten()
+                .filter(|(k, _)| allowed(k, import))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            return Self {
+                shell: shell.to_path_buf(),
+                elapsed: started.elapsed(),
+                vars,
+                error: None,
+            };
+        }
         let kind = ShellKind::of(shell);
         let mut result = run_shell(shell, kind, EnvFormat::Nul, timeout, base);
         // Un `env` sin `-0` (algún macOS viejo) no imprime nada entre los marcadores: otra vuelta
@@ -324,19 +403,10 @@ pub(crate) fn run_limited(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    // SAFETY: setsid es async-signal-safe; entre fork y exec no se toca nada más.
-    unsafe {
-        cmd.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    sys::limit(&mut cmd);
     let mut child = cmd
         .spawn()
         .map_err(|e| LoginEnvError::Spawn(e.to_string()))?;
-    let pgid = child.id() as libc::pid_t;
 
     let out = Arc::new(Mutex::new(Vec::new()));
     let mut pipe = child.stdout.take().expect("stdout piped");
@@ -374,10 +444,7 @@ pub(crate) fn run_limited(
         }
         thread::sleep(Duration::from_millis(10));
     }
-    // SAFETY: kill a un grupo que creamos nosotros (setsid); si ya no existe, falla sin efecto.
-    unsafe {
-        libc::kill(-pgid, libc::SIGKILL);
-    }
+    sys::kill_limited(&mut child);
     if status.is_none() {
         status = child.wait().ok();
     }
@@ -481,7 +548,7 @@ pub fn server_env(
     env
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -824,10 +891,8 @@ mod tests {
             .parse()
             .unwrap();
         thread::sleep(Duration::from_millis(100));
-        // SAFETY: señal 0 solo pregunta si el proceso existe.
-        assert_eq!(
-            unsafe { libc::kill(pid, 0) },
-            -1,
+        assert!(
+            !crate::sys::pid_alive(pid as u32),
             "el sleep de la shell sigue vivo"
         );
     }
